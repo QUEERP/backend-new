@@ -1,0 +1,58 @@
+const prisma = require("../config/prisma");
+const InventoryService = require("./inventoryService");
+
+class ProductWorkflow {
+  static async createProduct(params) {
+    const { businessId, name, sku, description, price, costPrice, hsnCode, taxPercent, unit, initialQty, warehouseId, performedBy, type } = params;
+
+    return await prisma.$transaction(async (tx) => {
+      // 1. Create product record
+      const product = await tx.product.create({
+        data: {
+          businessId,
+          name,
+          sku,
+          description: description || null,
+          price: Number(price),
+          costPrice: Number(costPrice),
+          taxCode: hsnCode || null,
+          taxPercent: Number(taxPercent || 0),
+          unit: unit || 'pcs',
+          type: type || 'GOODS'
+        }
+      });
+
+      // 2. Handle initial stock if quantity and warehouse are provided
+      if (initialQty && Number(initialQty) > 0 && warehouseId) {
+
+        // Verify warehouse exists within business context
+        const warehouseExists = await tx.warehouse.findFirst({
+          where: { id: warehouseId, businessId }
+        });
+
+        if (!warehouseExists) {
+          throw new Error(`Warehouse ${warehouseId} not found in this business context.`);
+        }
+
+        // Add inventory via standard helper safely within transaction
+        await InventoryService.increaseStock({
+          businessId,
+          productId: product.id,
+          warehouseId,
+          quantity: Number(initialQty),
+          type: 'OPENING_STOCK', // Initial quantity labeled as OPENING_STOCK
+          reference: {
+            referenceNo: "OPENING_STOCK"
+          },
+          performedBy,
+          note: "Opening stock balance on product initialization.",
+          tx
+        });
+      }
+
+      return product;
+    });
+  }
+}
+
+module.exports = ProductWorkflow;

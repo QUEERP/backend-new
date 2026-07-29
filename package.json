@@ -1,0 +1,50 @@
+{
+  "name": "que_accounting_backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "puppeteer": {
+    "cacheDirectory": "/opt/render/.cache/puppeteer"
+  },
+  "scripts": {
+    "dev": "nodemon --trace-warnings server.js",
+    "start": "node --trace-warnings server.js",
+    "prisma:generate": "prisma generate",
+    "postinstall": "prisma generate"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@prisma/adapter-pg": "^7.3.0",
+    "@prisma/client": "^7.3.0",
+    "@sparticuz/chromium": "^131.0.1",
+    "axios": "^1.13.5",
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^1.41.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.0.2",
+    "multer-storage-cloudinary": "^4.0.0",
+    "nodemailer": "^9.0.3",
+    "pdfkit": "^0.17.2",
+    "pg": "^8.22.0",
+    "prisma": "^7.3.0",
+    "puppeteer-core": "^25.4.0",
+    "streamifier": "^0.1.1",
+    "world-countries": "^5.1.0",
+    "ws": "^8.21.0",
+    "xlsx": "^0.18.5",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
