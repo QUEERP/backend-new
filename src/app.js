@@ -145,6 +145,7 @@ app.use("/api/purchase-order", purchaseOrderRoutes);
 app.use("/api/bills", billRoutes);
 app.use("/api/warehouses", warehouseRoutes);
 app.use("/api/stock", stockRoutes);
+
 app.use("/api/products", productRoutes);
 app.use("/api/accounts", accontRoutes);
 app.use("/api/journal-entries", journalEntryRoutes);
