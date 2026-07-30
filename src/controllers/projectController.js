@@ -7,7 +7,7 @@ exports.createProject = async (req, res) => {
       projectCode, projectName, customerId, projectManagerId, 
       department, priority, status, budget, 
       estimatedHours, startDate, endDate, executionType,
-      requirementId, estimateId, items
+      requirementId, estimateId, items, note
     } = req.body;
 
     const project = await prisma.project.create({
@@ -25,6 +25,7 @@ exports.createProject = async (req, res) => {
         startDate: startDate ? new Date(startDate) : null,
         endDate: endDate ? new Date(endDate) : null,
         executionType,
+        note,
         ...(items && items.length > 0 && executionType === 'CONSTRUCTION' && {
           projectItems: {
             create: items.map(item => ({

@@ -3415,6 +3415,7 @@ model Project {
   executionType String? @default("SERVICE") // SERVICE, PRODUCT, HYBRID
   billingMethod String?
   templateId    String?
+  note          String?   @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

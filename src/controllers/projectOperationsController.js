@@ -266,29 +266,29 @@ exports.getMeetings = async (req, res) => {
 
 exports.createProject = async (req, res) => {
   try {
-    const data = req.body;
-    let executionType = data.executionType;
+    const { items, startDate, endDate, budget, ...otherData } = req.body;
+    let executionType = otherData.executionType;
 
     // Automatic Detection
     if (!executionType) {
-      let items = [];
-      if (data.quotationId) {
+      let quoteItems = [];
+      if (otherData.quotationId) {
         const quotation = await prisma.quotation.findUnique({
-          where: { id: data.quotationId },
+          where: { id: otherData.quotationId },
           include: { items: true }
         });
-        if (quotation) items = quotation.items;
-      } else if (data.salesOrderId) {
+        if (quotation) quoteItems = quotation.items;
+      } else if (otherData.salesOrderId) {
         const salesOrder = await prisma.salesOrder.findUnique({
-          where: { id: data.salesOrderId },
+          where: { id: otherData.salesOrderId },
           include: { items: true }
         });
-        if (salesOrder) items = salesOrder.items;
+        if (salesOrder) quoteItems = salesOrder.items;
       }
 
-      if (items.length > 0) {
-        const hasService = items.some(item => item.itemType === "SERVICE" || item.itemType === "service");
-        const hasGoods = items.some(item => item.itemType === "GOODS" || item.itemType === "goods" || item.itemType === "PRODUCT");
+      if (quoteItems.length > 0) {
+        const hasService = quoteItems.some(item => item.itemType === "SERVICE" || item.itemType === "service");
+        const hasGoods = quoteItems.some(item => item.itemType === "GOODS" || item.itemType === "goods" || item.itemType === "PRODUCT");
 
         if (hasService && hasGoods) {
           executionType = "HYBRID";
@@ -300,16 +300,17 @@ exports.createProject = async (req, res) => {
       }
     }
 
-    if (data.budget !== undefined && data.budget !== null) {
-      data.budget = parseFloat(data.budget) || 0;
+    const data = { ...otherData };
+    if (budget !== undefined && budget !== null) {
+      data.budget = parseFloat(budget) || 0;
     }
     
-    if (data.startDate) {
-      data.startDate = new Date(data.startDate).toISOString();
+    if (startDate) {
+      data.startDate = new Date(startDate);
     }
     
-    if (data.endDate) {
-      data.endDate = new Date(data.endDate).toISOString();
+    if (endDate) {
+      data.endDate = new Date(endDate);
     }
 
     const projCount = await prisma.project.count({ where: { businessId: req.business.id } });
@@ -321,6 +322,17 @@ exports.createProject = async (req, res) => {
         projectCode,
         executionType: executionType || "SERVICE",
         businessId: req.business.id,
+        ...(items && items.length > 0 && {
+          projectItems: {
+            create: items.map(item => ({
+              itemName: item.itemName,
+              description: item.description || '',
+              quantity: Number(item.quantity) || 1,
+              rate: Number(item.rate) || 0,
+              amount: Number(item.amount) || 0,
+            }))
+          }
+        })
       },
     });
     res.json({ success: true, project });
@@ -381,13 +393,35 @@ exports.getProjectDetails = async (req, res) => {
 
 exports.updateProject = async (req, res) => {
   try {
+    const { items, startDate, endDate, ...data } = req.body;
+    
+    if (startDate) data.startDate = new Date(startDate);
+    if (endDate) data.endDate = new Date(endDate);
+    
+    // Convert budget if present
+    if (data.budget) data.budget = Number(data.budget) || 0;
+
     const project = await prisma.project.update({
       where: { id: req.params.id },
-      data: req.body,
+      data: {
+        ...data,
+        ...(items && {
+          projectItems: {
+            deleteMany: {},
+            create: items.map(item => ({
+              itemName: item.itemName,
+              description: item.description || '',
+              quantity: Number(item.quantity) || 1,
+              rate: Number(item.rate) || 0,
+              amount: Number(item.amount) || 0,
+            }))
+          }
+        })
+      },
     });
     res.json({ success: true, project });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    res.status(400).json({ success: false, message: "Failed to update project. " + err.message });
   }
 };
 
