@@ -112,16 +112,15 @@ async function launchBrowser() {
   console.log("--- ENVIRONMENT DIAGNOSTICS ---");
   console.log("process.platform:", process.platform);
   console.log("process.env.VERCEL:", process.env.VERCEL);
-
   const isLocal = process.platform === "win32" || process.env.NODE_ENV === "development";
-  let executablePath, args, headless;
 
-  if (isLocal) {
-    // ——— Local (Windows / Linux dev) ———
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-      executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    } else if (process.platform === "win32") {
-      const fs = require("fs");
+  let executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  let args = ['--no-sandbox', '--disable-setuid-sandbox'];
+  let headless = true;
+
+  if (!executablePath) {
+    const fs = require("fs");
+    if (process.platform === "win32") {
       const winPaths = [
         "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
         "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
@@ -132,32 +131,41 @@ async function launchBrowser() {
           break;
         }
       }
+    } else if (process.platform === "linux" && !process.env.VERCEL) {
+      const linuxPaths = [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+      ];
+      for (const p of linuxPaths) {
+        if (fs.existsSync(p)) {
+          executablePath = p;
+          break;
+        }
+      }
     }
-    args = ['--no-sandbox', '--disable-setuid-sandbox'];
-    headless = true;
-  } else {
-    // ——— Vercel / AWS Lambda ———
+  }
+
+  // Fallback to @sparticuz/chromium if still no path (e.g., Vercel)
+  if (!executablePath) {
     try {
       executablePath = await chromium.executablePath();
+      args = [
+        ...chromium.args,
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-dev-shm-usage',
+        '--no-sandbox',
+      ];
+      headless = chromium.headless;
     } catch (err) {
       console.error("[STEP 5 FAILED] chromium.executablePath() error:", err);
       throw err;
     }
-
-    // Start with chromium's recommended args, then add GPU‑disabling flags
-    const defaultArgs = chromium.args;
-    args = [
-      ...defaultArgs,
-      '--disable-gpu',
-      '--disable-software-rasterizer',
-    ];
-    if (!args.includes('--no-sandbox')) {
-      args.push('--no-sandbox');
-    }
-
-    // Use old headless mode to avoid GPU process
-    headless = 'old';  // or `true` (old headless)
   }
+
+
 
   console.log("[STEP 5] Chromium executable path:", executablePath || 'default');
   if (!isLocal) {
