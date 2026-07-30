@@ -3446,6 +3446,19 @@ model Project {
   tickets             Ticket[]
   plannings           ProjectPlanning[]
   resourceAllocations ResourceAllocation[]
+  projectItems        ProjectItem[]
+}
+
+model ProjectItem {
+  id          String   @id @default(uuid())
+  projectId   String
+  itemName    String
+  description String?
+  quantity    Float    @default(1)
+  rate        Float    @default(0)
+  amount      Float    @default(0)
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model ProjectMilestone {

@@ -369,7 +369,8 @@ exports.getProjectDetails = async (req, res) => {
         milestones: true,
         timeEntries: true,
         expenses: true,
-        invoices: true
+        invoices: true,
+        projectItems: true
       },
     });
     res.json({ success: true, project });
