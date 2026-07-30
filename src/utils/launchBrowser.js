@@ -137,11 +137,34 @@ async function launchBrowser() {
         "/usr/bin/google-chrome-stable",
         "/usr/bin/chromium",
         "/usr/bin/chromium-browser",
+        "/snap/bin/chromium",
+        "/snap/bin/google-chrome"
       ];
       for (const p of linuxPaths) {
         if (fs.existsSync(p)) {
           executablePath = p;
           break;
+        }
+      }
+      
+      // If still not found, try to use 'which' command
+      if (!executablePath) {
+        try {
+          const { execSync } = require('child_process');
+          const whichPaths = ['chromium-browser', 'chromium', 'google-chrome', 'google-chrome-stable'];
+          for (const cmd of whichPaths) {
+            try {
+              const res = execSync(`which ${cmd}`, { stdio: 'pipe' }).toString().trim();
+              if (res && fs.existsSync(res)) {
+                executablePath = res;
+                break;
+              }
+            } catch (e) {
+              // Ignore command failures
+            }
+          }
+        } catch (err) {
+          console.error("Failed to dynamically resolve browser path:", err);
         }
       }
     }
