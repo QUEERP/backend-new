@@ -242,6 +242,12 @@ exports.getBusinessById = async (req, res) => {
           include: { customer: true },
           orderBy: { createdAt: "desc" },
         },
+        expenses: {
+          orderBy: { date: "desc" },
+        },
+        bills: {
+          orderBy: { billDate: "desc" },
+        },
       },
     });
 

@@ -1942,7 +1942,7 @@ exports.getReportSummary = async (req, res) => {
 
     if (reportType === 'expenses') {
       const expenses = await prisma.expense.findMany({
-        where: { businessId: bId, ...(projectId ? { projectId } : {}), ...(status ? { status } : {}), ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}) },
+        where: { businessId: bId, ...(projectId ? { projectId } : { projectId: { not: null } }), ...(status ? { status } : {}), ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}) },
         include: { project: true, employee: true, vendor: true },
         orderBy: { createdAt: 'desc' }
       });
@@ -1951,7 +1951,7 @@ exports.getReportSummary = async (req, res) => {
 
     if (reportType === 'billing') {
       const invoices = await prisma.invoice.findMany({
-        where: { businessId: bId, isDeleted: false, ...(customerId ? { customerId } : {}), ...(status ? { status } : {}) },
+        where: { businessId: bId, isDeleted: false, ...(projectId ? { projectId } : { projectId: { not: null } }), ...(customerId ? { customerId } : {}), ...(status ? { status } : {}) },
         include: { customer: true, project: true, payments: true },
         orderBy: { createdAt: 'desc' }
       });

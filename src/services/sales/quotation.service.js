@@ -24,7 +24,7 @@ const generateDocNumber = async (tx, businessId, prefix, modelName, fieldName) =
   while (!isUnique) {
     docNumber = `${prefix}-${String(nextNum).padStart(3, "0")}`;
     const existing = await tx[modelName].findFirst({
-      where: { businessId, [fieldName]: docNumber }
+      where: { [fieldName]: docNumber }
     });
     
     if (!existing) {
@@ -325,44 +325,7 @@ const changeStatus = async (businessId, userId, userEmail, quotationId, status) 
       data: { status }
     });
 
-    // ==========================================
-    // AUTO CREATE PROJECT ON ACCEPTANCE
-    // ==========================================
-    if (status === "ACCEPTED" || status === "APPROVED") {
-      let executionType = "SERVICE"; // Default
-      if (existing.items && existing.items.length > 0) {
-        const hasService = existing.items.some(item => item.itemType === "SERVICE" || item.itemType === "service");
-        const hasGoods = existing.items.some(item => item.itemType === "GOODS" || item.itemType === "goods" || item.itemType === "PRODUCT");
-        if (hasService && hasGoods) executionType = "HYBRID";
-        else if (hasService) executionType = "SERVICE";
-        else if (hasGoods) executionType = "PRODUCT";
-      }
 
-      const projectCode = await generateDocNumber(tx, businessId, "PRJ", "project", "projectCode");
-      const project = await tx.project.create({
-        data: {
-          businessId,
-          projectCode,
-          projectName: existing.title || `Project from ${existing.quoteNumber}`,
-          customerId: existing.customerId,
-          quotationId: existing.id,
-          executionType,
-          budget: existing.totalAmount,
-          expectedProfit: existing.totalAmount * 0.2, // Rough default mapping
-          status: "ACTIVE"
-        }
-      });
-
-      await logAction(tx, {
-        businessId,
-        userId,
-        userEmail,
-        action: "PROJECT_AUTO_CREATED",
-        entityType: "Project",
-        entityId: project.id,
-        details: { quoteNumber: existing.quoteNumber, projectCode }
-      });
-    }
 
     await logAction(tx, {
       businessId,

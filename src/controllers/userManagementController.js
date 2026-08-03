@@ -79,12 +79,19 @@ const createUser = async (req, res) => {
     }
 
     const roleToFind = roleName || "User";
-    const role = await prisma.role.findFirst({
+    let role = await prisma.role.findFirst({
       where: { businessId, name: roleToFind },
     });
 
     if (!role) {
-      return errorResponse(res, `Role '${roleToFind}' not found.`, 400);
+      const allowedRoles = ["Admin", "Manager", "Accountant", "User", "Viewer"];
+      if (allowedRoles.includes(roleToFind)) {
+        role = await prisma.role.create({
+          data: { name: roleToFind, businessId },
+        });
+      } else {
+        return errorResponse(res, `Role '${roleToFind}' not found.`, 400);
+      }
     }
 
     const membership = await prisma.businessUser.create({
@@ -149,7 +156,7 @@ const inviteUser = async (req, res) => {
     //////////////////////////////////////////////////////
     // 3️⃣ FIND DEFAULT ROLE (AUTO)
     //////////////////////////////////////////////////////
-    const defaultRole = await prisma.role.findFirst({
+    let defaultRole = await prisma.role.findFirst({
       where: {
         businessId,
         name: "User",   // ⭐ default role name
@@ -157,11 +164,9 @@ const inviteUser = async (req, res) => {
     });
 
     if (!defaultRole) {
-      return errorResponse(
-        res,
-        "Default role not found. Create 'User' role first.",
-        400
-      );
+      defaultRole = await prisma.role.create({
+        data: { name: "User", businessId },
+      });
     }
 
     //////////////////////////////////////////////////////

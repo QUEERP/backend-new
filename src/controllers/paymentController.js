@@ -198,7 +198,7 @@ exports.createPayment = async (req, res) => {
       return successResponse(
         res,
         result,
-        "Quotation payment recorded successfully"
+        "Payment recorded successfully"
       );
     }
 

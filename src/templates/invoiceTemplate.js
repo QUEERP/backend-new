@@ -18,7 +18,15 @@ module.exports = (invoice, settings = {}) => {
   const hasServices = (invoice.items || []).some(i => i.itemType === 'SERVICE');
   
   let qtyHeader = "QTY/HRS";
-  if (hasGoods && !hasServices) qtyHeader = "QTY";
+  if (hasGoods && !hasServices) {
+    qtyHeader = "QTY";
+    if (invoice.items && invoice.items.length > 0) {
+      const firstUnit = (invoice.items[0].unit || "").toLowerCase();
+      if (['kg', 'gram', 'meter', 'litre'].includes(firstUnit)) {
+        qtyHeader = invoice.items[0].unit.toUpperCase();
+      }
+    }
+  }
   else if (!hasGoods && hasServices) qtyHeader = "HRS";
 
   // Collect all unique taxes across items for the breakdown (used in modern)
@@ -524,10 +532,10 @@ module.exports = (invoice, settings = {}) => {
         <tr>
           <th width="30" class="text-center">#</th>
           <th>DESCRIPTION</th>
-          ${settings.businessType === 'Construction' ? '' : `<th width="80" class="text-center">HSN/SAC</th>`}
+          ${settings.businessType === 'Basic' ? '' : `<th width="80" class="text-center">HSN/SAC</th>`}
           <th width="60" class="text-center">${qtyHeader}</th>
           <th width="80" class="text-center">RATE</th>
-          ${settings.businessType === 'Construction' ? '' : `<th width="100" class="text-center">TAXES</th>
+          ${settings.businessType === 'Basic' ? '' : `<th width="100" class="text-center">TAXES</th>
           <th width="90" class="text-center">TAX AMOUNT</th>`}
           <th width="100" class="text-right">TOTAL</th>
         </tr>
@@ -540,10 +548,10 @@ module.exports = (invoice, settings = {}) => {
             <div style="font-weight:600; color:#111;">${i.itemName || ''}</div>
             <div style="${i.itemName ? 'color:#555; margin-top:2px; font-size:9px;' : ''}">${i.description}</div>
           </td>
-          ${settings.businessType === 'Construction' ? '' : `<td class="text-center">${i.hsnSacCode || '-'}</td>`}
+          ${settings.businessType === 'Basic' ? '' : `<td class="text-center">${i.hsnSacCode || '-'}</td>`}
           <td class="text-center">${i.quantity || i.hours || 0}</td>
           <td class="text-center">${fmt(i.rate)}</td>
-          ${settings.businessType === 'Construction' ? '' : `<td class="text-center" style="font-size:8px;">${(i.taxDetails || []).map(t => `${t.name} (${t.rate}%)`).join('<br/>')}</td>
+          ${settings.businessType === 'Basic' ? '' : `<td class="text-center" style="font-size:8px;">${(i.taxDetails || []).map(t => `${t.name} (${t.rate}%)`).join('<br/>')}</td>
           <td class="text-center">${fmt(i.totalTax)}</td>`}
           <td class="text-right">${fmt(i.totalAmount)}</td>
         </tr>
