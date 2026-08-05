@@ -39,7 +39,8 @@ exports.createInvoice = async (req, res) => {
       vatPercentage,
       vatAmount,
       vatType = "exclusive",
-      emirate
+      emirate,
+      projectId
     } = req.body;
 
     const settings = await prisma.settings.findUnique({
@@ -60,7 +61,7 @@ exports.createInvoice = async (req, res) => {
           extraData: {
             cgst, sgst, igst, tds, ewayBillNo, reverseCharge, transportDetails,
             vatPercentage, vatAmount, vatType, emirate, shippingCharges,
-            designTemplate: finalTemplate
+            designTemplate: finalTemplate, projectId
           }
         });
         return res.status(201).json({ success: true, data: invoice });
@@ -181,6 +182,7 @@ exports.createInvoice = async (req, res) => {
           vatAmount: Number(vatAmount || 0),
           vatType,
           emirate,
+          projectId: projectId || null,
           items: { create: invoiceItems },
         },
         include: {
@@ -192,6 +194,20 @@ exports.createInvoice = async (req, res) => {
       maxWait: 5000,
       timeout: 20000
     });
+
+    if (projectId) {
+      try {
+        await prisma.project.update({
+          where: { id: projectId },
+          data: {
+            revenue: { increment: invoice.grandTotal },
+            invoicedRevenue: { increment: invoice.grandTotal }
+          }
+        });
+      } catch (projErr) {
+        console.error("Failed to update project revenue:", projErr);
+      }
+    }
 
     // PDF generation (async — non-blocking)
     setImmediate(async () => {

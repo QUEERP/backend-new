@@ -180,6 +180,15 @@ module.exports = (invoice, settings = {}) => {
     
     <table class="yellow-table">
       <thead>
+        ${settings.businessType === 'Basic' ? `
+        <tr>
+          <th width="120">Item Name</th>
+          <th>Description</th>
+          <th width="80" style="text-align:center;">QTY</th>
+          <th width="120" style="text-align:right;">Rate (${invoice.currency || '$'})</th>
+          <th width="120" style="text-align:right;">Amount (${invoice.currency || '$'})</th>
+        </tr>
+        ` : `
         <tr>
           <th width="40" style="text-align:center;">No</th>
           <th>Description of Service</th>
@@ -187,9 +196,18 @@ module.exports = (invoice, settings = {}) => {
           <th width="120" style="text-align:right;">Rate (${invoice.currency || '$'})</th>
           <th width="120" style="text-align:right;">Total (${invoice.currency || '$'})</th>
         </tr>
+        `}
       </thead>
       <tbody>
-        ${(invoice.items || []).map((i, idx) => `
+        ${(invoice.items || []).map((i, idx) => settings.businessType === 'Basic' ? `
+        <tr>
+          <td style="font-weight:bold;">${i.itemName || ''}</td>
+          <td>${i.description}</td>
+          <td style="text-align:center;">${i.quantity || i.hours || 0}</td>
+          <td style="text-align:right;">${fmt(i.rate)}</td>
+          <td style="text-align:right;">${fmt(i.totalAmount)}</td>
+        </tr>
+        ` : `
         <tr>
           <td style="text-align:center; font-weight:bold;">${idx + 1}</td>
           <td>${i.itemName ? '<b>' + i.itemName + '</b><br/>' : ''}${i.description}</td>
@@ -333,15 +351,33 @@ module.exports = (invoice, settings = {}) => {
     
     <table class="orange-table">
       <thead>
+        ${settings.businessType === 'Basic' ? `
+        <tr>
+          <th width="120">ITEM NAME</th>
+          <th>DESCRIPTION</th>
+          <th width="80" style="text-align:center;">QTY</th>
+          <th width="100" style="text-align:center;">RATE</th>
+          <th width="120" style="text-align:right;">AMOUNT</th>
+        </tr>
+        ` : `
         <tr>
           <th>DESCRIPTION</th>
           <th width="100" style="text-align:center;">PRICE</th>
           <th width="80" style="text-align:center;">${qtyHeader}</th>
           <th width="120" style="text-align:right;">TOTAL</th>
         </tr>
+        `}
       </thead>
       <tbody>
-        ${(invoice.items || []).map((i) => `
+        ${(invoice.items || []).map((i) => settings.businessType === 'Basic' ? `
+        <tr>
+          <td style="font-weight:bold; color:#333;">${i.itemName || ''}</td>
+          <td>${i.description}</td>
+          <td style="text-align:center;">${i.quantity || i.hours || 0}</td>
+          <td style="text-align:center;">${fmt(i.rate)}</td>
+          <td style="text-align:right;">${fmt(i.totalAmount)}</td>
+        </tr>
+        ` : `
         <tr>
             <td style="font-weight:bold; color:#333;">${i.itemName ? i.itemName + ' - ' : ''}${i.description}</td>
           <td style="text-align:center;">${fmt(i.rate)}</td>
@@ -529,30 +565,52 @@ module.exports = (invoice, settings = {}) => {
 
     <table>
       <thead>
+        ${settings.businessType === 'Basic' ? `
+        <tr>
+          <th width="120">ITEM NAME</th>
+          <th>DESCRIPTION</th>
+          <th width="60" class="text-center">QTY</th>
+          <th width="80" class="text-center">RATE</th>
+          <th width="100" class="text-right">AMOUNT</th>
+        </tr>
+        ` : `
         <tr>
           <th width="30" class="text-center">#</th>
           <th>DESCRIPTION</th>
-          ${settings.businessType === 'Basic' ? '' : `<th width="80" class="text-center">HSN/SAC</th>`}
+          <th width="80" class="text-center">HSN/SAC</th>
           <th width="60" class="text-center">${qtyHeader}</th>
           <th width="80" class="text-center">RATE</th>
-          ${settings.businessType === 'Basic' ? '' : `<th width="100" class="text-center">TAXES</th>
-          <th width="90" class="text-center">TAX AMOUNT</th>`}
+          <th width="100" class="text-center">TAXES</th>
+          <th width="90" class="text-center">TAX AMOUNT</th>
           <th width="100" class="text-right">TOTAL</th>
         </tr>
+        `}
       </thead>
       <tbody>
-        ${(invoice.items || []).map((i, idx) => `
+        ${(invoice.items || []).map((i, idx) => settings.businessType === 'Basic' ? `
+        <tr>
+          <td>
+            <div style="font-weight:600; color:#111;">${i.itemName || ''}</div>
+          </td>
+          <td>
+            <div style="color:#555; font-size:9px;">${i.description}</div>
+          </td>
+          <td class="text-center">${i.quantity || i.hours || 0}</td>
+          <td class="text-center">${fmt(i.rate)}</td>
+          <td class="text-right">${fmt(i.totalAmount)}</td>
+        </tr>
+        ` : `
         <tr>
           <td class="text-center">${idx + 1}</td>
           <td>
             <div style="font-weight:600; color:#111;">${i.itemName || ''}</div>
             <div style="${i.itemName ? 'color:#555; margin-top:2px; font-size:9px;' : ''}">${i.description}</div>
           </td>
-          ${settings.businessType === 'Basic' ? '' : `<td class="text-center">${i.hsnSacCode || '-'}</td>`}
+          <td class="text-center">${i.hsnSacCode || '-'}</td>
           <td class="text-center">${i.quantity || i.hours || 0}</td>
           <td class="text-center">${fmt(i.rate)}</td>
-          ${settings.businessType === 'Basic' ? '' : `<td class="text-center" style="font-size:8px;">${(i.taxDetails || []).map(t => `${t.name} (${t.rate}%)`).join('<br/>')}</td>
-          <td class="text-center">${fmt(i.totalTax)}</td>`}
+          <td class="text-center" style="font-size:8px;">${(i.taxDetails || []).map(t => `${t.name} (${t.rate}%)`).join('<br/>')}</td>
+          <td class="text-center">${fmt(i.totalTax)}</td>
           <td class="text-right">${fmt(i.totalAmount)}</td>
         </tr>
         `).join('')}

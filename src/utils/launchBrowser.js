@@ -102,11 +102,26 @@ async function inlineExternalImages(html) {
   return inlined;
 }
 
+let cachedBrowser = null;
+
 /**
  * Launch a Puppeteer browser instance optimized for Vercel/AWS Lambda.
  * @returns {Promise<import('puppeteer-core').Browser>}
  */
 async function launchBrowser() {
+  if (cachedBrowser) {
+    try {
+      if (cachedBrowser.isConnected()) {
+        console.log(`[TIME: ${Date.now()}] [STEP 4] Using cached browser`);
+        return cachedBrowser;
+      } else {
+        cachedBrowser = null;
+      }
+    } catch (e) {
+      cachedBrowser = null;
+    }
+  }
+
   const launchStart = Date.now();
   console.log(`[TIME: ${launchStart}] [STEP 4] Starting browser launch`);
   console.log("--- ENVIRONMENT DIAGNOSTICS ---");
@@ -205,6 +220,7 @@ async function launchBrowser() {
       timeout: 60000,
     });
     console.log(`[TIME: ${Date.now()}] [STEP 6] Browser launched successfully. Took ${Date.now() - launchStart}ms`);
+    cachedBrowser = browser;
     return browser;
   } catch (err) {
     console.error(`[TIME: ${Date.now()}] [STEP 6 FAILED] Took ${Date.now() - launchStart}ms. Error:`, err);
@@ -240,6 +256,7 @@ async function htmlToPdfBuffer(html, pdfOptions = {}) {
   console.log(`[DIAGNOSTICS] Images: ${imgCount} (External: ${extImgCount}), Fonts: ${fontCount}, CSS files: ${extCssCount}`);
 
   let browser;
+  let page;
 
   try {
     const inlineStart = Date.now();
@@ -248,7 +265,6 @@ async function htmlToPdfBuffer(html, pdfOptions = {}) {
 
     browser = await launchBrowser();
 
-    let page;
     try {
       const newPageStart = Date.now();
       page = await browser.newPage();
@@ -325,13 +341,12 @@ async function htmlToPdfBuffer(html, pdfOptions = {}) {
 
     return bufferObj;
   } finally {
-    if (browser) {
+    if (page) {
       try {
-        await browser.close();
-        console.log("[STEP 10] Browser closed");
+        await page.close();
+        console.log("[STEP 10] Page closed");
       } catch (e) {
-        console.error("[STEP 10 FAILED] Browser close error:", e);
-        console.error(e.stack);
+        console.error("[STEP 10 FAILED] Page close error:", e);
       }
     }
   }

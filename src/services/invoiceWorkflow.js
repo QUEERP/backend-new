@@ -81,6 +81,7 @@ class InvoiceWorkflow {
           vatAmount: Number(extraData.vatAmount || 0),
           vatType: extraData.vatType,
           emirate: extraData.emirate,
+          projectId: extraData.projectId || null,
           items: {
             create: invoiceItemsData
           }
@@ -90,11 +91,21 @@ class InvoiceWorkflow {
         }
       });
 
-      // 4. Update Sales Order Status to show completion
       await tx.salesOrder.update({
         where: { id: salesOrderId },
         data: { status: "INVOICED" }
       });
+
+      // 4.5 Update Project Revenue if projectId is present
+      if (extraData.projectId) {
+        await tx.project.update({
+          where: { id: extraData.projectId },
+          data: {
+            revenue: { increment: invoice.grandTotal },
+            invoicedRevenue: { increment: invoice.grandTotal }
+          }
+        });
+      }
 
       // 5. Release Reserved quantities and deduct physical stock (Sales Flow Shipment)
       for (const item of invoice.items) {
