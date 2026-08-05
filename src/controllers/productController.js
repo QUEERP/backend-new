@@ -289,6 +289,7 @@ exports.getProducts = async (req, res) => {
     // Use service-layer if available (main branch), fallback to direct Prisma query
     if (productService.getProducts) {
       const result = await productService.getProducts(req.business.id, req.query);
+      result.products = result.products.map(p => fixProduct(p));
       return res.json({ success: true, ...result });
     }
 

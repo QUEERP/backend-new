@@ -39,7 +39,7 @@ class BusinessSetupService {
           currencySymbol: currencySymbol,
           taxType: taxType,
           currency: currencyCode, // Keeping old field populated to prevent immediate breakages
-          businessType: businessType || "Other",
+          businessType: businessType || "Trading",
           ownerId: userId,
           isActive: false, // Wait for subscription/admin approval if needed, though prompt says "immediately after creation"
         }
@@ -69,7 +69,10 @@ class BusinessSetupService {
 
       // 4. Roles & Permissions
       const adminRole = await tx.role.create({ data: { name: "Admin", businessId: newBusiness.id } });
+      await tx.role.create({ data: { name: "Manager", businessId: newBusiness.id } });
+      await tx.role.create({ data: { name: "Accountant", businessId: newBusiness.id } });
       await tx.role.create({ data: { name: "User", businessId: newBusiness.id } });
+      await tx.role.create({ data: { name: "Viewer", businessId: newBusiness.id } });
       
       const permissions = await tx.permission.findMany();
       if (permissions.length > 0) {

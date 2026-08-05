@@ -26,7 +26,7 @@ exports.createProject = async (req, res) => {
         endDate: endDate ? new Date(endDate) : null,
         executionType,
         note,
-        ...(items && items.length > 0 && executionType === 'CONSTRUCTION' && {
+        ...(items && items.length > 0 && executionType === 'BASIC' && {
           projectItems: {
             create: items.map(item => ({
               itemName: item.itemName,
