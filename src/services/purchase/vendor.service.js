@@ -141,22 +141,22 @@ const getVendors = async (businessId, query = {}) => {
     prisma.vendor.count({ where })
   ]);
 
-  let modifiedVendors = vendors;
-  
-  const bType = business?.businessType || business?.industry || business?.type || business?.businessCategory || 'unknown';
-  
-  if (bType.trim().toLowerCase() === 'basic') {
-    modifiedVendors = await Promise.all(vendors.map(async (v) => {
-      const expenses = await prisma.expense.findMany({
-        where: { businessId, vendorId: v.id }
-      });
-      const totalExpense = expenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
-      return {
-        ...v,
-        balance: Number(v.openingBalance || 0) + totalExpense
-      };
-    }));
-  }
+  const modifiedVendors = await Promise.all(vendors.map(async (v) => {
+    const expenses = await prisma.expense.findMany({
+      where: { businessId, vendorId: v.id }
+    });
+    
+    const totalExpense = expenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
+    const calculatedBalance = Number(v.openingBalance || 0) + totalExpense;
+    
+    return {
+      ...v,
+      // If there are recorded expenses for this vendor, use the calculated balance 
+      // (which matches the 'Amount Received' in the frontend view). 
+      // Otherwise fallback to the existing database balance.
+      balance: totalExpense > 0 ? calculatedBalance : Number(v.balance || 0)
+    };
+  }));
 
   return {
     vendors: modifiedVendors,
