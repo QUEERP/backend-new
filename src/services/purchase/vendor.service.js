@@ -139,18 +139,23 @@ const getVendors = async (businessId, query = {}) => {
     prisma.vendor.count({ where })
   ]);
 
+  let modifiedVendors = vendors;
+  
   if (business?.businessType?.toLowerCase() === 'basic') {
-    for (let i = 0; i < vendors.length; i++) {
+    modifiedVendors = await Promise.all(vendors.map(async (v) => {
       const expenses = await prisma.expense.findMany({
-        where: { businessId, vendorId: vendors[i].id }
+        where: { businessId, vendorId: v.id }
       });
       const totalExpense = expenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
-      vendors[i].balance = Number(vendors[i].openingBalance || 0) + totalExpense;
-    }
+      return {
+        ...v,
+        balance: Number(v.openingBalance || 0) + totalExpense
+      };
+    }));
   }
 
   return {
-    vendors,
+    vendors: modifiedVendors,
     total,
     page,
     limit,
