@@ -139,7 +139,7 @@ const getVendors = async (businessId, query = {}) => {
     prisma.vendor.count({ where })
   ]);
 
-  if (business?.businessType === 'BASIC') {
+  if (business?.businessType?.toLowerCase() === 'basic') {
     for (let i = 0; i < vendors.length; i++) {
       const expenses = await prisma.expense.findMany({
         where: { businessId, vendorId: vendors[i].id }
