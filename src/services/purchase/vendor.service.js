@@ -130,8 +130,7 @@ const getVendors = async (businessId, query = {}) => {
 
   const [business, vendors, total] = await Promise.all([
     prisma.business.findUnique({ 
-      where: { id: businessId }, 
-      select: { businessType: true, industry: true } 
+      where: { id: businessId }
     }),
     prisma.vendor.findMany({
       where,
@@ -144,7 +143,7 @@ const getVendors = async (businessId, query = {}) => {
 
   let modifiedVendors = vendors;
   
-  const bType = business?.businessType || business?.industry || 'unknown';
+  const bType = business?.businessType || business?.industry || business?.type || business?.businessCategory || 'unknown';
   
   if (bType.trim().toLowerCase() === 'basic') {
     modifiedVendors = await Promise.all(vendors.map(async (v) => {
