@@ -128,7 +128,8 @@ const getVendors = async (businessId, query = {}) => {
   const sortOrder = query.sortOrder || "desc";
   const orderBy = { [sortBy]: sortOrder };
 
-  const [vendors, total] = await Promise.all([
+  const [business, vendors, total] = await Promise.all([
+    prisma.business.findUnique({ where: { id: businessId }, select: { businessType: true } }),
     prisma.vendor.findMany({
       where,
       skip,
@@ -137,6 +138,16 @@ const getVendors = async (businessId, query = {}) => {
     }),
     prisma.vendor.count({ where })
   ]);
+
+  if (business?.businessType === 'BASIC') {
+    for (let i = 0; i < vendors.length; i++) {
+      const expenses = await prisma.expense.findMany({
+        where: { businessId, vendorId: vendors[i].id }
+      });
+      const totalExpense = expenses.reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
+      vendors[i].balance = Number(vendors[i].openingBalance || 0) + totalExpense;
+    }
+  }
 
   return {
     vendors,
