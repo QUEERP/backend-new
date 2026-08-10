@@ -456,6 +456,7 @@ exports.convertToCustomer = async (req, res) => {
       campaignId,
       existingAccountId,
       existingContactId,
+      ...customerData
     } = req.body;
 
     const result = await convertLead(req.business.id, req.user.userId, leadId, {
@@ -467,6 +468,7 @@ exports.convertToCustomer = async (req, res) => {
       campaignId,
       existingAccountId,
       existingContactId,
+      customerData,
     });
 
     res.json({
