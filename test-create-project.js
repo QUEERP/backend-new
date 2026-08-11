@@ -29,15 +29,15 @@ async function main() {
     });
 
     console.log('Project created successfully:', project);
-    
+
     // cleanup
     await prisma.project.delete({ where: { id: project.id } });
-    
+
   } catch (err) {
     console.error('Create Project Error:', err);
     if (err.message && err.message.includes('Invalid `prisma')) {
-       const match = err.message.match(/argument `.*?`: (.*)/i);
-       if (match) console.log('Match:', match[0]);
+      const match = err.message.match(/argument `.*?`: (.*)/i);
+      if (match) console.log('Match:', match[0]);
     }
   } finally {
     await prisma.$disconnect();

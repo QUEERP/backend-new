@@ -24,7 +24,7 @@ const generateDocNumber = async (tx, businessId, prefix, modelName, fieldName) =
   while (!isUnique) {
     docNumber = `${prefix}-${String(nextNum).padStart(3, "0")}`;
     const existing = await tx[modelName].findFirst({
-      where: { [fieldName]: docNumber }
+      where: { [fieldName]: docNumber, businessId }
     });
     
     if (!existing) {
