@@ -16,6 +16,7 @@ exports.convertLead = async (businessId, userId, leadId, options = {}) => {
     // Duplicate handling flags
     existingAccountId, // If passed, links contact/deal to this account instead of creating a new one
     existingContactId,  // If passed, links to this contact instead of creating a new one
+    customerData = {}, // Customer fields from conversion form
   } = options;
 
   return await prisma.$transaction(async (tx) => {
@@ -54,15 +55,29 @@ exports.convertLead = async (businessId, userId, leadId, options = {}) => {
       customer = await tx.customer.create({
         data: {
           businessId,
-          company: lead.company || lead.name,
-          phone: lead.phone,
-          website: lead.website,
-          address: lead.city,
-          city: lead.city,
-          state: lead.state,
-          country: lead.country,
-          zipCode: lead.zipCode,
-          region: "INDIA", // Default region required in schema
+          company: customerData.company || lead.company || lead.name,
+          phone: customerData.phone || lead.phone,
+          website: customerData.website || lead.website,
+          address: customerData.address || lead.city,
+          city: customerData.city || lead.city,
+          state: customerData.state || lead.state,
+          country: customerData.country || lead.country,
+          zipCode: customerData.zipCode || lead.zipCode,
+          region: customerData.region || "INDIA",
+          vatNumber: customerData.vatNumber,
+          group: customerData.group,
+          currency: customerData.currency || lead.currency || "SYSTEM",
+          defaultLanguage: customerData.defaultLanguage || "SYSTEM",
+          billingStreet: customerData.billingStreet,
+          billingCity: customerData.billingCity,
+          billingState: customerData.billingState,
+          billingZipCode: customerData.billingZipCode,
+          billingCountry: customerData.billingCountry,
+          shippingStreet: customerData.shippingStreet,
+          shippingCity: customerData.shippingCity,
+          shippingState: customerData.shippingState,
+          shippingZipCode: customerData.shippingZipCode,
+          shippingCountry: customerData.shippingCountry,
           crmStatus: "PROSPECT",
           accountType: "PROSPECT",
           leadId: lead.id,
@@ -118,6 +133,7 @@ exports.convertLead = async (businessId, userId, leadId, options = {}) => {
           customerId: accountId,
           contactId: contactId,
           stage: dealStage,
+          currency: customerData.currency || lead.currency || customer.currency || "SYSTEM",
           probability: 10, // Initial stage probability
           expectedCloseDate: expectedCloseDate ? new Date(expectedCloseDate) : null,
           campaignId: campaignId || lead.campaignId,

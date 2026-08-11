@@ -314,7 +314,7 @@ exports.createProject = async (req, res) => {
     }
 
     const projCount = await prisma.project.count({ where: { businessId: req.business.id } });
-    const projectCode = `PRJ-${String(projCount + 1).padStart(5, '0')}`;
+    const projectCode = data.projectCode || `PRJ-${String(projCount + 1).padStart(5, '0')}`;
 
     const project = await prisma.project.create({
       data: {
@@ -339,9 +339,12 @@ exports.createProject = async (req, res) => {
   } catch (err) {
     console.error("Create Project Error:", err);
     let errorMessage = "Failed to create project. Please check your inputs.";
-    if (err.message && err.message.includes('Invalid `prisma')) {
+    if (err.code === 'P2002') {
+      errorMessage = `A project with this project number already exists.`;
+    } else if (err.message && err.message.includes('Invalid `prisma')) {
        const match = err.message.match(/argument `.*?`: (.*)/i);
        if (match) errorMessage = match[0];
+       else errorMessage = err.message; // Fallback to full message
     } else if (err.message) {
        errorMessage = err.message;
     }
