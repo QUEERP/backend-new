@@ -1,79 +1,37 @@
 const prisma = require("../config/prisma");
 
-module.exports = async (businessId) => {
-
-  //////////////////////////////////////////////////////
-  // GET SETTINGS
-  //////////////////////////////////////////////////////
-
-  const settings = await prisma.settings.findUnique({
-    where: { businessId }
-  });
-
-  const format = settings?.invoiceFormat || "INV-YYYY-MM-DD-COUNT";
-
-  //////////////////////////////////////////////////////
-  // DATE VALUES
-  //////////////////////////////////////////////////////
-
-  const now = new Date();
-
-  const YYYY = now.getFullYear();
-  const MM = String(now.getMonth() + 1).padStart(2, "0");
-  const DD = String(now.getDate()).padStart(2, "0");
-
-  //////////////////////////////////////////////////////
-  // TODAY START & END
-  //////////////////////////////////////////////////////
-
-  const startOfDay = new Date(now);
-  startOfDay.setHours(0, 0, 0, 0);
-
-  const endOfDay = new Date(now);
-  endOfDay.setHours(23, 59, 59, 999);
-
-  //////////////////////////////////////////////////////
-  // FIND TODAY'S LAST INVOICE
-  //////////////////////////////////////////////////////
-
-  const lastInvoice = await prisma.invoice.findFirst({
-    where: {
-      businessId,
-      createdAt: {
-        gte: startOfDay,
-        lte: endOfDay
-      }
-    },
+module.exports = async (businessId, tx = prisma) => {
+  let nextNum = 1;
+  
+  // Find the most recently created invoice for this business
+  const lastInvoice = await tx.invoice.findFirst({
+    where: { businessId },
     orderBy: { createdAt: "desc" },
     select: { invoiceNumber: true }
   });
-
-  //////////////////////////////////////////////////////
-  // COUNT LOGIC
-  //////////////////////////////////////////////////////
-
-  let nextCount = 1;
-
-  if (lastInvoice?.invoiceNumber) {
-
-    const lastPart = lastInvoice.invoiceNumber.split("-").pop();
-    const parsed = parseInt(lastPart);
-
-    if (!isNaN(parsed)) {
-      nextCount = parsed + 1;
-    }
+  
+  if (lastInvoice && lastInvoice.invoiceNumber) {
+    const parts = lastInvoice.invoiceNumber.split("-");
+    const numStr = parts[parts.length - 1];
+    nextNum = isNaN(parseInt(numStr, 10)) ? 1 : parseInt(numStr, 10) + 1;
   }
 
-  //////////////////////////////////////////////////////
-  // BUILD INVOICE NUMBER
-  //////////////////////////////////////////////////////
+  let invoiceNumber = "";
+  let isUnique = false;
 
-  let invoiceNumber = format;
-
-  invoiceNumber = invoiceNumber.replace("YYYY", YYYY);
-  invoiceNumber = invoiceNumber.replace("MM", MM);
-  invoiceNumber = invoiceNumber.replace("DD", DD);
-  invoiceNumber = invoiceNumber.replace("COUNT", nextCount);
+  // Ensure the generated number is unique within this business
+  while (!isUnique) {
+    invoiceNumber = `INV-${String(nextNum).padStart(3, "0")}`;
+    const existing = await tx.invoice.findFirst({
+      where: { invoiceNumber, businessId }
+    });
+    
+    if (!existing) {
+      isUnique = true;
+    } else {
+      nextNum++;
+    }
+  }
 
   return invoiceNumber;
 };

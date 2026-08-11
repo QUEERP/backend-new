@@ -3384,7 +3384,7 @@ model ProjectMeeting {
 model Project {
   id               String        @id @default(uuid())
   businessId       String
-  projectCode      String        @unique
+  projectCode      String
   projectName      String
   customerId       String
   projectManagerId String?
@@ -3448,6 +3448,8 @@ model Project {
   plannings           ProjectPlanning[]
   resourceAllocations ResourceAllocation[]
   projectItems        ProjectItem[]
+
+  @@unique([businessId, projectCode])
 }
 
 model ProjectItem {

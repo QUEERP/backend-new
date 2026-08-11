@@ -1,6 +1,8 @@
 const prisma = require("../config/prisma");
 const { createStockMovement } = require("../services/inventory/movement.service");
 const purchaseRequestService = require("../services/purchase/purchaseRequest.service");
+const { generateDocNumber } = require("../services/sales/quotation.service");
+const generateInvoiceNumber = require("../utils/generateInvoiceNumber");
 
 // ==========================================
 // PROJECT REQUIREMENTS
@@ -313,8 +315,7 @@ exports.createProject = async (req, res) => {
       data.endDate = new Date(endDate);
     }
 
-    const projCount = await prisma.project.count({ where: { businessId: req.business.id } });
-    const projectCode = data.projectCode || `PRJ-${String(projCount + 1).padStart(5, '0')}`;
+    const projectCode = data.projectCode || await generateDocNumber(prisma, req.business.id, 'PRJ', 'project', 'projectCode');
 
     const project = await prisma.project.create({
       data: {
@@ -1004,7 +1005,7 @@ exports.createGlobalInvoice = async (req, res) => {
     const { customerId, projectId, dueDate, amount, status } = req.body;
     
     // Auto-generate invoice number (simple format)
-    const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
+    const invoiceNumber = await generateInvoiceNumber(req.business.id, prisma);
     
     const invoice = await prisma.invoice.create({
       data: {
