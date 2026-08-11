@@ -169,6 +169,9 @@ exports.updateExpense = async (req, res) => {
   }
 
   const updateData = { ...req.body };
+  if (updateData.date) {
+    updateData.date = new Date(updateData.date);
+  }
   if (updateData.items) {
     // Basic support for updating items: delete old and create new
     await prisma.expenseItem.deleteMany({ where: { expenseId: id } });
