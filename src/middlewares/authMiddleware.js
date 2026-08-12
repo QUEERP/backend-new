@@ -3,14 +3,22 @@ const { verifyToken, extractTokenFromHeader } = require("../utils/jwtUtils");
 
 const authMiddleware = async (req, res, next) => {
   try {
+    // SAFE DEBUG LOGGING
+    console.log(`[AUTH DEBUG] Path: ${req.path}`);
+    console.log(`[AUTH DEBUG] Auth header exists: ${!!req.headers.authorization}`);
+    console.log(`[AUTH DEBUG] Cookie token exists: ${!!(req.headers.cookie && req.headers.cookie.includes('token='))}`);
+
     const token = extractTokenFromHeader(req);
 
     if (!token) {
+      console.log(`[AUTH DEBUG] No token found. Returning 401.`);
       return res.status(401).json({
         success: false,
         message: "Authentication required",
       });
     }
+
+    console.log(`[AUTH DEBUG] Token extracted successfully (Length: ${token.length})`);
 
     const { success, payload, error } = verifyToken(token);
 
