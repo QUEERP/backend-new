@@ -313,9 +313,12 @@ exports.getPayments = async (req, res) => {
       ];
     }
 
+    let takeLimit = limit ? parseInt(limit) : 500;
+    if (takeLimit > 500) takeLimit = 500;
+
     const payments = await prisma.payment.findMany({
       where,
-      take: limit ? parseInt(limit) : undefined,
+      take: takeLimit,
       include: {
         invoice: {
           select: {
