@@ -39,8 +39,9 @@ exports.getMyData = async (req, res) => {
       const allBusinesses = await prisma.business.findMany({
         include: {
           settings: true,
-          customers: true,
+          customers: { take: 100 },
           invoices: {
+            take: 100,
             include: { customer: true },
             orderBy: { createdAt: "desc" },
           },
@@ -86,13 +87,15 @@ exports.getMyData = async (req, res) => {
       include: {
         settings: true,
 
-        customers: true,
+        customers: { take: 100 },
 
         invoices: {
+          take: 100,
           include: { customer: true },
           orderBy: { createdAt: "desc" },
         },
         quotations: {
+          take: 100,
           include: { customer: true },
           orderBy: { createdAt: "desc" },
         },
@@ -160,13 +163,15 @@ exports.getMyData = async (req, res) => {
           include: {
             settings: true,
 
-            customers: true,
+            customers: { take: 100 },
 
             invoices: {
+              take: 100,
               include: { customer: true },
               orderBy: { createdAt: "desc" },
             },
             quotations: {
+              take: 100,
               include: { customer: true },
               orderBy: { createdAt: "desc" },
             },
