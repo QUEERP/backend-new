@@ -227,7 +227,8 @@ exports.getSalesOrders = async (req, res) => {
         customer: { select: { id: true, company: true } },
         items: true
       },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
+      take: 500
     });
 
     return successResponse(res, orders, "Sales Orders fetched successfully");
