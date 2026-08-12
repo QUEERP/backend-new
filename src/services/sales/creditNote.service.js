@@ -57,7 +57,8 @@ const getCreditNotesByBusiness = async (businessId, customerId = undefined) => {
       invoice: true,
       salesReturn: true
     },
-    orderBy: { createdAt: "desc" }
+    orderBy: { createdAt: "desc" },
+    take: 500
   });
 };
 

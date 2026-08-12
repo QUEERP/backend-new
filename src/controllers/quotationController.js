@@ -42,7 +42,8 @@ exports.getQuotations = async (req, res) => {
         },
         items: true
       },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
+      take: 500
     });
 
     return successResponse(res, quotations, "Quotations fetched successfully");

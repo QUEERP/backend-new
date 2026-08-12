@@ -314,7 +314,8 @@ exports.getInvoices = async (req, res) => {
         status: status || undefined
       },
       include: { customer: true, items: true },
-      orderBy: { createdAt: "desc" }
+      orderBy: { createdAt: "desc" },
+      take: 500
     });
 
     return successResponse(res, data, "Invoices fetched successfully");
