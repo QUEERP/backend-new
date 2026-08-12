@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const compression = require("compression");
 const cors = require("cors");
 
 const authRoutes = require("./routes/authRoutes");
@@ -105,6 +106,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json());
+app.use(compression());
 
 // ── Core Routes ───────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
