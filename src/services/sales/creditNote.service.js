@@ -45,9 +45,13 @@ const createCreditNote = async (businessId, userId, userEmail, data) => {
   });
 };
 
-const getCreditNotesByBusiness = async (businessId) => {
+const getCreditNotesByBusiness = async (businessId, customerId = undefined) => {
+  const where = { businessId, isDeleted: false };
+  if (customerId) {
+    where.customerId = customerId;
+  }
   return await prisma.creditNote.findMany({
-    where: { businessId, isDeleted: false },
+    where,
     include: {
       customer: true,
       invoice: true,

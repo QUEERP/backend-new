@@ -301,9 +301,21 @@ exports.getBillPayments = async (req, res) => {
 exports.getPayments = async (req, res) => {
   try {
     const businessId = req.business.id;
+    const { limit, customerId } = req.query;
+
+    const where = { businessId };
+
+    if (customerId) {
+      where.OR = [
+        { customerId },
+        { invoice: { customerId } },
+        { quotation: { customerId } },
+      ];
+    }
 
     const payments = await prisma.payment.findMany({
-      where: { businessId },
+      where,
+      take: limit ? parseInt(limit) : undefined,
       include: {
         invoice: {
           select: {
