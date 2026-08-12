@@ -154,55 +154,60 @@ exports.getExpense = async (req, res) => {
 // UPDATE EXPENSE
 //////////////////////////////////////////////////////
 exports.updateExpense = async (req, res) => {
-  const businessId = req.business.id;
-  const { id } = req.params;
+  try {
+    const businessId = req.business.id;
+    const { id } = req.params;
 
-  const existing = await prisma.expense.findFirst({
-    where: { id, businessId }
-  });
-
-  if (!existing) {
-    return res.status(404).json({
-      success: false,
-      message: "Expense not found"
+    const existing = await prisma.expense.findFirst({
+      where: { id, businessId }
     });
-  }
 
-  const updateData = { ...req.body };
-  if (updateData.date) {
-    updateData.date = new Date(updateData.date);
-  }
-  if (updateData.items) {
-    // Basic support for updating items: delete old and create new
-    await prisma.expenseItem.deleteMany({ where: { expenseId: id } });
-    updateData.items = {
-      create: req.body.items.map(item => {
-        const q = Number(item.quantity || 0);
-        const r = Number(item.rate || 0);
-        const t = Number(item.taxPercent || 0);
-        const taxAmount = (q * r * t) / 100;
-        const amt = (q * r) + taxAmount;
-        return {
-          itemName: item.itemName || null,
-          description: item.description || '',
-          quantity: q,
-          rate: r,
-          taxPercent: t,
-          taxAmount: taxAmount,
-          amount: amt,
-          category: item.category || null
-        }
-      })
-    };
-  }
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Expense not found"
+      });
+    }
 
-  const updated = await prisma.expense.update({
-    where: { id },
-    data: updateData,
-    include: { items: true, vendor: true }
-  });
+    const updateData = { ...req.body };
+    if (updateData.date) {
+      updateData.date = new Date(updateData.date).toISOString();
+    }
+    if (updateData.items) {
+      // Basic support for updating items: delete old and create new
+      await prisma.expenseItem.deleteMany({ where: { expenseId: id } });
+      updateData.items = {
+        create: req.body.items.map(item => {
+          const q = Number(item.quantity || 0);
+          const r = Number(item.rate || 0);
+          const t = Number(item.taxPercent || 0);
+          const taxAmount = (q * r * t) / 100;
+          const amt = (q * r) + taxAmount;
+          return {
+            itemName: item.itemName || null,
+            description: item.description || '',
+            quantity: q,
+            rate: r,
+            taxPercent: t,
+            taxAmount: taxAmount,
+            amount: amt,
+            category: item.category || null
+          }
+        })
+      };
+    }
 
-  res.json({ success: true, data: updated });
+    const updated = await prisma.expense.update({
+      where: { id },
+      data: updateData,
+      include: { items: true, vendor: true }
+    });
+
+    res.json({ success: true, data: updated });
+  } catch (error) {
+    console.error("Error in updateExpense:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 
 //////////////////////////////////////////////////////
