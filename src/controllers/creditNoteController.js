@@ -26,7 +26,8 @@ exports.createCreditNote = async (req, res) => {
 exports.getAllCreditNotes = async (req, res) => {
   try {
     const businessId = req.business.id;
-    const credits = await creditNoteService.getCreditNotesByBusiness(businessId);
+    const { customerId } = req.query;
+    const credits = await creditNoteService.getCreditNotesByBusiness(businessId, customerId);
 
     const protocol = process.env.NODE_ENV === "production" ? "https" : req.protocol;
     const baseUrl = `${protocol}://${req.get("host")}`;

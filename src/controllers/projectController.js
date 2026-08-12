@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const { validateAssignments } = require("../utils/validateAssignments");
+const { generateDocNumber } = require("../services/sales/quotation.service");
 
 exports.createProject = async (req, res) => {
   try {
@@ -10,10 +11,12 @@ exports.createProject = async (req, res) => {
       requirementId, estimateId, items, note
     } = req.body;
 
+    const generatedCode = projectCode || await generateDocNumber(prisma, req.business.id, 'PRJ', 'project', 'projectCode');
+
     const project = await prisma.project.create({
       data: {
         businessId: req.business.id,
-        projectCode: projectCode || `PRJ-${Date.now()}`,
+        projectCode: generatedCode,
         projectName,
         customerId,
         projectManagerId,
