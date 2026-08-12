@@ -106,6 +106,31 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
+// ── SAFE DEBUG LOGGING MIDDLEWARE ───────────────────────────────────────────
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/")) {
+    const hasAuth = !!req.headers.authorization;
+    const hasXBusinessId = !!req.headers["x-business-id"];
+    const hasCookieToken = !!(req.headers.cookie && req.headers.cookie.includes("token="));
+    const hasCookieBusiness = !!(req.headers.cookie && req.headers.cookie.includes("activeBusinessId="));
+
+    console.log(`[DEBUG-REQ] ${req.method} ${req.path} | Auth: ${hasAuth} | x-business-id: ${hasXBusinessId} | cookieToken: ${hasCookieToken} | cookieBusinessId: ${hasCookieBusiness}`);
+
+    // Intercept res.json to log response size
+    const originalJson = res.json;
+    res.json = function (body) {
+      try {
+        const size = JSON.stringify(body).length;
+        console.log(`[DEBUG-RES] ${req.path} | Status: ${res.statusCode} | Size: ${size} bytes`);
+      } catch (err) {
+        console.log(`[DEBUG-RES] ${req.path} | Status: ${res.statusCode} | Size: Error stringifying (${err.message})`);
+      }
+      return originalJson.call(this, body);
+    };
+  }
+  next();
+});
+
 // ── Core Routes ───────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
 app.use("/api/business", businessRoutes);
