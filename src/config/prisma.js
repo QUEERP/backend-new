@@ -32,8 +32,6 @@ class CustomClient extends Client {
   }
 }
 
-console.log("PRISMA CONFIG DATABASE_URL VALUE:", process.env.DATABASE_URL);
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   Client: CustomClient,
