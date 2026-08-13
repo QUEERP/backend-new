@@ -8,7 +8,7 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`http://localhost:${PORT}`);
 });
 server.keepAliveTimeout = 65000; // must exceed OLS's 60s pcKeepAliveTimeout
