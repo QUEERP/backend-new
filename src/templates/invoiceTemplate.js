@@ -240,8 +240,16 @@ module.exports = (invoice, settings = {}) => {
           ${hasTax ? `<tr><td>Tax</td><td style="text-align:right;">${sym} ${fmt(invoice.totalTax)}</td></tr>` : ''}
           ${invoice.tds ? `<tr><td>TDS</td><td style="text-align:right;">- ${sym} ${fmt(invoice.tds)}</td></tr>` : ''}
           <tr class="total-row">
-            <td>Total Amount Due</td><td style="text-align:right;">${sym} ${fmt(invoice.grandTotal)}</td>
+            <td>Total Amount</td><td style="text-align:right;">${sym} ${fmt(invoice.grandTotal)}</td>
           </tr>
+          ${invoice.amountPaid ? `
+          <tr>
+            <td style="padding: 12px 0; font-weight: bold;">Amount Paid</td><td style="text-align:right; font-weight: bold; color: #16a34a;">- ${sym} ${fmt(invoice.amountPaid)}</td>
+          </tr>
+          <tr class="total-row">
+            <td>Balance Due</td><td style="text-align:right; color: #dc2626;">${sym} ${fmt(invoice.grandTotal - invoice.amountPaid)}</td>
+          </tr>
+          ` : ''}
         </table>
       </div>
     </div>
@@ -432,6 +440,16 @@ module.exports = (invoice, settings = {}) => {
                <span>TOTAL</span>
                <span>${sym} ${fmt(invoice.grandTotal)}</span>
              </div>
+             ${invoice.amountPaid ? `
+             <div style="background: #f4f4f4; color: #333; font-weight: bold; padding: 10px 15px; display: flex; justify-content: space-between; font-size: 13px; margin-top: 2px;">
+               <span>Amount Paid</span>
+               <span style="color: #16a34a;">- ${sym} ${fmt(invoice.amountPaid)}</span>
+             </div>
+             <div class="total-box" style="background: #dc2626; margin-top: 2px;">
+               <span>BALANCE DUE</span>
+               <span>${sym} ${fmt(invoice.grandTotal - invoice.amountPaid)}</span>
+             </div>
+             ` : ''}
           </div>
         </div>
         
@@ -640,6 +658,16 @@ module.exports = (invoice, settings = {}) => {
             <td style="padding:10px;">Total</td>
             <td class="text-right" style="padding:10px;">${sym} ${fmt(invoice.grandTotal)}</td>
           </tr>
+          ${invoice.amountPaid ? `
+          <tr style="background:#f4f4f4; color:#333; font-weight:bold;">
+            <td style="padding:10px;">Amount Paid</td>
+            <td class="text-right" style="padding:10px; color: #16a34a;">- ${sym} ${fmt(invoice.amountPaid)}</td>
+          </tr>
+          <tr class="total-row" style="background:#dc2626; color:#fff; font-weight:bold;">
+            <td style="padding:10px;">Balance Due</td>
+            <td class="text-right" style="padding:10px;">${sym} ${fmt(invoice.grandTotal - invoice.amountPaid)}</td>
+          </tr>
+          ` : ''}
         </table>
         
         <div class="spacer" style="height:40px;"></div>

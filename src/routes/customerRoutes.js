@@ -44,4 +44,12 @@ router.delete(
   Controller.deleteCustomer
 );
 
+router.get(
+  "/:id/unpaid-invoices",
+  auth,
+  business,
+  checkPermission("invoice", "read"),
+  Controller.getUnpaidInvoices
+);
+
 module.exports = router;

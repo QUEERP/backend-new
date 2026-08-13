@@ -426,3 +426,43 @@ exports.deleteCustomer = async (req, res) => {
     });
   }
 };
+
+//////////////////////////////////////////////////////
+// GET UNPAID INVOICES FOR PAYMENT ALLOCATION
+//////////////////////////////////////////////////////
+exports.getUnpaidInvoices = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { projectId } = req.query;
+
+    const where = {
+      businessId: req.business.id,
+      customerId: id,
+      status: 'UNPAID', // strictly unpaid per requirements
+      isDeleted: false,
+    };
+
+    if (projectId) {
+      where.projectId = projectId;
+    }
+
+    const invoices = await prisma.invoice.findMany({
+      where,
+      orderBy: { invoiceDate: 'asc' }, // oldest first
+      select: {
+        id: true,
+        invoiceNumber: true,
+        grandTotal: true,
+        amountPaid: true,
+        dueDate: true,
+        invoiceDate: true,
+        status: true
+      }
+    });
+
+    res.json({ success: true, invoices });
+  } catch (error) {
+    console.error("getUnpaidInvoices error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

@@ -20,8 +20,13 @@ const generateDocNumber = async (tx, businessId, prefix, modelName, fieldName) =
 
   let docNumber = "";
   let isUnique = false;
+  let loopCount = 0;
 
   while (!isUnique) {
+    loopCount++;
+    if (loopCount > 100) {
+      throw new Error("Failed to generate a unique document number after 100 attempts.");
+    }
     docNumber = `${prefix}-${String(nextNum).padStart(3, "0")}`;
     const existing = await tx[modelName].findFirst({
       where: { [fieldName]: docNumber, businessId }

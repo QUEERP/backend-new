@@ -49,6 +49,17 @@ router.post(
 );
 
 //////////////////////////////////////////////////
+// 🔥 CREATE PAYMENT (PROJECT)
+//////////////////////////////////////////////////
+router.post(
+  "/project/:projectId",
+  auth,
+  business,
+  checkPermission("payment", "create"),
+  controller.createPayment
+);
+
+//////////////////////////////////////////////////
 // GET ALL PAYMENTS
 //////////////////////////////////////////////////
 router.get(
@@ -81,6 +92,16 @@ router.get(
   controller.getQuotationPayments
 );
 
+//////////////////////////////////////////////////
+// READ PAYMENTS BY PROJECT
+//////////////////////////////////////////////////
+router.get(
+  "/project/:projectId",
+  auth,
+  business,
+  checkPermission("payment", "read"),
+  controller.getProjectPayments
+);
 
 //////////////////////////////////////////////////
 // DOWNLOAD PAYMENT PDF
@@ -91,6 +112,33 @@ router.get(
   business,
   checkPermission("payment", "read"),
   controller.downloadPaymentPdf
+);
+
+//////////////////////////////////////////////////
+// PAYMENT ALLOCATION ENDPOINTS
+//////////////////////////////////////////////////
+router.get(
+  "/details/:paymentId",
+  auth,
+  business,
+  checkPermission("payment", "read"),
+  controller.getPaymentDetails
+);
+
+router.post(
+  "/:paymentId/allocate-new-invoice",
+  auth,
+  business,
+  checkPermission("payment", "create"),
+  controller.allocateNewInvoice
+);
+
+router.post(
+  "/:paymentId/allocate-existing-invoice",
+  auth,
+  business,
+  checkPermission("payment", "create"),
+  controller.allocateExistingInvoice
 );
 
 module.exports = router;

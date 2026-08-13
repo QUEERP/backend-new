@@ -185,6 +185,13 @@ const getPaymentsByQuotationId = async (businessId, quotationId) => {
   });
 };
 
+const getPaymentsByProjectId = async (businessId, projectId) => {
+  return await prisma.payment.findMany({
+    where: { projectId, businessId },
+    orderBy: { createdAt: "desc" }
+  });
+};
+
 const createCustomerPayment = async (businessId, userId, userEmail, customerId, data) => {
   return await prisma.$transaction(async (tx) => {
     const customer = await tx.customer.findFirst({
@@ -239,10 +246,71 @@ const createCustomerPayment = async (businessId, userId, userEmail, customerId, 
   });
 };
 
+const createProjectPayment = async (businessId, userId, userEmail, projectId, data) => {
+  return await prisma.$transaction(async (tx) => {
+    // 1. Fetch Project
+    const project = await tx.project.findFirst({
+      where: { id: projectId, businessId }
+    });
+
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    const paymentAmount = Number(data.amount || 0);
+
+    // Generate unique payment number
+    const paymentNumber = await generateDocNumber(tx, businessId, "PAY", "payment", "paymentNumber");
+
+    // Create Payment Record
+    const payment = await tx.payment.create({
+      data: {
+        paymentNumber,
+        projectId,
+        customerId: project.customerId,
+        businessId,
+        amount: paymentAmount,
+        paymentDate: data.paymentDate ? new Date(data.paymentDate) : new Date(),
+        paymentMode: data.paymentMode || "CASH",
+        transactionId: data.transactionId || null,
+        note: data.note || null,
+        createdBy: userId
+      }
+    });
+
+    // Log Audit & Trigger System Alert
+    await logAction(tx, {
+      businessId,
+      userId,
+      userEmail,
+      action: "PROJECT_PAYMENT_RECORDED",
+      entityType: "Payment",
+      entityId: payment.id,
+      details: { paymentNumber, amount: paymentAmount, project: project.projectName || project.projectCode }
+    });
+
+    await triggerNotification(tx, {
+      businessId,
+      title: "Project Payment Recorded",
+      message: `Payment ${paymentNumber} of amount ${paymentAmount} received for project ${project.projectName || project.projectCode}.`,
+      type: "SUCCESS",
+      entityType: "Payment",
+      entityId: payment.id
+    });
+
+    return { payment };
+  }, {
+    maxWait: 10000,
+    timeout: 20000
+  });
+};
+
 module.exports = {
   createPayment,
   createQuotationPayment,
   createCustomerPayment,
+  createProjectPayment,
   getPaymentsByInvoiceId,
-  getPaymentsByQuotationId
+  getPaymentsByQuotationId,
+  getPaymentsByProjectId
 };
