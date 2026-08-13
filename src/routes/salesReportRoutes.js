@@ -11,5 +11,12 @@ router.get(
   checkPermission("invoice", "read"),
   controller.getSalesDashboard
 );
+router.get(
+  "/basic",
+  auth,
+  businessMiddleware,
+  checkPermission("invoice", "read"),
+  controller.getBasicSalesReport
+);
 
 module.exports = router;
