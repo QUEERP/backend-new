@@ -458,6 +458,7 @@ model Invoice {
   totalTax         Float  @default(0)
   discount         Float  @default(0)
   grandTotal       Float  @default(0)
+  amountPaid       Float  @default(0)
   totalCogs        Float? @default(0)
   totalGrossProfit Float? @default(0)
 
@@ -490,6 +491,7 @@ model Invoice {
   salesReturns SalesReturn[]
   payments     Payment[]
   creditNotes  CreditNote[]
+  paymentAllocations PaymentAllocation[]
 
   @@unique([businessId, invoiceNumber]) // invoice numbers unique per business
   @@index([businessId])
@@ -658,6 +660,8 @@ model Payment {
   /// ///////////////////////////////////////////////////
   /// ///////////////////////////////////////////////////
   amount        Float
+  amountAllocated Float @default(0)
+  status        String @default("unapplied")
   paymentDate   DateTime
   paymentMode   String
   transactionId String?
@@ -670,16 +674,37 @@ model Payment {
   //   creditNoteId  String?
   paymentNumber String
   billId        String?
+  projectId     String?
   bill          Bill?    @relation(fields: [billId], references: [id])
   business      Business @relation(fields: [businessId], references: [id])
   customer      Customer? @relation(fields: [customerId], references: [id]) // 🔥 Relation
+  project       Project?  @relation(fields: [projectId], references: [id])
   //   creditNote    CreditNote? @relation(fields: [creditNoteId], references: [id])
   invoice       Invoice? @relation(fields: [invoiceId], references: [id])
   quotation     Quotation? @relation(fields: [quotationId], references: [id])
+  paymentAllocations PaymentAllocation[]
 
   @@index([invoiceId])
   @@index([customerId])
   @@map("payments")
+}
+
+model PaymentAllocation {
+  id              String   @id @default(uuid())
+  paymentId       String
+  invoiceId       String
+  allocatedAmount Float
+  allocationType  String   // 'new_invoice' | 'existing_invoice'
+  createdBy       String
+  createdAt       DateTime @default(now())
+
+  payment         Payment  @relation(fields: [paymentId], references: [id])
+  invoice         Invoice  @relation(fields: [invoiceId], references: [id])
+
+  @@unique([paymentId, invoiceId])
+  @@index([paymentId])
+  @@index([invoiceId])
+  @@map("payment_allocations")
 }
 
 model CreditNote {
@@ -3448,6 +3473,7 @@ model Project {
   plannings           ProjectPlanning[]
   resourceAllocations ResourceAllocation[]
   projectItems        ProjectItem[]
+  payments            Payment[]
 
   @@unique([businessId, projectCode])
 }

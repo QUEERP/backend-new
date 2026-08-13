@@ -135,6 +135,116 @@ const getSalesDashboard = async (businessId) => {
   };
 };
 
+
+const getBasicSalesReport = async (businessId) => {
+  // 1. Total customers
+  const totalCustomers = await prisma.customer.count({
+    where: { businessId, isDeleted: false }
+  });
+
+  // 2. Total payments (made / received)
+  const payments = await prisma.payment.aggregate({
+    where: { businessId },
+    _sum: {
+      amount: true,
+      amountAllocated: true
+    }
+  });
+
+  const totalPaymentsMade = payments._sum.amount || 0;
+  const paymentsAllocated = payments._sum.amountAllocated || 0;
+  const paymentsRemaining = totalPaymentsMade - paymentsAllocated;
+
+  // 3. Total Credit note
+  const creditNotes = await prisma.creditNote.aggregate({
+    where: { businessId },
+    _sum: {
+      amount: true
+    }
+  });
+
+  const totalCreditNotes = creditNotes._sum.amount || 0;
+
+  // 4. Detailed lists for tables (limit 1000)
+  const customersListRaw = await prisma.customer.findMany({
+    where: { businessId, isDeleted: false },
+    select: {
+      id: true,
+      company: true,
+      phone: true,
+      createdAt: true,
+      customerContacts: {
+        select: { email: true },
+        take: 1
+      }
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 1000
+  });
+
+  const customersList = customersListRaw.map(c => ({
+    id: c.id,
+    company: c.company,
+    phone: c.phone,
+    email: c.customerContacts?.[0]?.email || null,
+    createdAt: c.createdAt
+  }));
+
+  const paymentsList = await prisma.payment.findMany({
+    where: { businessId },
+    select: {
+      id: true,
+      paymentDate: true,
+      amount: true,
+      amountAllocated: true,
+      status: true,
+      paymentMode: true,
+      customer: {
+        select: {
+          company: true
+        }
+      },
+      project: {
+        select: {
+          projectName: true
+        }
+      }
+    },
+    orderBy: { paymentDate: 'desc' },
+    take: 1000
+  });
+
+  const creditNotesList = await prisma.creditNote.findMany({
+    where: { businessId },
+    select: {
+      id: true,
+      createdAt: true,
+      amount: true,
+      remainingAmount: true,
+      status: true,
+      customer: {
+        select: {
+          company: true
+        }
+      }
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 1000
+  });
+
+  return {
+    totalCustomers,
+    totalPaymentsMade,
+    paymentsAllocated,
+    paymentsRemaining,
+    totalCreditNotes,
+    customersList,
+    paymentsList,
+    creditNotesList
+  };
+};
+
 module.exports = {
-  getSalesDashboard
+  getSalesDashboard,
+  getBasicSalesReport
 };

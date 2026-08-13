@@ -19,7 +19,7 @@ exports.createPayment = async (req, res) => {
     const userId = req.user.userId || req.user.id;
     const userEmail = req.user.email;
 
-    const { invoiceId, billId, quotationId } = req.params;
+    const { invoiceId, billId, quotationId, customerId, projectId } = req.params;
 
     //////////////////////////////////////////////////////
     // 🔥 BILL PAYMENT (PRESERVED LOGIC)
@@ -205,7 +205,6 @@ exports.createPayment = async (req, res) => {
     //////////////////////////////////////////////////////
     // 🔥 CUSTOMER PAYMENT (UNASSIGNED ADVANCE)
     //////////////////////////////////////////////////////
-    const { customerId } = req.params;
     if (customerId) {
       const validatedData = createPaymentSchema.parse(req.body);
 
@@ -218,7 +217,22 @@ exports.createPayment = async (req, res) => {
       );
     }
 
-    return errorResponse(res, "Missing invoiceId, billId, quotationId, or customerId parameter", 400);
+    //////////////////////////////////////////////////////
+    // 🔥 PROJECT PAYMENT
+    //////////////////////////////////////////////////////
+    if (projectId) {
+      const validatedData = createPaymentSchema.parse(req.body);
+
+      const result = await paymentService.createProjectPayment(businessId, userId, userEmail, projectId, validatedData);
+
+      return successResponse(
+        res,
+        result,
+        "Project payment recorded successfully"
+      );
+    }
+
+    return errorResponse(res, "Missing invoiceId, billId, quotationId, customerId, or projectId parameter", 400);
 
   } catch (error) {
     console.error("createPayment controller error:", error);
@@ -259,6 +273,23 @@ exports.getQuotationPayments = async (req, res) => {
     return successResponse(res, payments, "Quotation payments retrieved successfully");
   } catch (err) {
     console.error("getQuotationPayments controller error:", err);
+    return errorResponse(res, err.message, 500);
+  }
+};
+
+//////////////////////////////////////////////////////
+// GET PAYMENTS BY PROJECT
+//////////////////////////////////////////////////////
+exports.getProjectPayments = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const { projectId } = req.params;
+
+    const payments = await paymentService.getPaymentsByProjectId(businessId, projectId);
+
+    return successResponse(res, payments, "Project payments retrieved successfully");
+  } catch (err) {
+    console.error("getProjectPayments controller error:", err);
     return errorResponse(res, err.message, 500);
   }
 };
@@ -354,6 +385,13 @@ exports.getPayments = async (req, res) => {
             }
           }
         },
+        project: {
+          select: {
+            id: true,
+            projectName: true,
+            projectCode: true
+          }
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -406,6 +444,20 @@ exports.downloadPaymentPdf = async (req, res) => {
           payments: quotation.payments
         };
       }
+    } else if (payment.projectId) {
+      const project = await prisma.project.findUnique({
+        where: { id: payment.projectId },
+        include: { customer: true, payments: true }
+      });
+      if (project) {
+        invoice = {
+          invoiceNumber: project.projectCode,
+          invoiceDate: project.startDate || new Date(),
+          grandTotal: project.budget,
+          customer: project.customer,
+          payments: project.payments
+        };
+      }
     } else if (payment.billId) {
       const bill = await prisma.bill.findUnique({
         where: { id: payment.billId },
@@ -454,5 +506,143 @@ exports.downloadPaymentPdf = async (req, res) => {
       success: false,
       message: "Failed to download PDF",
     });
+  }
+};
+
+const generateInvoiceNumber = require("../utils/generateInvoiceNumber");
+
+exports.getPaymentDetails = async (req, res) => {
+  try {
+    const payment = await prisma.payment.findFirst({
+      where: { id: req.params.paymentId, businessId: req.business.id },
+      include: {
+        paymentAllocations: {
+          include: { invoice: true }
+        }
+      }
+    });
+
+    if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
+
+    const amount_unapplied = Number(payment.amount) - Number(payment.amountAllocated || 0);
+    res.json({ success: true, data: { ...payment, unappliedBalance: amount_unapplied } });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.allocateNewInvoice = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const { invoiceAmount, invoiceNumber, dueDate, description } = req.body;
+    const amount = Number(invoiceAmount);
+
+    if (amount <= 0) return res.status(400).json({ success: false, message: "Invalid amount" });
+
+    await prisma.$transaction(async (tx) => {
+      const payments = await tx.$queryRaw`SELECT * FROM "payments" WHERE "id" = ${paymentId} AND "businessId" = ${req.business.id} FOR UPDATE`;
+      if (!payments || payments.length === 0) throw new Error("Payment not found");
+      const payment = payments[0];
+      
+      const unapplied = Number(payment.amount) - Number(payment.amountAllocated);
+      if (amount > unapplied) throw new Error("Allocation amount exceeds unapplied balance");
+
+      const invNum = invoiceNumber || await generateInvoiceNumber(req.business.id);
+
+      const newInvoice = await tx.invoice.create({
+        data: {
+          businessId: req.business.id,
+          customerId: payment.customerId, // assuming payment has customerId
+          invoiceNumber: invNum,
+          status: 'PAID',
+          invoiceDate: new Date(),
+          dueDate: dueDate ? new Date(dueDate) : null,
+          grandTotal: amount,
+          subtotal: amount,
+          amountPaid: amount,
+          adminNote: description
+        }
+      });
+
+      await tx.paymentAllocation.create({
+        data: {
+          paymentId,
+          invoiceId: newInvoice.id,
+          allocatedAmount: amount,
+          allocationType: 'new_invoice',
+          createdBy: req.user.userId || req.user.id
+        }
+      });
+
+      const newAllocated = Number(payment.amountAllocated) + amount;
+      const newStatus = newAllocated >= Number(payment.amount) ? 'fully_applied' : 'partially_applied';
+      
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { amountAllocated: newAllocated, status: newStatus }
+      });
+    });
+
+    res.json({ success: true, message: "Allocated to new invoice successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.allocateExistingInvoice = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const { invoiceId, amount: amountStr } = req.body;
+    const amount = Number(amountStr);
+
+    if (amount <= 0) return res.status(400).json({ success: false, message: "Invalid amount" });
+
+    await prisma.$transaction(async (tx) => {
+      const payments = await tx.$queryRaw`SELECT * FROM "payments" WHERE "id" = ${paymentId} AND "businessId" = ${req.business.id} FOR UPDATE`;
+      if (!payments || payments.length === 0) throw new Error("Payment not found");
+      const payment = payments[0];
+
+      const invoices = await tx.$queryRaw`SELECT * FROM "invoices" WHERE "id" = ${invoiceId} AND "businessId" = ${req.business.id} FOR UPDATE`;
+      if (!invoices || invoices.length === 0) throw new Error("Invoice not found");
+      const invoice = invoices[0];
+
+      if (invoice.status !== 'UNPAID') throw new Error("Invoice must be UNPAID");
+
+      const unapplied = Number(payment.amount) - Number(payment.amountAllocated);
+      const invoiceRemaining = Number(invoice.grandTotal) - Number(invoice.amountPaid);
+      const allocAmount = Math.min(amount, unapplied, invoiceRemaining);
+
+      if (allocAmount <= 0) throw new Error("Cannot allocate this amount");
+
+      await tx.paymentAllocation.create({
+        data: {
+          paymentId,
+          invoiceId,
+          allocatedAmount: allocAmount,
+          allocationType: 'existing_invoice',
+          createdBy: req.user.userId || req.user.id
+        }
+      });
+
+      const newAmountPaid = Number(invoice.amountPaid) + allocAmount;
+      const newInvStatus = newAmountPaid >= Number(invoice.grandTotal) ? 'PAID' : 'PARTIALLY_PAID';
+      
+      await tx.invoice.update({
+        where: { id: invoiceId },
+        data: { amountPaid: newAmountPaid, status: newInvStatus }
+      });
+
+      const newAllocated = Number(payment.amountAllocated) + allocAmount;
+      const newStatus = newAllocated >= Number(payment.amount) ? 'fully_applied' : 'partially_applied';
+      
+      await tx.payment.update({
+        where: { id: paymentId },
+        data: { amountAllocated: newAllocated, status: newStatus }
+      });
+    });
+
+    res.json({ success: true, message: "Allocated to existing invoice successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
