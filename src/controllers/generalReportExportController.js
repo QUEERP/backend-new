@@ -2,14 +2,17 @@ const prisma = require("../config/prisma");
 const XLSX = require("xlsx");
 const PDFDocument = require("pdfkit");
 
-const buildPDF = (res, title, headers, colWidths, dataRows) => {
-  const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+const buildPDF = (res, title, headers, colWidths, dataRows, businessName = "") => {
+  const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'portrait' });
   res.setHeader('Content-Type', 'application/pdf');
   doc.pipe(res);
 
-  doc.fontSize(20).text(title, { align: 'center' });
+  if (businessName) {
+    doc.fontSize(16).font('Helvetica-Bold').text(businessName, { align: 'center' });
+  }
+  doc.fontSize(14).font('Helvetica').text(title, { align: 'center' });
   doc.moveDown(0.5);
-  doc.fontSize(10).text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
+  doc.fontSize(10).font('Helvetica-Oblique').text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
   doc.moveDown(1.5);
   
   if (dataRows.length === 0) {
@@ -18,28 +21,52 @@ const buildPDF = (res, title, headers, colWidths, dataRows) => {
     return;
   }
 
-  const tableTop = doc.y;
-  let currentX = 30;
-  doc.font('Helvetica-Bold').fontSize(10);
-  headers.forEach((h, i) => {
-    doc.text(h, currentX, tableTop, { width: colWidths[i] });
-    currentX += colWidths[i] + 10;
-  });
-  
-  let currentY = tableTop + 20;
+  const drawHeaders = (y) => {
+    let currentX = 40;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000');
+    headers.forEach((h, i) => {
+      const isRight = h === 'Debit' || h === 'Credit' || h === 'Amount' || h === 'Balance';
+      doc.text(h, currentX, y, { width: colWidths[i], align: isRight ? 'right' : 'left' });
+      currentX += colWidths[i] + 10;
+    });
+    doc.moveTo(40, y + 14).lineTo(555, y + 14).lineWidth(1).strokeColor('#000000').stroke();
+    return y + 25;
+  };
+
+  let currentY = drawHeaders(doc.y);
   doc.font('Helvetica').fontSize(9);
   
   dataRows.forEach(row => {
-    if (currentY > 500) {
+    if (currentY > 750) {
       doc.addPage();
-      currentY = 30;
+      currentY = 40;
+      currentY = drawHeaders(currentY);
+      doc.font('Helvetica').fontSize(9);
     }
-    currentX = 30;
+    
+    let currentX = 40;
+    const isTotalRow = String(row[0]).toUpperCase().includes('TOTAL');
+    if (isTotalRow) {
+      doc.moveTo(40, currentY - 5).lineTo(555, currentY - 5).lineWidth(1).strokeColor('#dddddd').stroke();
+      doc.font('Helvetica-Bold');
+    } else {
+      doc.font('Helvetica');
+    }
+
     row.forEach((text, i) => {
-      doc.text(String(text || '-'), currentX, currentY, { width: colWidths[i] });
+      const isRight = headers[i] === 'Debit' || headers[i] === 'Credit' || headers[i] === 'Amount' || headers[i] === 'Balance';
+      doc.text(String(text || '-'), currentX, currentY, { width: colWidths[i], align: isRight ? 'right' : 'left' });
       currentX += colWidths[i] + 10;
     });
-    currentY += 20;
+    
+    if (isTotalRow) {
+      doc.moveTo(40, currentY + 12).lineTo(555, currentY + 12).lineWidth(1).strokeColor('#000000').stroke();
+      doc.moveTo(40, currentY + 14).lineTo(555, currentY + 14).lineWidth(1).strokeColor('#000000').stroke();
+      currentY += 25;
+    } else {
+      doc.moveTo(40, currentY + 12).lineTo(555, currentY + 12).lineWidth(0.5).strokeColor('#eeeeee').stroke();
+      currentY += 20;
+    }
   });
 
   doc.end();
@@ -133,27 +160,64 @@ exports.exportBalanceSheetPDF = async (req, res) => {
   try {
     const data = await getBalanceSheetData(req.business.id);
     const fmt = (n) => `$${(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const businessName = req.business.name || "Business Name";
+    const dateStr = new Date().toISOString().split('T')[0];
     
-    const headers = ['Category', 'Account', 'Balance'];
-    const widths = [150, 300, 150];
-    const rows = [];
-    
-    rows.push(['ASSETS', '', '']);
-    data.assets.forEach(a => rows.push(['', a.name, fmt(a.balance)]));
-    rows.push(['', 'Total Assets', fmt(data.totalAssets)]);
-    rows.push(['', '', '']);
-    
-    rows.push(['LIABILITIES', '', '']);
-    data.liabilities.forEach(l => rows.push(['', l.name, fmt(l.balance)]));
-    rows.push(['', 'Total Liabilities', fmt(data.totalLiabilities)]);
-    rows.push(['', '', '']);
-    
-    rows.push(['EQUITY', '', '']);
-    data.equities.forEach(e => rows.push(['', e.name, fmt(e.balance)]));
-    rows.push(['', 'Total Equity', fmt(data.totalEquity)]);
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=Balance_Sheet_${dateStr}.pdf`);
+    doc.pipe(res);
 
-    res.setHeader('Content-Disposition', `attachment; filename=Balance_Sheet_${new Date().toISOString().split('T')[0]}.pdf`);
-    buildPDF(res, 'Balance Sheet', headers, widths, rows);
+    doc.fontSize(16).font('Helvetica-Bold').text(businessName, { align: 'center' });
+    doc.fontSize(14).font('Helvetica').text('Balance Sheet', { align: 'center' });
+    doc.fontSize(10).font('Helvetica-Oblique').text(`As of ${dateStr}`, { align: 'center' });
+    doc.moveDown(2);
+
+    let currentY = doc.y;
+    
+    const drawSection = (title, items, totalLabel, totalAmount, isAsset) => {
+      doc.fontSize(12).font('Helvetica-Bold').fillColor('#000000').text(title, 50, currentY);
+      doc.moveTo(50, currentY + 14).lineTo(545, currentY + 14).lineWidth(1).strokeColor('#dddddd').stroke();
+      currentY += 20;
+
+      doc.fontSize(10).font('Helvetica').fillColor('#333333');
+      items.forEach(item => {
+        if (item.balance === 0 && item.id !== 'cash') return; 
+        doc.text(item.name, 70, currentY);
+        doc.text(fmt(item.balance), 400, currentY, { width: 145, align: 'right' });
+        currentY += 15;
+      });
+
+      currentY += 5;
+      doc.moveTo(400, currentY).lineTo(545, currentY).lineWidth(1).strokeColor('#000000').stroke();
+      currentY += 5;
+      
+      doc.font('Helvetica-Bold').fillColor('#000000');
+      doc.text(totalLabel, 50, currentY);
+      doc.text(fmt(totalAmount), 400, currentY, { width: 145, align: 'right' });
+      
+      if (isAsset) {
+        doc.moveTo(400, currentY + 12).lineTo(545, currentY + 12).lineWidth(1).stroke();
+        doc.moveTo(400, currentY + 14).lineTo(545, currentY + 14).lineWidth(1).stroke();
+      }
+      
+      currentY += 30;
+    };
+
+    drawSection('Assets', data.assets, 'Total Assets', data.totalAssets, true);
+    drawSection('Liabilities', data.liabilities, 'Total Liabilities', data.totalLiabilities, false);
+    drawSection('Equity', data.equities, 'Total Equity', data.totalEquity, false);
+
+    doc.moveTo(50, currentY).lineTo(545, currentY).lineWidth(1).strokeColor('#dddddd').stroke();
+    currentY += 10;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#000000');
+    doc.text('Total Liabilities and Equity', 50, currentY);
+    doc.text(fmt(data.totalLiabilities + data.totalEquity), 400, currentY, { width: 145, align: 'right' });
+    
+    doc.moveTo(400, currentY + 14).lineTo(545, currentY + 14).lineWidth(1).stroke();
+    doc.moveTo(400, currentY + 16).lineTo(545, currentY + 16).lineWidth(1).stroke();
+
+    doc.end();
   } catch (err) { res.status(500).send(err.message); }
 };
 
@@ -238,7 +302,7 @@ exports.exportTrialBalancePDF = async (req, res) => {
     rows.push(['TOTAL', '', fmt(data.totalDebit), fmt(data.totalCredit)]);
 
     res.setHeader('Content-Disposition', `attachment; filename=Trial_Balance_${new Date().toISOString().split('T')[0]}.pdf`);
-    buildPDF(res, 'Trial Balance', headers, widths, rows);
+    buildPDF(res, 'Trial Balance', headers, widths, rows, req.business.name);
   } catch (err) { res.status(500).send(err.message); }
 };
 
@@ -313,7 +377,7 @@ exports.exportGeneralLedgerPDF = async (req, res) => {
     ]);
 
     res.setHeader('Content-Disposition', `attachment; filename=General_Ledger_${new Date().toISOString().split('T')[0]}.pdf`);
-    buildPDF(res, 'General Ledger', headers, widths, rows);
+    buildPDF(res, 'General Ledger', headers, widths, rows, req.business.name);
   } catch (err) { res.status(500).send(err.message); }
 };
 
@@ -393,6 +457,6 @@ exports.exportProfitLossPDF = async (req, res) => {
     ];
 
     res.setHeader('Content-Disposition', `attachment; filename=Profit_Loss_${new Date().toISOString().split('T')[0]}.pdf`);
-    buildPDF(res, 'Profit & Loss Statement', headers, widths, rows);
+    buildPDF(res, 'Profit & Loss Statement', headers, widths, rows, req.business.name);
   } catch (err) { res.status(500).send(err.message); }
 };
