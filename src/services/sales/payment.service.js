@@ -63,6 +63,18 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
       });
     }
 
+    if (data.creditNoteId) {
+      const cnToSettle = await tx.creditNote.findFirst({
+        where: { id: data.creditNoteId, businessId }
+      });
+      if (cnToSettle) {
+        await tx.creditNote.update({
+          where: { id: cnToSettle.id },
+          data: { status: "SETTLED", remainingAmount: 0 }
+        });
+      }
+    }
+
     // 6. Update Invoice Status
     let status = "UNPAID";
     if (totalPaid === 0) {
@@ -277,6 +289,18 @@ const createProjectPayment = async (businessId, userId, userEmail, projectId, da
         createdBy: userId
       }
     });
+
+    if (data.creditNoteId) {
+      const cn = await tx.creditNote.findFirst({
+        where: { id: data.creditNoteId, businessId }
+      });
+      if (cn) {
+        await tx.creditNote.update({
+          where: { id: cn.id },
+          data: { status: "SETTLED", remainingAmount: 0 }
+        });
+      }
+    }
 
     // Log Audit & Trigger System Alert
     await logAction(tx, {
