@@ -1962,6 +1962,15 @@ exports.getReportSummary = async (req, res) => {
       data.invoices = invoices;
     }
 
+    if (reportType === 'payments') {
+      const payments = await prisma.payment.findMany({
+        where: { businessId: bId, projectId: { not: null }, ...(projectId ? { projectId } : {}), ...(Object.keys(dateFilter).length ? { paymentDate: dateFilter } : {}) },
+        include: { project: true },
+        orderBy: { paymentDate: 'desc' }
+      });
+      data.payments = payments;
+    }
+
     if (reportType === 'timesheets') {
       const entries = await prisma.timeEntry.findMany({
         where: { businessId: bId, ...(projectId ? { projectId } : {}), ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}) },

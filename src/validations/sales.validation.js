@@ -166,7 +166,8 @@ const createPaymentSchema = z.object({
   transactionId: z.string().optional().nullable(),
   note: z.string().optional().nullable(),
   bankReference: z.string().optional().nullable(),
-  referenceNumber: z.string().optional().nullable()
+  referenceNumber: z.string().optional().nullable(),
+  creditNoteId: z.string().uuid().optional().nullable()
 });
 
 // 5. Sales Return Schema
