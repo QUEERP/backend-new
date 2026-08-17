@@ -524,6 +524,14 @@ exports.getPayments = async (req, res) => {
             projectCode: true
           }
         },
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            company: true,
+            currency: true
+          }
+        }
       },
       orderBy: { createdAt: "desc" },
     });
@@ -609,6 +617,20 @@ exports.downloadPaymentPdf = async (req, res) => {
             vatNumber: bill.vendor?.taxId
           },
           payments: bill.payments
+        };
+      }
+    } else if (payment.customerId) {
+      const customer = await prisma.customer.findUnique({
+        where: { id: payment.customerId }
+      });
+      if (customer) {
+        invoice = {
+          invoiceNumber: 'ADVANCE',
+          invoiceDate: payment.paymentDate,
+          grandTotal: payment.amount,
+          customer: customer,
+          payments: [],
+          currency: customer.currency
         };
       }
     }
