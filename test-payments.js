@@ -1,19 +1,10 @@
-const { getPayments } = require('./src/controllers/paymentController');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
-async function test() {
-  const req = {
-    business: { id: 'a21c8ef4-bd77-491d-955e-819710afc26c' }
-  };
-  
-  const res = {
-    status: (code) => {
-      console.log('Status:', code);
-      return { json: (data) => console.log('Response:', JSON.stringify(data, null, 2)) };
-    },
-    json: (data) => console.log('Response:', JSON.stringify(data, null, 2))
-  };
-
-  await getPayments(req, res);
-  process.exit(0);
+async function main() {
+  const payments = await prisma.payment.findMany({
+    where: { businessId: '62526be2-9817-462f-a392-74b0bd792006' }
+  });
+  console.log('Total payments:', payments.length);
 }
-test();
+main().catch(console.error).finally(() => prisma.$disconnect());

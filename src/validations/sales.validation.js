@@ -170,6 +170,16 @@ const createPaymentSchema = z.object({
   creditNoteId: z.string().uuid().optional().nullable()
 });
 
+const updatePaymentSchema = z.object({
+  amount: z.number().positive("Payment amount must be greater than 0"),
+  paymentDate: z.coerce.date(),
+  paymentMode: z.enum(["CASH", "BANK_TRANSFER", "UPI", "CREDIT_CARD", "DEBIT_CARD", "CHEQUE", "ONLINE"]),
+  transactionId: z.string().optional().nullable(),
+  note: z.string().optional().nullable(),
+  bankReference: z.string().optional().nullable(),
+  referenceNumber: z.string().optional().nullable()
+});
+
 // 5. Sales Return Schema
 const createSalesReturnSchema = z.object({
   invoiceId: z.string().uuid("Invalid invoice ID").optional().nullable(),
@@ -210,6 +220,7 @@ module.exports = {
   createInvoiceSchema,
   updateInvoiceSchema,
   createPaymentSchema,
+  updatePaymentSchema,
   createSalesReturnSchema,
   createRecurringInvoiceSchema
 };

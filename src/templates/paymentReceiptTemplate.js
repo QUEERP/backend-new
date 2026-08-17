@@ -3,7 +3,22 @@ module.exports = (payment, invoice, settings) => {
   //////////////////////////////////////////////////////
   // CURRENCY
   //////////////////////////////////////////////////////
-  const symbol = settings?.currencySymbol || "$";
+  const currencyCode = invoice?.currency || settings?.currency || "USD";
+
+  const getCurrencySymbol = (code) => {
+    switch (code) {
+      case 'INR': return '₹';
+      case 'USD': return '$';
+      case 'EUR': return '€';
+      case 'GBP': return '£';
+      case 'CAD': return 'C$';
+      case 'AUD': return 'A$';
+      case 'AED': return 'AED';
+      default: return settings?.currencySymbol || "$";
+    }
+  };
+
+  const symbol = getCurrencySymbol(currencyCode);
 
   //////////////////////////////////////////////////////
   // CALCULATIONS
@@ -244,8 +259,8 @@ module.exports = (payment, invoice, settings) => {
 
       <div class="logo">
         ${settings?.companyLogo
-          ? `<img src="${settings.companyLogo}" />`
-          : ""}
+      ? `<img src="${settings.companyLogo}" />`
+      : ""}
       </div>
 
       <div class="company-info">
@@ -269,8 +284,8 @@ module.exports = (payment, invoice, settings) => {
         ${invoice.customer?.billingStreet || ""}<br/>
         ${invoice.customer?.billingCity || ""}<br/>
         ${invoice.customer?.vatNumber
-          ? `TRN: ${invoice.customer.vatNumber}`
-          : ""}
+      ? `TRN: ${invoice.customer.vatNumber}`
+      : ""}
       </div>
 
       <div class="meta-box">
@@ -282,8 +297,8 @@ module.exports = (payment, invoice, settings) => {
           ${payment.paymentMode || "-"}
         </span><br/>
         ${payment.transactionId
-          ? `Ref: ${payment.transactionId}`
-          : ""}
+      ? `Ref: ${payment.transactionId}`
+      : ""}
       </div>
 
     </div>
@@ -336,8 +351,8 @@ module.exports = (payment, invoice, settings) => {
       <div class="signature-box">
         <div class="signature-img">
           ${settings?.signatureUrl
-            ? `<img src="${settings.signatureUrl}" />`
-            : ""}
+      ? `<img src="${settings.signatureUrl}" />`
+      : ""}
         </div>
         <div class="signature-line"></div>
         <div class="signature-label">Authorized Signature</div>

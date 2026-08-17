@@ -1,7 +1,7 @@
 const prisma = require("../config/prisma");
 const { successResponse, errorResponse } = require("../utils/response");
 const paymentService = require("../services/sales/payment.service");
-const { createPaymentSchema } = require("../validations/sales.validation");
+const { createPaymentSchema, updatePaymentSchema } = require("../validations/sales.validation");
 
 const createCreditNote = require("../utils/createCreditNote");
 const generateCreditNumber = require("../utils/generateCreditNumber");
@@ -244,6 +244,138 @@ exports.createPayment = async (req, res) => {
 };
 
 //////////////////////////////////////////////////////
+// UPDATE PAYMENT
+//////////////////////////////////////////////////////
+exports.updatePayment = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const { paymentId } = req.params;
+
+    const validatedData = updatePaymentSchema.parse(req.body);
+
+    const payment = await prisma.payment.findUnique({
+      where: { id: paymentId, businessId },
+      include: {
+        invoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            invoiceDate: true,
+            grandTotal: true,
+            customer: true,
+            payments: true
+          }
+        },
+        bill: {
+          select: {
+            id: true,
+            billNumber: true,
+            vendor: {
+              select: { name: true }
+            }
+          }
+        },
+        quotation: {
+          select: {
+            id: true,
+            quoteNumber: true,
+            customer: true
+          }
+        },
+        project: {
+          select: {
+            id: true,
+            projectCode: true,
+            projectName: true,
+            customer: true
+          }
+        }
+      }
+    });
+
+    if (!payment) {
+      return errorResponse(res, "Payment not found", 404);
+    }
+
+    if (validatedData.amount < payment.amountAllocated) {
+      return errorResponse(res, `Cannot reduce amount below allocated amount (${payment.amountAllocated})`, 400);
+    }
+
+    const updatedPayment = await prisma.payment.update({
+      where: { id: paymentId },
+      data: {
+        amount: validatedData.amount,
+        paymentDate: validatedData.paymentDate,
+        paymentMode: validatedData.paymentMode,
+        transactionId: validatedData.transactionId,
+        note: validatedData.note,
+        status: validatedData.amount === payment.amountAllocated ? 'fully_applied' : (payment.amountAllocated > 0 ? 'partially_applied' : 'unapplied')
+      },
+    });
+
+    // Check if we need to update the invoice's amountPaid if this payment is directly linked to an invoice (and not just allocated)
+    // Actually, in the current system, if a payment is created directly on an invoice, invoiceId is set.
+    // If the amount is changed, we should probably update the invoice's amountPaid.
+    // However, since allocations are tracked via paymentAllocations now (from previous code), 
+    // it's safer to just let the user manage it, OR recalculate it.
+    // For simplicity, we just update the payment record.
+
+    // Regenerate PDF
+    try {
+      let documentData = null;
+      if (payment.invoiceId && payment.invoice) {
+        documentData = payment.invoice;
+      } else if (payment.billId && payment.bill) {
+        documentData = payment.bill;
+      } else if (payment.quotationId && payment.quotation) {
+        documentData = {
+          invoiceNumber: payment.quotation.quoteNumber,
+          customer: payment.quotation.customer,
+          grandTotal: 0
+        };
+      } else if (payment.projectId && payment.project) {
+        documentData = {
+          invoiceNumber: payment.project.projectCode,
+          customer: payment.project.customer,
+          grandTotal: 0
+        };
+      } else {
+        documentData = {
+          invoiceNumber: '-',
+          grandTotal: 0
+        };
+      }
+
+      const settings = await prisma.settings.findUnique({
+        where: { businessId },
+      });
+
+      const pdfBuffer = await generatePaymentPdf(
+        updatedPayment,
+        documentData,
+        settings
+      );
+
+      const pdfUrl = await uploadPaymentPdf(pdfBuffer, updatedPayment.id);
+      await prisma.payment.update({
+        where: { id: updatedPayment.id },
+        data: { pdfUrl },
+      });
+    } catch (pdfError) {
+      console.error("[Payment PDF] Invoice payment PDF regeneration failed:", pdfError.message);
+    }
+
+    return successResponse(res, updatedPayment, "Payment updated successfully");
+  } catch (error) {
+    console.error("updatePayment controller error:", error);
+    if (error.name === "ZodError") {
+      return errorResponse(res, error.errors[0].message, 400, error.errors);
+    }
+    return errorResponse(res, error.message, 500);
+  }
+};
+
+//////////////////////////////////////////////////////
 // GET PAYMENTS BY INVOICE
 //////////////////////////////////////////////////////
 exports.getInvoicePayments = async (req, res) => {
@@ -441,7 +573,8 @@ exports.downloadPaymentPdf = async (req, res) => {
           invoiceDate: quotation.issueDate,
           grandTotal: quotation.totalAmount,
           customer: quotation.customer,
-          payments: quotation.payments
+          payments: quotation.payments,
+          currency: quotation.currency
         };
       }
     } else if (payment.projectId) {
@@ -455,7 +588,8 @@ exports.downloadPaymentPdf = async (req, res) => {
           invoiceDate: project.startDate || new Date(),
           grandTotal: project.budget,
           customer: project.customer,
-          payments: project.payments
+          payments: project.payments,
+          currency: project.currency
         };
       }
     } else if (payment.billId) {
@@ -518,6 +652,9 @@ exports.getPaymentDetails = async (req, res) => {
       include: {
         paymentAllocations: {
           include: { invoice: true }
+        },
+        project: {
+          select: { customerId: true }
         }
       }
     });
@@ -525,7 +662,8 @@ exports.getPaymentDetails = async (req, res) => {
     if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
 
     const amount_unapplied = Number(payment.amount) - Number(payment.amountAllocated || 0);
-    res.json({ success: true, data: { ...payment, unappliedBalance: amount_unapplied } });
+    const customerId = payment.customerId || payment.project?.customerId || null;
+    res.json({ success: true, data: { ...payment, customerId, unappliedBalance: amount_unapplied } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
