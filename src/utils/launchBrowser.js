@@ -267,7 +267,17 @@ async function htmlToPdfBuffer(html, pdfOptions = {}) {
 
     try {
       const newPageStart = Date.now();
-      page = await browser.newPage();
+      try {
+        page = await browser.newPage();
+      } catch (newPageErr) {
+        console.warn(`[TIME: ${Date.now()}] [STEP 7 WARNING] browser.newPage() failed with cached browser. Retrying...`);
+        cachedBrowser = null;
+        if (browser && browser.close) {
+          await browser.close().catch(() => {});
+        }
+        browser = await launchBrowser();
+        page = await browser.newPage();
+      }
       console.log(`[TIME: ${Date.now()}] [STEP 7] New page created. Took ${Date.now() - newPageStart}ms`);
 
       // Track ongoing requests
