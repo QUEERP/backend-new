@@ -1,9 +1,19 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-async function main() {
-  const milestones = await prisma.projectMilestone.findMany();
-  console.log(JSON.stringify(milestones, null, 2));
+async function test() {
+  try {
+    const p = await prisma.payment.findMany({
+      where: { businessId: 'e24ee048-2039-4c2e-a1c9-24bf7b2f943e' },
+      include: {
+        customer: true
+      }
+    });
+    console.log("Count:", p.length);
+  } catch (e) {
+    console.error("Error:", e.message);
+  } finally {
+    await prisma.$disconnect();
+  }
 }
-
-main().finally(() => prisma.$disconnect());
+test();
