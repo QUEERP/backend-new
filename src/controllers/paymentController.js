@@ -488,8 +488,7 @@ exports.getPayments = async (req, res) => {
             id: true,
             invoiceNumber: true,
             currency: true,
-            projectId: true,
-            project: { select: { id: true, projectName: true, projectCode: true } }
+            projects: { select: { id: true, projectName: true, projectCode: true } }
           },
         },
         bill: {
