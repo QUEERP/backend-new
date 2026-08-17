@@ -488,7 +488,8 @@ exports.getPayments = async (req, res) => {
             id: true,
             invoiceNumber: true,
             currency: true,
-            projects: { select: { id: true, projectName: true, projectCode: true } }
+            projectId: true,
+            project: { select: { id: true, projectName: true, projectCode: true } }
           },
         },
         bill: {
@@ -526,7 +527,6 @@ exports.getPayments = async (req, res) => {
         customer: {
           select: {
             id: true,
-            name: true,
             company: true,
             currency: true
           }
@@ -537,7 +537,8 @@ exports.getPayments = async (req, res) => {
 
     return successResponse(res, payments, "All payments retrieved successfully");
   } catch (error) {
-    return errorResponse(res, "Failed to fetch payments", 500);
+    console.error("getPayments error:", error);
+    return errorResponse(res, `Failed to fetch payments: ${error.message}`, 500);
   }
 };
 
@@ -676,7 +677,10 @@ exports.getPaymentDetails = async (req, res) => {
         },
         project: {
           select: { customerId: true }
-        }
+        },
+        invoice: { select: { currency: true } },
+        quotation: { select: { currency: true } },
+        customer: { select: { currency: true } }
       }
     });
 
@@ -684,7 +688,8 @@ exports.getPaymentDetails = async (req, res) => {
 
     const amount_unapplied = Number(payment.amount) - Number(payment.amountAllocated || 0);
     const customerId = payment.customerId || payment.project?.customerId || null;
-    res.json({ success: true, data: { ...payment, customerId, unappliedBalance: amount_unapplied } });
+    const currency = payment.invoice?.currency || payment.quotation?.currency || payment.customer?.currency || null;
+    res.json({ success: true, data: { ...payment, customerId, currency, unappliedBalance: amount_unapplied } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
