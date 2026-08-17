@@ -199,7 +199,8 @@ exports.createProduct = async (req, res) => {
       unit = "pcs",
       taxPercent = 0,
       initialQty,
-      warehouseId
+      warehouseId,
+      locationId
     } = req.body;
 
     if (!name || !sku || price === undefined || price === null || !type) {
@@ -229,6 +230,7 @@ exports.createProduct = async (req, res) => {
       unit,
       initialQty: type === "SERVICE" ? 0 : Number(initialQty),
       warehouseId: type === "SERVICE" ? null : warehouseId,
+      locationId: type === "SERVICE" ? null : locationId,
       performedBy: req.user.userId
     });
 

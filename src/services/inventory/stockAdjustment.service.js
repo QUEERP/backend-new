@@ -1,4 +1,5 @@
 const prisma = require("../../config/prisma");
+const { isTradingBusiness } = require("../../utils/businessHelper");
 const { logAction } = require("../sales/audit.service");
 const { createStockMovement } = require("./movement.service");
 const { generateDocNumber } = require("../sales/quotation.service");
@@ -20,6 +21,7 @@ const createStockAdjustment = async (businessId, userId, userEmail, data) => {
         businessId,
         adjustmentNumber,
         warehouseId: data.warehouseId,
+        locationId: data.locationId || null,
         reason: data.reason || null,
         adjustmentDate: data.adjustmentDate ? new Date(data.adjustmentDate) : new Date(),
         notes: data.notes || null,
@@ -35,7 +37,8 @@ const createStockAdjustment = async (businessId, userId, userEmail, data) => {
       },
       include: {
         items: true,
-        warehouse: true
+        warehouse: true,
+        location: true
       }
     });
 
@@ -48,6 +51,7 @@ const createStockAdjustment = async (businessId, userId, userEmail, data) => {
         businessId,
         productId: item.productId,
         warehouseId: data.warehouseId,
+        locationId: data.locationId || null,
         quantity: quantityVal,
         type: movementType,
         referenceType: "ADJUSTMENT",
@@ -85,6 +89,12 @@ const getStockAdjustments = async (businessId, query = {}) => {
     where.adjustmentNumber = { contains: query.search, mode: "insensitive" };
   }
 
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { businessType: true }
+  });
+  const isTrading = isTradingBusiness(business);
+
   const [adjustments, total] = await Promise.all([
     prisma.stockAdjustment.findMany({
       where,
@@ -92,6 +102,9 @@ const getStockAdjustments = async (businessId, query = {}) => {
       take: limit,
       include: {
         warehouse: { select: { id: true, name: true } },
+        ...(isTrading && {
+          location: { select: { id: true, code: true, name: true } },
+        }),
         items: {
           include: {
             product: { select: { id: true, name: true, sku: true } }
@@ -103,8 +116,16 @@ const getStockAdjustments = async (businessId, query = {}) => {
     prisma.stockAdjustment.count({ where })
   ]);
 
+  let finalAdjustments = adjustments;
+  if (!isTrading) {
+    finalAdjustments = adjustments.map(a => {
+      const { locationId, ...rest } = a;
+      return rest;
+    });
+  }
+
   return {
-    adjustments,
+    adjustments: finalAdjustments,
     total,
     page,
     limit,
@@ -113,10 +134,19 @@ const getStockAdjustments = async (businessId, query = {}) => {
 };
 
 const getStockAdjustmentById = async (businessId, id) => {
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { businessType: true }
+  });
+  const isTrading = isTradingBusiness(business);
+
   const adjustment = await prisma.stockAdjustment.findFirst({
     where: { id, businessId },
     include: {
       warehouse: true,
+      ...(isTrading && {
+        location: true,
+      }),
       items: {
         include: {
           product: true
@@ -126,6 +156,12 @@ const getStockAdjustmentById = async (businessId, id) => {
   });
 
   if (!adjustment) throw new Error("Stock adjustment not found");
+  
+  if (!isTrading) {
+    const { locationId, ...rest } = adjustment;
+    return rest;
+  }
+  
   return adjustment;
 };
 

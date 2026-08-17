@@ -1,6 +1,13 @@
 const prisma = require("../../config/prisma");
+const { isTradingBusiness } = require("../../utils/businessHelper");
 
 const getStockLevels = async (businessId, query = {}) => {
+  // Fetch business to check type
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { businessType: true }
+  });
+  const isTrading = isTradingBusiness(business);
   const where = {
     product: { businessId, type: 'GOODS' }
   };
@@ -32,12 +39,29 @@ const getStockLevels = async (businessId, query = {}) => {
           name: true,
           code: true
         }
-      }
+      },
+      ...(isTrading && {
+        location: {
+          select: {
+            id: true,
+            code: true,
+            name: true
+          }
+        }
+      })
     },
     orderBy: {
       product: { name: "asc" }
     }
   });
+
+  // Prisma returns `locationId` on the root of the stock object, let's remove it if not trading
+  if (!isTrading) {
+    return stockRecords.map(record => {
+      const { locationId, ...rest } = record;
+      return rest;
+    });
+  }
 
   return stockRecords;
 };

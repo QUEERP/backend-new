@@ -1848,6 +1848,8 @@ model Warehouse {
 
   createdAt DateTime @default(now())
 
+  locations           WarehouseLocation[]
+
   stock               Stock[]
   stockMovements      StockMovement[]
   serialNumbers       SerialNumber[]
@@ -1883,10 +1885,36 @@ model Stock {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  locationId  String?
+
   product   Product   @relation(fields: [productId], references: [id])
   warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  location  WarehouseLocation? @relation(fields: [locationId], references: [id])
 
-  @@unique([productId, warehouseId])
+  @@unique([productId, warehouseId, locationId])
+}
+
+model WarehouseLocation {
+  id           String   @id @default(uuid())
+  warehouseId  String
+  code         String
+  name         String?
+  locationType String   @default("BIN")
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  
+  stocks           Stock[]
+  stockMovements   StockMovement[]
+  stockAdjustments StockAdjustment[]
+  fromTransfers    StockTransfer[] @relation("FromLocation")
+  toTransfers      StockTransfer[] @relation("ToLocation")
+
+  @@unique([warehouseId, code])
+  @@index([warehouseId])
+  @@map("warehouse_locations")
 }
 
 model Account {
@@ -2723,6 +2751,7 @@ model StockMovement {
   businessId      String
   productId       String
   warehouseId     String
+  locationId      String?
   quantity        Float
   type            StockMovementType
   referenceType   String?
@@ -2740,6 +2769,7 @@ model StockMovement {
   business  Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  location  WarehouseLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   @@index([businessId])
   @@index([productId])
@@ -2797,6 +2827,8 @@ model StockTransfer {
   transferNumber  String
   fromWarehouseId String
   toWarehouseId   String
+  fromLocationId  String?
+  toLocationId    String?
   //   status           StockTransferStatus @default(PENDING)
   transferDate    DateTime @default(now())
   notes           String?
@@ -2806,6 +2838,8 @@ model StockTransfer {
   business      Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   fromWarehouse Warehouse           @relation("FromWarehouse", fields: [fromWarehouseId], references: [id])
   toWarehouse   Warehouse           @relation("ToWarehouse", fields: [toWarehouseId], references: [id])
+  fromLocation  WarehouseLocation?  @relation("FromLocation", fields: [fromLocationId], references: [id])
+  toLocation    WarehouseLocation?  @relation("ToLocation", fields: [toLocationId], references: [id])
   items         StockTransferItem[]
 
   @@unique([businessId, transferNumber])
@@ -2832,6 +2866,7 @@ model StockAdjustment {
   businessId       String
   adjustmentNumber String
   warehouseId      String
+  locationId       String?
   reason           String?
   adjustmentDate   DateTime @default(now())
   notes            String?
@@ -2840,6 +2875,7 @@ model StockAdjustment {
 
   business  Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
   warehouse Warehouse             @relation(fields: [warehouseId], references: [id])
+  location  WarehouseLocation?    @relation(fields: [locationId], references: [id])
   items     StockAdjustmentItem[]
 
   @@unique([businessId, adjustmentNumber])
