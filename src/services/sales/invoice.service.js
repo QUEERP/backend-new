@@ -1,5 +1,6 @@
 const prisma = require("../../config/prisma");
 const { logAction, triggerNotification } = require("./audit.service");
+const { getSystemAccounts, postJournalEntries } = require("../ledgerService");
 const { generateDocNumber, calculatePricing } = require("./quotation.service");
 const { releaseStock } = require("./salesOrder.service");
 const { createStockMovement } = require("../inventory/movement.service");
@@ -142,7 +143,8 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
         totalTax: pricing.tax,
         discount: pricing.discount,
         grandTotal: pricing.totalAmount,
-        currency: data.currency || "INR",
+        currency: data.currency || "AED",
+        exchangeRate: Number(data.exchangeRate) || 1.0,
         poNumber: data.poNumber || null,
         poDate: data.poDate ? new Date(data.poDate) : null,
         soNumber: data.soNumber || null,
@@ -196,6 +198,35 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
         }
       });
     }
+
+    // 5.6 POST TO LEDGER
+    const accounts = await getSystemAccounts(tx, businessId);
+    
+    // Tax Engine: Split Revenue and Tax Payable
+    const netRevenue = (pricing.subtotal || 0) - (pricing.discount || 0);
+    const taxAmount = (pricing.tax || 0);
+    const invoiceRate = Number(data.exchangeRate) || 1.0;
+
+    const journalEntries = [
+      // Leg 1: Invoice Issue
+      { businessId, accountId: accounts.SYSTEM_AR, debit: pricing.totalAmount, credit: 0, description: `Invoice #${invoiceNumber}`, exchangeRate: invoiceRate },
+      { businessId, accountId: accounts.SYSTEM_REVENUE, debit: 0, credit: netRevenue, description: `Invoice #${invoiceNumber} (Net Revenue)`, exchangeRate: invoiceRate }
+    ];
+
+    if (taxAmount > 0) {
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_TAX_PAYABLE, debit: 0, credit: taxAmount, description: `Invoice #${invoiceNumber} (Tax)`, exchangeRate: invoiceRate });
+    }
+
+    // Leg 2: COGS / Inventory Outflow
+    if (totalCogs > 0) {
+      journalEntries.push(
+        // COGS and Inventory are already calculated in base currency, so we pass exchangeRate: 1.0
+        { businessId, accountId: accounts.SYSTEM_COGS, debit: totalCogs, credit: 0, description: `COGS for Invoice #${invoiceNumber}`, exchangeRate: 1.0 },
+        { businessId, accountId: accounts.SYSTEM_INVENTORY, debit: 0, credit: totalCogs, description: `Inventory outflow for Invoice #${invoiceNumber}`, exchangeRate: 1.0 }
+      );
+    }
+
+    await postJournalEntries(tx, journalEntries);
 
     // 6. Log & Notify
     await logAction(tx, {
@@ -280,6 +311,7 @@ const convertSalesOrderToInvoice = async (businessId, userId, userEmail, salesOr
         discount: salesOrder.discount,
         grandTotal: salesOrder.totalAmount,
         currency: salesOrder.currency,
+        exchangeRate: salesOrder.exchangeRate || 1.0,
         terms: salesOrder.termsConditions,
         invoiceDate: new Date(),
         dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000), // Default 15 days due date

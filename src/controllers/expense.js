@@ -1,4 +1,5 @@
 const prisma = require("../config/prisma");
+const { getSystemAccounts, getDynamicExpenseAccount, postJournalEntries } = require("../services/ledgerService");
 
 //////////////////////////////////////////////////////
 // CREATE EXPENSE
@@ -44,58 +45,75 @@ exports.createExpense = async (req, res) => {
       }
     }
 
-    const expense = await prisma.expense.create({
-      data: {
-        businessId,
-        title,
-        amount,
-        category,
-        paymentMethod,
-        date: date ? new Date(date) : new Date(),
-        notes,
-        vendorId,
-        customerId: customerId || null,
-        referenceType: referenceType || null,
-        referenceId: referenceId || null,
-        projectId: req.body.projectId || null,
-        currency: currency || 'AED',
-        items: req.body.items && req.body.items.length > 0 ? {
-          create: req.body.items.map(item => {
-            const q = Number(item.quantity || 0);
-            const r = Number(item.rate || 0);
-            const t = Number(item.taxPercent || 0);
-            const taxAmount = (q * r * t) / 100;
-            const amt = (q * r) + taxAmount;
-            return {
-              itemName: item.itemName || null,
-              description: item.description || '',
-              quantity: q,
-              rate: r,
-              taxPercent: t,
-              taxAmount: taxAmount,
-              amount: amt,
-              category: item.category || null
-            }
-          })
-        } : undefined
-      },
-      include: {
-        items: true,
-        vendor: true
-      }
-    });
-
     //////////////////////////////////////////////////////
-    // UPDATE PROJECT ACTUAL COST
+    // ATOMIC TRANSACTION: EXPENSE, PROJECT, LEDGER
     //////////////////////////////////////////////////////
-    if (req.body.projectId) {
-      await prisma.project.update({
-        where: { id: req.body.projectId },
+    const expense = await prisma.$transaction(async (tx) => {
+      const createdExpense = await tx.expense.create({
         data: {
-          actualCost: { increment: amount }
+          businessId,
+          title,
+          amount,
+          category,
+          paymentMethod,
+          date: date ? new Date(date) : new Date(),
+          notes,
+          vendorId,
+          customerId: customerId || null,
+          referenceType: referenceType || null,
+          referenceId: referenceId || null,
+          projectId: req.body.projectId || null,
+          currency: currency || 'AED',
+          items: req.body.items && req.body.items.length > 0 ? {
+            create: req.body.items.map(item => {
+              const q = Number(item.quantity || 0);
+              const r = Number(item.rate || 0);
+              const t = Number(item.taxPercent || 0);
+              const taxAmount = (q * r * t) / 100;
+              const amt = (q * r) + taxAmount;
+              return {
+                itemName: item.itemName || null,
+                description: item.description || '',
+                quantity: q,
+                rate: r,
+                taxPercent: t,
+                taxAmount: taxAmount,
+                amount: amt,
+                category: item.category || null
+              }
+            })
+          } : undefined
+        },
+        include: {
+          items: true,
+          vendor: true
         }
       });
-    }
+
+      if (req.body.projectId) {
+        await tx.project.update({
+          where: { id: req.body.projectId },
+          data: {
+            actualCost: { increment: amount }
+          }
+        });
+      }
+
+      // POST TO LEDGER
+      const accounts = await getSystemAccounts(tx, businessId);
+      const expenseAccountId = await getDynamicExpenseAccount(tx, businessId, category || "General Expense");
+      
+      const journalEntries = [
+        // Debit: Dynamic Expense Category
+        { businessId, accountId: expenseAccountId, debit: amount, credit: 0, description: `Direct Expense: ${title}` },
+        // Credit: Cash/Bank
+        { businessId, accountId: accounts.SYSTEM_CASH, debit: 0, credit: amount, description: `Payment for Direct Expense: ${title}` }
+      ];
+
+      await postJournalEntries(tx, journalEntries);
+
+      return createdExpense;
+    });
 
     res.json({ success: true, data: expense });
 

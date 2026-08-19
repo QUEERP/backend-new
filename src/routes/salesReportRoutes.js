@@ -19,4 +19,12 @@ router.get(
   controller.getBasicSalesReport
 );
 
+router.get(
+  "/trading",
+  auth,
+  businessMiddleware,
+  checkPermission("invoice", "read"),
+  controller.getTradingSalesReport
+);
+
 module.exports = router;

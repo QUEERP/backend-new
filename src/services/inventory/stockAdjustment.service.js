@@ -3,6 +3,7 @@ const { isTradingBusiness } = require("../../utils/businessHelper");
 const { logAction } = require("../sales/audit.service");
 const { createStockMovement } = require("./movement.service");
 const { generateDocNumber } = require("../sales/quotation.service");
+const { getSystemAccounts, postJournalEntries } = require("../ledgerService");
 
 const getPagination = (query) => {
   const page = parseInt(query.page) || 1;
@@ -61,6 +62,35 @@ const createStockAdjustment = async (businessId, userId, userEmail, data) => {
         batchNumber: item.batchNumber || null,
         serialNumbers: item.serialNumbers || []
       });
+    }
+
+    // Compute total adjustment value for ledger
+    let totalAdjustmentValue = 0;
+    for (const item of data.items) {
+      const product = await tx.product.findUnique({ where: { id: item.productId } });
+      const itemCost = product?.unitCost || product?.price || 0;
+      const adjustmentValue = itemCost * parseFloat(item.quantity);
+      if (item.type === "ADD") {
+        totalAdjustmentValue += adjustmentValue;
+      } else {
+        totalAdjustmentValue -= adjustmentValue; // Net will be negative if more removals
+      }
+    }
+
+    if (Math.abs(totalAdjustmentValue) > 0) {
+      const accounts = await getSystemAccounts(tx, businessId);
+      const journalEntries = [];
+      if (totalAdjustmentValue > 0) {
+        // Net increase in stock
+        journalEntries.push({ businessId, accountId: accounts.SYSTEM_INVENTORY, debit: totalAdjustmentValue, credit: 0, description: `Stock Adjustment ${adjustmentNumber} (Add)` });
+        journalEntries.push({ businessId, accountId: accounts.SYSTEM_STOCK_ADJUSTMENT, debit: 0, credit: totalAdjustmentValue, description: `Stock Adjustment ${adjustmentNumber} (Add)` });
+      } else {
+        // Net decrease in stock
+        const absVal = Math.abs(totalAdjustmentValue);
+        journalEntries.push({ businessId, accountId: accounts.SYSTEM_STOCK_ADJUSTMENT, debit: absVal, credit: 0, description: `Stock Adjustment ${adjustmentNumber} (Remove)` });
+        journalEntries.push({ businessId, accountId: accounts.SYSTEM_INVENTORY, debit: 0, credit: absVal, description: `Stock Adjustment ${adjustmentNumber} (Remove)` });
+      }
+      await postJournalEntries(tx, journalEntries);
     }
 
     await logAction(tx, {

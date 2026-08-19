@@ -52,7 +52,23 @@ router.get(
   auth,
   businessMiddleware,
   controller.downloadCreditNotePdf
-)
+);
 
+//////////////////////////////////////////////////////
+// APPLY / REFUND CREDIT NOTE
+//////////////////////////////////////////////////////
+router.post(
+  "/:id/apply",
+  auth,
+  businessMiddleware,
+  controller.applyCreditNote
+);
+
+router.post(
+  "/:id/refund",
+  auth,
+  businessMiddleware,
+  controller.refundCreditNote
+);
 
 module.exports = router;

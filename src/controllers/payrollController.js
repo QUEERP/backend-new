@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
-const generatePdf = require("../utils/generatePayslipPdf");
-const cloudinaryUpload = require("../utils/uploadPdf");
+const generatePdf = require("../utils/generatePdf");
+const pdfWorkflow = require("../utils/pdfWorkflow");
+const { getSystemAccounts, postJournalEntries } = require("../services/ledgerService");
 
 //////////////////////////////////////////////////////
 // BATCH HELPER
@@ -197,39 +198,59 @@ exports.runPayroll = async (req, res) => {
           loanDeduction;
 
         //////////////////////////////////////////////////
-        // CREATE PAYSLIP
+        // ATOMIC TRANSACTION: PAYSLIP, LOAN, LEDGER
         //////////////////////////////////////////////////
-        const payslip = await prisma.payslip.create({
-          data: {
-            payrollId: payroll.id,
-            employeeId: emp.id,
-            employeeName: emp.name,
-            basicSalary,
-            allowance: totalAllowance + overtimePay,
-            deduction:
-              totalDeduction + leaveDeduction + loanDeduction,
-            overtimePay,
-            loanDeduction,
-            netSalary,
-            status: "pending",
-          },
-        });
-
-        //////////////////////////////////////////////////
-        // UPDATE LOAN AFTER EMI
-        //////////////////////////////////////////////////
-        if (loan && loanDeduction > 0) {
-          const newRemaining =
-            loan.remainingAmount - loanDeduction;
-          await prisma.loan.update({
-            where: { id: loan.id },
+        const payslip = await prisma.$transaction(async (tx) => {
+          const createdPayslip = await tx.payslip.create({
             data: {
-              remainingAmount: newRemaining,
-              status:
-                newRemaining <= 0 ? "completed" : "active",
+              payrollId: payroll.id,
+              employeeId: emp.id,
+              employeeName: emp.name,
+              basicSalary,
+              allowance: totalAllowance + overtimePay,
+              deduction: totalDeduction + leaveDeduction + loanDeduction,
+              overtimePay,
+              loanDeduction,
+              netSalary,
+              status: "pending",
             },
           });
-        }
+
+          if (loan && loanDeduction > 0) {
+            const newRemaining = loan.remainingAmount - loanDeduction;
+            await tx.loan.update({
+              where: { id: loan.id },
+              data: {
+                remainingAmount: newRemaining,
+                status: newRemaining <= 0 ? "completed" : "active",
+              },
+            });
+          }
+
+          // Ledger Posting (3-leg Payroll Entry)
+          const accounts = await getSystemAccounts(tx, businessId);
+          const salaryExpense = basicSalary + totalAllowance + overtimePay; // Gross amount
+          
+          const journalEntries = [
+            // Debit: Salary Expense (Gross)
+            { businessId, accountId: accounts.SYSTEM_SALARY_EXPENSE, debit: salaryExpense, credit: 0, description: `Payroll Expense for ${emp.name} (${month}/${year})` },
+          ];
+
+          // Credit: Employee Loan Receivable (if deduction exists)
+          if (loanDeduction > 0) {
+            journalEntries.push({ businessId, accountId: accounts.SYSTEM_EMPLOYEE_LOAN, debit: 0, credit: loanDeduction, description: `Loan Deduction for ${emp.name}` });
+          }
+
+          // Credit: Cash/Bank (Net Paid) -> assuming payment happens now or is staged
+          const otherDeductions = totalDeduction + leaveDeduction;
+          const cashCredit = netSalary + otherDeductions; // Net salary + non-loan deductions. (Ideally deductions hit payable accounts, but using cash for simplicity per request)
+          
+          journalEntries.push({ businessId, accountId: accounts.SYSTEM_CASH, debit: 0, credit: cashCredit, description: `Net Salary & Deductions for ${emp.name}` });
+
+          await postJournalEntries(tx, journalEntries);
+
+          return createdPayslip;
+        });
 
         //////////////////////////////////////////////////
         // GENERATE PDF
@@ -258,9 +279,10 @@ exports.runPayroll = async (req, res) => {
           //////////////////////////////////////////////////
           // UPLOAD PDF
           //////////////////////////////////////////////////
-          const pdfUrl = await cloudinaryUpload(
+          const pdfUrl = await pdfWorkflow(
             pdfBuffer,
-            `payslip-${payslip.id}`
+            `payslip-${payslip.id}`,
+            `payslips`
           );
 
           //////////////////////////////////////////////////

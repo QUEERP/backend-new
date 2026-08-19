@@ -2,6 +2,7 @@ const prisma = require("../../config/prisma");
 const { logAction } = require("../sales/audit.service");
 const { generateDocNumber } = require("../sales/quotation.service");
 const { createStockMovement } = require("../inventory/movement.service");
+const { getSystemAccounts, getDynamicExpenseAccount, postJournalEntries } = require("../ledgerService");
 
 const getPagination = (query) => {
   const page = parseInt(query.page) || 1;
@@ -89,6 +90,44 @@ const createPurchaseReturn = async (businessId, userId, userEmail, data) => {
         }
       }
     });
+
+    // POST TO LEDGER
+    const accounts = await getSystemAccounts(tx, businessId);
+    const journalEntries = [
+      { businessId, accountId: accounts.SYSTEM_AP, debit: totalAmount, credit: 0, description: `Purchase Return ${returnNumber}` }
+    ];
+
+    let goodsTotal = 0;
+    let servicesTotal = 0;
+
+    for (const item of itemsData) {
+      if (item.isStockReturned) {
+        goodsTotal += (item.total || item.amount || 0); // fallback if field is named amount
+      } else {
+        servicesTotal += (item.total || item.amount || 0);
+      }
+    }
+
+    const subtotalCalc = goodsTotal + servicesTotal;
+    const goodsRatio = subtotalCalc > 0 ? goodsTotal / subtotalCalc : 0;
+    const servicesRatio = subtotalCalc > 0 ? servicesTotal / subtotalCalc : 0;
+
+    // Use passed data.tax / data.discount or defaults
+    const taxVal = Number(data.tax || 0);
+    const discountVal = Number(data.discount || 0);
+
+    const allocatedGoodsAmount = goodsTotal + (taxVal * goodsRatio) - (discountVal * goodsRatio);
+    if (allocatedGoodsAmount > 0) {
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_INVENTORY, debit: 0, credit: allocatedGoodsAmount, description: `Purchase Return ${returnNumber} (Goods)` });
+    }
+
+    const allocatedServicesAmount = servicesTotal + (taxVal * servicesRatio) - (discountVal * servicesRatio);
+    if (allocatedServicesAmount > 0) {
+      const expenseAccountId = await getDynamicExpenseAccount(tx, businessId, "General Expense");
+      journalEntries.push({ businessId, accountId: expenseAccountId, debit: 0, credit: allocatedServicesAmount, description: `Purchase Return ${returnNumber} (Services)` });
+    }
+
+    await postJournalEntries(tx, journalEntries);
 
     await logAction(tx, {
       businessId,

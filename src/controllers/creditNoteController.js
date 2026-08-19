@@ -127,3 +127,43 @@ exports.downloadCreditNotePdf = async (req, res) => {
     return res.status(500).json({ success: false, message: "Download failed" });
   }
 };
+
+exports.applyCreditNote = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const userId = req.user.userId || req.user.id;
+    const userEmail = req.user.email;
+    const { id } = req.params;
+    const { invoiceId, amount } = req.body;
+
+    if (!invoiceId || !amount) {
+      return errorResponse(res, "invoiceId and amount are required", 400);
+    }
+
+    await creditNoteService.applyCreditNote(businessId, userId, userEmail, id, invoiceId, Number(amount));
+    return successResponse(res, null, "Credit Note applied successfully");
+  } catch (error) {
+    console.error("Apply Credit Note Error:", error);
+    return errorResponse(res, error.message, 400);
+  }
+};
+
+exports.refundCreditNote = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const userId = req.user.userId || req.user.id;
+    const userEmail = req.user.email;
+    const { id } = req.params;
+    const { amount } = req.body;
+
+    if (!amount) {
+      return errorResponse(res, "amount is required", 400);
+    }
+
+    await creditNoteService.refundCreditNote(businessId, userId, userEmail, id, Number(amount));
+    return successResponse(res, null, "Credit Note refunded successfully");
+  } catch (error) {
+    console.error("Refund Credit Note Error:", error);
+    return errorResponse(res, error.message, 400);
+  }
+};

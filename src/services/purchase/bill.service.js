@@ -1,6 +1,7 @@
 const prisma = require("../../config/prisma");
 const { logAction } = require("../sales/audit.service");
 const { createStockMovement } = require("../inventory/movement.service");
+const { getSystemAccounts, getDynamicExpenseAccount, postJournalEntries } = require("../ledgerService");
 
 const getPagination = (query) => {
   const page = parseInt(query.page) || 1;
@@ -26,11 +27,28 @@ const createBill = async (businessId, userId, userEmail, data) => {
     }
 
     let subtotal = 0;
-    const itemsData = data.items.map(item => {
+    let goodsTotal = 0;
+    let servicesTotal = 0;
+
+    const itemsData = await Promise.all(data.items.map(async (item) => {
       const qty = parseFloat(item.quantity);
       const price = parseFloat(item.price);
       const total = qty * price;
       subtotal += total;
+
+      let isGoods = false;
+      if (item.productId) {
+        const product = await tx.product.findUnique({ where: { id: item.productId } });
+        if (product && product.type === "GOODS") {
+          isGoods = true;
+        }
+      }
+
+      if (isGoods) {
+        goodsTotal += total;
+      } else {
+        servicesTotal += total;
+      }
 
       return {
         productId: item.productId || null,
@@ -40,7 +58,7 @@ const createBill = async (businessId, userId, userEmail, data) => {
         price,
         total
       };
-    });
+    }));
 
     const tax = data.tax ? parseFloat(data.tax) : 0;
     const discount = data.discount ? parseFloat(data.discount) : 0;
@@ -59,6 +77,8 @@ const createBill = async (businessId, userId, userEmail, data) => {
         discount,
         totalAmount,
         outstandingAmount: totalAmount,
+        currency: data.currency || "AED",
+        exchangeRate: Number(data.exchangeRate) || 1.0,
         billDate: data.billDate ? new Date(data.billDate) : new Date(),
         dueDate: data.dueDate ? new Date(data.dueDate) : null,
         notes: data.notes || null,
@@ -97,6 +117,57 @@ const createBill = async (businessId, userId, userEmail, data) => {
         }
       }
     });
+
+    // POST TO LEDGER
+    const accounts = await getSystemAccounts(tx, businessId);
+    const billRate = Number(data.exchangeRate) || 1.0;
+
+    const journalEntries = [
+      // Credit: Accounts Payable (Full Bill Amount)
+      { businessId, accountId: accounts.SYSTEM_AP, debit: 0, credit: totalAmount, description: `Vendor Bill ${bill.billNumber}`, exchangeRate: billRate }
+    ];
+
+    // Determine if tax is recoverable
+    let isRecoverable = true;
+    if (data.taxRuleId) {
+      const taxRule = await tx.taxRule.findUnique({ where: { id: data.taxRuleId } });
+      if (taxRule) {
+        isRecoverable = taxRule.isRecoverable;
+      }
+    } else if (data.hasOwnProperty('isRecoverable')) {
+      isRecoverable = data.isRecoverable === 'true' || data.isRecoverable === true;
+    }
+
+    let recoverableTax = 0;
+    let nonRecoverableTax = 0;
+
+    // Debit: Tax Receivable (if recoverable)
+    if (tax > 0) {
+      if (isRecoverable) {
+        recoverableTax = tax;
+        journalEntries.push({ businessId, accountId: accounts.SYSTEM_TAX_RECEIVABLE, debit: recoverableTax, credit: 0, description: `Recoverable Tax on Bill ${bill.billNumber}`, exchangeRate: billRate });
+      } else {
+        nonRecoverableTax = tax;
+      }
+    }
+
+    // Distribute net subtotal minus discount PLUS non-recoverable tax to Inventory and Services
+    const costBasis = subtotal - discount + nonRecoverableTax;
+    const goodsRatio = subtotal > 0 ? goodsTotal / subtotal : 0;
+    const servicesRatio = subtotal > 0 ? servicesTotal / subtotal : 0;
+
+    if (goodsRatio > 0) {
+      const allocatedGoodsAmount = costBasis * goodsRatio;
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_INVENTORY, debit: allocatedGoodsAmount, credit: 0, description: `Inventory from Bill ${bill.billNumber}`, exchangeRate: billRate });
+    }
+
+    if (servicesRatio > 0) {
+      const allocatedServicesAmount = costBasis * servicesRatio;
+      const expenseAccountId = await getDynamicExpenseAccount(tx, businessId, "General Expense");
+      journalEntries.push({ businessId, accountId: expenseAccountId, debit: allocatedServicesAmount, credit: 0, description: `Service Expense from Bill ${bill.billNumber}`, exchangeRate: billRate });
+    }
+
+    await postJournalEntries(tx, journalEntries);
 
     await logAction(tx, {
       businessId,
