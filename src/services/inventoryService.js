@@ -1,4 +1,5 @@
 const prisma = require("../config/prisma");
+const { isTradingBusiness } = require("../utils/businessHelper");
 
 class InventoryService {
   /**
@@ -6,27 +7,72 @@ class InventoryService {
    */
   static async increaseStock(params) {
     const client = params.tx || prisma;
-    const { businessId, productId, warehouseId, quantity, type, reference = {}, performedBy, note } = params;
+    const { businessId, productId, warehouseId, locationId, quantity, type, reference = {}, performedBy, note } = params;
 
     if (quantity <= 0) {
       throw new Error("Quantity to increase must be positive.");
     }
 
-    // 1. Update or create the Stock entry
-    const stock = await client.stock.upsert({
-      where: {
-        productId_warehouseId: { productId, warehouseId }
-      },
-      update: {
-        quantity: { increment: Number(quantity) }
-      },
-      create: {
-        productId,
-        warehouseId,
-        quantity: Number(quantity),
-        reservedQty: 0
+    const business = await client.business.findUnique({ where: { id: businessId } });
+    const isTrading = isTradingBusiness(business);
+    let resolvedLocationId = isTrading ? (locationId || null) : null;
+
+    if (isTrading && !resolvedLocationId) {
+      let defaultLoc = await client.warehouseLocation.findFirst({
+        where: { warehouseId, isDefault: true }
+      });
+      if (!defaultLoc) {
+        defaultLoc = await client.warehouseLocation.create({
+          data: {
+            warehouseId,
+            code: 'UNASSIGNED',
+            name: 'Unassigned',
+            isDefault: true
+          }
+        });
       }
-    });
+      resolvedLocationId = defaultLoc.id;
+    }
+
+    let stock;
+    if (isTrading && resolvedLocationId) {
+      stock = await client.stock.upsert({
+        where: {
+          productId_warehouseId_locationId: { productId, warehouseId, locationId: resolvedLocationId }
+        },
+        update: {
+          quantity: { increment: Number(quantity) }
+        },
+        create: {
+          productId,
+          warehouseId,
+          locationId: resolvedLocationId,
+          quantity: Number(quantity),
+          reservedQty: 0
+        }
+      });
+    } else {
+      // Explicit findFirst check for non-trading businesses (or unassigned stock)
+      const existingStock = await client.stock.findFirst({
+        where: { productId, warehouseId, locationId: null }
+      });
+      if (existingStock) {
+        stock = await client.stock.update({
+          where: { id: existingStock.id },
+          data: { quantity: { increment: Number(quantity) } }
+        });
+      } else {
+        stock = await client.stock.create({
+          data: {
+            productId,
+            warehouseId,
+            locationId: null,
+            quantity: Number(quantity),
+            reservedQty: 0
+          }
+        });
+      }
+    }
 
     // 2. Log the exact movement for audit trails
     return await client.stockMovement.create({
@@ -34,6 +80,7 @@ class InventoryService {
         businessId,
         productId,
         warehouseId,
+        locationId: resolvedLocationId,
         type,
         quantity: Number(quantity),
         balanceAfter: stock.quantity,
@@ -51,16 +98,22 @@ class InventoryService {
    */
   static async decreaseStock(params) {
     const client = params.tx || prisma;
-    const { businessId, productId, warehouseId, quantity, type, reference = {}, performedBy, note } = params;
+    const { businessId, productId, warehouseId, locationId, quantity, type, reference = {}, performedBy, note } = params;
 
     if (quantity <= 0) {
       throw new Error("Quantity to decrease must be positive.");
     }
 
+    const business = await client.business.findUnique({ where: { id: businessId } });
+    const isTrading = isTradingBusiness(business);
+    const resolvedLocationId = isTrading ? (locationId || null) : null;
+
     // Lock and retrieve stock record for safety
-    const currentStock = await client.stock.findUnique({
+    const currentStock = await client.stock.findFirst({
       where: {
-        productId_warehouseId: { productId, warehouseId }
+        productId,
+        warehouseId,
+        locationId: resolvedLocationId
       }
     });
 
@@ -70,7 +123,7 @@ class InventoryService {
 
     const updatedStock = await client.stock.update({
       where: {
-        productId_warehouseId: { productId, warehouseId }
+        id: currentStock.id
       },
       data: {
         quantity: { decrement: Number(quantity) }
@@ -82,6 +135,7 @@ class InventoryService {
         businessId,
         productId,
         warehouseId,
+        locationId: resolvedLocationId,
         type,
         quantity: -Number(quantity), // Outflow is a negative delta
         balanceAfter: updatedStock.quantity,
@@ -99,11 +153,17 @@ class InventoryService {
    */
   static async reserveStock(params) {
     const client = params.tx || prisma;
-    const { productId, warehouseId, quantity } = params;
+    const { businessId, productId, warehouseId, locationId, quantity } = params;
 
-    const currentStock = await client.stock.findUnique({
+    const business = await client.business.findUnique({ where: { id: businessId } });
+    const isTrading = isTradingBusiness(business);
+    const resolvedLocationId = isTrading ? (locationId || null) : null;
+
+    const currentStock = await client.stock.findFirst({
       where: {
-        productId_warehouseId: { productId, warehouseId }
+        productId,
+        warehouseId,
+        locationId: resolvedLocationId
       }
     });
 
@@ -113,20 +173,22 @@ class InventoryService {
       throw new Error(`Insufficient available stock to reserve. Total physical: ${currentStock?.quantity || 0}, Reserved: ${currentStock?.reservedQty || 0}, Available: ${available}, Requested: ${quantity}`);
     }
 
-    return await client.stock.upsert({
-      where: {
-        productId_warehouseId: { productId, warehouseId }
-      },
-      update: {
-        reservedQty: { increment: Number(quantity) }
-      },
-      create: {
-        productId,
-        warehouseId,
-        quantity: 0,
-        reservedQty: Number(quantity)
-      }
-    });
+    if (currentStock) {
+      return await client.stock.update({
+        where: { id: currentStock.id },
+        data: { reservedQty: { increment: Number(quantity) } }
+      });
+    } else {
+      return await client.stock.create({
+        data: {
+          productId,
+          warehouseId,
+          locationId: resolvedLocationId,
+          quantity: 0,
+          reservedQty: Number(quantity)
+        }
+      });
+    }
   }
 
   /**
@@ -134,12 +196,20 @@ class InventoryService {
    */
   static async releaseReservation(params) {
     const client = params.tx || prisma;
-    const { productId, warehouseId, quantity } = params;
+    const { businessId, productId, warehouseId, locationId, quantity } = params;
+
+    const business = await client.business.findUnique({ where: { id: businessId } });
+    const isTrading = isTradingBusiness(business);
+    const resolvedLocationId = isTrading ? (locationId || null) : null;
+
+    const currentStock = await client.stock.findFirst({
+      where: { productId, warehouseId, locationId: resolvedLocationId }
+    });
+
+    if (!currentStock) return null;
 
     return await client.stock.update({
-      where: {
-        productId_warehouseId: { productId, warehouseId }
-      },
+      where: { id: currentStock.id },
       data: {
         reservedQty: { decrement: Number(quantity) }
       }

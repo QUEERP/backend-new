@@ -1,4 +1,5 @@
 const prisma = require("../config/prisma");
+const { getSystemAccounts, postJournalEntries } = require("../services/ledgerService");
 
 //////////////////////////////////////////////////////
 // CREATE LOAN
@@ -36,17 +37,31 @@ exports.createLoan = async (req, res) => {
     }
 
     //////////////////////////////////////////////////////
-    // CREATE LOAN
+    // CREATE LOAN & LEDGER ENTRY
     //////////////////////////////////////////////////////
-    const loan = await prisma.loan.create({
-      data: {
-        employeeId,
-        businessId,
-        totalAmount,
-        remainingAmount: totalAmount,
-        emiAmount,
-        startDate: startDate ? new Date(startDate) : new Date()
-      }
+    const loan = await prisma.$transaction(async (tx) => {
+      const createdLoan = await tx.loan.create({
+        data: {
+          employeeId,
+          businessId,
+          totalAmount,
+          remainingAmount: totalAmount,
+          emiAmount,
+          startDate: startDate ? new Date(startDate) : new Date()
+        }
+      });
+
+      const accounts = await getSystemAccounts(tx, businessId);
+      const journalEntries = [
+        // Debit: Employee Loans Receivable
+        { businessId, accountId: accounts.SYSTEM_EMPLOYEE_LOAN, debit: totalAmount, credit: 0, description: `Loan Disbursed to ${employee.name}` },
+        // Credit: Cash/Bank
+        { businessId, accountId: accounts.SYSTEM_CASH, debit: 0, credit: totalAmount, description: `Loan Disbursed to ${employee.name}` }
+      ];
+
+      await postJournalEntries(tx, journalEntries);
+      
+      return createdLoan;
     });
 
     res.json({ success: true, data: loan });

@@ -1,6 +1,7 @@
 const prisma = require("../../config/prisma");
 const { logAction, triggerNotification } = require("./audit.service");
 const { generateDocNumber } = require("./quotation.service");
+const { getSystemAccounts, postJournalEntries } = require("../ledgerService");
 
 const createSalesReturn = async (businessId, userId, userEmail, data) => {
   return await prisma.$transaction(async (tx) => {
@@ -10,7 +11,8 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
     // 2. Compute pricing of returned items
     let subtotal = 0;
     let totalTax = 0;
-    const processedItems = data.items.map((item) => {
+    let totalInventoryCost = 0;
+    const processedItems = await Promise.all(data.items.map(async (item) => {
       const qty = Number(item.quantity || 0);
       const prc = Number(item.price || 0);
       const taxRate = Number(item.taxPercent || 0);
@@ -22,6 +24,20 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
       subtotal += baseAmount;
       totalTax += tax;
 
+      let originalUnitCost = 0;
+      if (data.invoiceId && item.productId) {
+        const originalInvoiceItem = await tx.invoiceItem.findFirst({
+          where: { invoiceId: data.invoiceId, productId: item.productId }
+        });
+        if (originalInvoiceItem) {
+          originalUnitCost = originalInvoiceItem.unitCost || 0;
+        }
+      }
+
+      if (item.isStockReturned) {
+        totalInventoryCost += qty * originalUnitCost;
+      }
+
       return {
         productId: item.productId,
         description: item.description,
@@ -32,7 +48,7 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
         warehouseId: item.warehouseId || null,
         isStockReturned: item.isStockReturned || false
       };
-    });
+    }));
 
     const totalAmount = subtotal + totalTax;
 
@@ -129,6 +145,24 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
       entityType: "SalesReturn",
       entityId: salesReturn.id
     });
+
+    // 8. POST TO LEDGER
+    const accounts = await getSystemAccounts(tx, businessId);
+    const journalEntries = [
+      // Leg 1: Sales Return
+      { businessId, accountId: accounts.SYSTEM_SALES_RETURN, debit: totalAmount, credit: 0, description: `Sales Return ${returnNumber}` },
+      { businessId, accountId: accounts.SYSTEM_AR, debit: 0, credit: totalAmount, description: `Sales Return ${returnNumber}` }
+    ];
+
+    // Leg 2: Inventory Reversal
+    if (totalInventoryCost > 0) {
+      journalEntries.push(
+        { businessId, accountId: accounts.SYSTEM_INVENTORY, debit: totalInventoryCost, credit: 0, description: `Inventory Reversal for Sales Return ${returnNumber}` },
+        { businessId, accountId: accounts.SYSTEM_COGS, debit: 0, credit: totalInventoryCost, description: `COGS Reversal for Sales Return ${returnNumber}` }
+      );
+    }
+    
+    await postJournalEntries(tx, journalEntries);
 
     return { salesReturn, creditNote };
   });

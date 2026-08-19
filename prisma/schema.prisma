@@ -193,6 +193,8 @@ model Business {
   ticketAttachments      TicketAttachment[]
 
   @@map("businesses")
+  taxRules               TaxRule[]
+  taxAccountMappings     TaxAccountMapping[]
 }
 
 //////////////////////////////////////////////////////
@@ -491,11 +493,14 @@ model Invoice {
   salesReturns SalesReturn[]
   payments     Payment[]
   creditNotes  CreditNote[]
-  paymentAllocations PaymentAllocation[]
+  paymentAllocations PaymentAllocation[]  exchangeRate    Float?    @default(1.0)
+
 
   @@unique([businessId, invoiceNumber]) // invoice numbers unique per business
   @@index([businessId])
   @@map("invoices")
+  @@index([businessId, invoiceDate])
+  @@index([businessId, status])
 }
 
 model InvoiceAuditLog {
@@ -682,11 +687,14 @@ model Payment {
   //   creditNote    CreditNote? @relation(fields: [creditNoteId], references: [id])
   invoice       Invoice? @relation(fields: [invoiceId], references: [id])
   quotation     Quotation? @relation(fields: [quotationId], references: [id])
-  paymentAllocations PaymentAllocation[]
+  paymentAllocations PaymentAllocation[]  currency        String?   @default("AED")
+  exchangeRate    Float?    @default(1.0)
+
 
   @@index([invoiceId])
   @@index([customerId])
   @@map("payments")
+  @@index([businessId, paymentDate])
 }
 
 model PaymentAllocation {
@@ -741,7 +749,9 @@ model CreditNote {
   deletedAt DateTime?
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt  currency        String?   @default("AED")
+  exchangeRate    Float?    @default(1.0)
+
 
   @@index([businessId])
   @@index([customerId])
@@ -919,6 +929,7 @@ model Expense {
   referenceId   String? // ID of the quotation or invoice
 
   auditLogs ExpenseAuditLog[]
+  exchangeRate    Float?    @default(1.0)
 }
 
 model ExpenseAuditLog {
@@ -1468,7 +1479,8 @@ model Quotation {
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
-  projects  Project[]
+  projects  Project[]  exchangeRate    Float?    @default(1.0)
+
 
   @@unique([businessId, quoteNumber])
   @@index([customerId])
@@ -1565,7 +1577,8 @@ model SalesOrder {
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
-  projects  Project[]
+  projects  Project[]  exchangeRate    Float?    @default(1.0)
+
 
   @@unique([businessId, orderNumber])
   @@index([customerId])
@@ -1658,7 +1671,8 @@ model PurchaseOrder {
   goodsReceiveNotes GoodsReceiveNote[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt  exchangeRate    Float?    @default(1.0)
+
 
   @@index([businessId])
 }
@@ -1736,7 +1750,9 @@ model Bill {
   purchaseReturns PurchaseReturn[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt  currency        String?   @default("AED")
+  exchangeRate    Float?    @default(1.0)
+
 
   @@unique([businessId, billNumber])
   @@index([businessId])
@@ -1848,6 +1864,8 @@ model Warehouse {
 
   createdAt DateTime @default(now())
 
+  locations           WarehouseLocation[]
+
   stock               Stock[]
   stockMovements      StockMovement[]
   serialNumbers       SerialNumber[]
@@ -1883,10 +1901,36 @@ model Stock {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  locationId  String?
+
   product   Product   @relation(fields: [productId], references: [id])
   warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  location  WarehouseLocation? @relation(fields: [locationId], references: [id])
 
-  @@unique([productId, warehouseId])
+  @@unique([productId, warehouseId, locationId])
+}
+
+model WarehouseLocation {
+  id           String   @id @default(uuid())
+  warehouseId  String
+  code         String
+  name         String?
+  locationType String   @default("BIN")
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  
+  stocks           Stock[]
+  stockMovements   StockMovement[]
+  stockAdjustments StockAdjustment[]
+  fromTransfers    StockTransfer[] @relation("FromLocation")
+  toTransfers      StockTransfer[] @relation("ToLocation")
+
+  @@unique([warehouseId, code])
+  @@index([warehouseId])
+  @@map("warehouse_locations")
 }
 
 model Account {
@@ -1902,6 +1946,7 @@ model Account {
 
   business Business       @relation(fields: [businessId], references: [id])
   entries  JournalEntry[]
+  taxAccountMappings TaxAccountMapping[]
 }
 
 model JournalEntry {
@@ -1918,6 +1963,9 @@ model JournalEntry {
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   account  Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  
+  currency        String?   @default("AED")
+  exchangeRate    Float?    @default(1.0)
 }
 
 // model stock_transfer_items {
@@ -2520,7 +2568,9 @@ model SalesReturn {
   creditNotes CreditNote[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt  currency        String?   @default("AED")
+  exchangeRate    Float?    @default(1.0)
+
 
   @@index([businessId])
   @@index([customerId])
@@ -2589,7 +2639,8 @@ model RecurringInvoice {
   items RecurringInvoiceItem[]
 
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @updatedAt  exchangeRate    Float?    @default(1.0)
+
 
   @@index([businessId])
   @@index([customerId])
@@ -2723,6 +2774,7 @@ model StockMovement {
   businessId      String
   productId       String
   warehouseId     String
+  locationId      String?
   quantity        Float
   type            StockMovementType
   referenceType   String?
@@ -2740,12 +2792,14 @@ model StockMovement {
   business  Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  location  WarehouseLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   @@index([businessId])
   @@index([productId])
   @@index([warehouseId])
   @@index([referenceType, referenceId])
   @@map("stock_movements")
+  @@index([businessId, createdAt])
 }
 
 model Batch {
@@ -2797,6 +2851,8 @@ model StockTransfer {
   transferNumber  String
   fromWarehouseId String
   toWarehouseId   String
+  fromLocationId  String?
+  toLocationId    String?
   //   status           StockTransferStatus @default(PENDING)
   transferDate    DateTime @default(now())
   notes           String?
@@ -2806,6 +2862,8 @@ model StockTransfer {
   business      Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   fromWarehouse Warehouse           @relation("FromWarehouse", fields: [fromWarehouseId], references: [id])
   toWarehouse   Warehouse           @relation("ToWarehouse", fields: [toWarehouseId], references: [id])
+  fromLocation  WarehouseLocation?  @relation("FromLocation", fields: [fromLocationId], references: [id])
+  toLocation    WarehouseLocation?  @relation("ToLocation", fields: [toLocationId], references: [id])
   items         StockTransferItem[]
 
   @@unique([businessId, transferNumber])
@@ -2832,6 +2890,7 @@ model StockAdjustment {
   businessId       String
   adjustmentNumber String
   warehouseId      String
+  locationId       String?
   reason           String?
   adjustmentDate   DateTime @default(now())
   notes            String?
@@ -2840,6 +2899,7 @@ model StockAdjustment {
 
   business  Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
   warehouse Warehouse             @relation(fields: [warehouseId], references: [id])
+  location  WarehouseLocation?    @relation(fields: [locationId], references: [id])
   items     StockAdjustmentItem[]
 
   @@unique([businessId, adjustmentNumber])
@@ -2962,7 +3022,9 @@ model PurchaseReturn {
   vendor   Vendor               @relation(fields: [vendorId], references: [id])
   bill     Bill?                @relation(fields: [billId], references: [id])
   grn      GoodsReceiveNote?    @relation(fields: [grnId], references: [id])
-  items    PurchaseReturnItem[]
+  items    PurchaseReturnItem[]  currency        String?   @default("AED")
+  exchangeRate    Float?    @default(1.0)
+
 
   @@unique([businessId, returnNumber])
   @@index([businessId])
@@ -3473,9 +3535,12 @@ model Project {
   plannings           ProjectPlanning[]
   resourceAllocations ResourceAllocation[]
   projectItems        ProjectItem[]
-  payments            Payment[]
+  payments            Payment[]  exchangeRate    Float?    @default(1.0)
+
 
   @@unique([businessId, projectCode])
+  @@index([businessId, createdAt])
+  @@index([businessId, status])
 }
 
 model ProjectItem {
@@ -3541,6 +3606,7 @@ model ProjectTask {
   timeEntries         TimeEntry[]
   expenses            Expense[]
   resourceAllocations ResourceAllocation[]
+  exchangeRate    Float?    @default(1.0)
 }
 
 // ==========================================
@@ -3790,6 +3856,7 @@ model ProjectBudget {
   requirement    ProjectRequirement? @relation(fields: [requirementId], references: [id])
   estimate       ProjectEstimation?  @relation(fields: [estimateId], references: [id])
   projectManager User?               @relation(fields: [projectManagerId], references: [id])
+  exchangeRate    Float?    @default(1.0)
 }
 
 // ==========================================
@@ -4006,4 +4073,48 @@ model ResourceAllocation {
   project  Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   task     ProjectTask? @relation(fields: [taskId], references: [id], onDelete: Cascade)
   employee User         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+
+//////////////////////////////////////////////////////
+// TAX ENGINE (Phase 3)
+//////////////////////////////////////////////////////
+
+model TaxRule {
+  id              String   @id @default(uuid())
+  businessId      String
+  name            String   // e.g., "UAE Standard VAT 5%"
+  rate            Float    // e.g., 5.0
+  type            String   // e.g., "VAT", "GST", "SALES_TAX"
+  jurisdiction    String?  // e.g., "UAE", "UK", "IN"
+  isRecoverable   Boolean  @default(true) // For input tax
+  
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  mappings        TaxAccountMapping[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([businessId])
+  @@map("tax_rules")
+}
+
+model TaxAccountMapping {
+  id              String   @id @default(uuid())
+  businessId      String
+  taxRuleId       String
+  accountId       String   // Ledger account to post this tax to (e.g. SYSTEM_TAX_PAYABLE)
+  type            String   // 'PAYABLE' (Output Tax on Sales) or 'RECEIVABLE' (Input Tax on Purchases)
+
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  taxRule         TaxRule  @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+  account         Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([taxRuleId, type])
+  @@index([businessId])
+  @@index([accountId])
+  @@map("tax_account_mappings")
 }

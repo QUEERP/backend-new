@@ -3,7 +3,7 @@ const InventoryService = require("./inventoryService");
 
 class ProductWorkflow {
   static async createProduct(params) {
-    const { businessId, name, sku, description, price, costPrice, hsnCode, taxPercent, unit, initialQty, warehouseId, performedBy, type } = params;
+    const { businessId, name, sku, description, price, costPrice, hsnCode, taxPercent, unit, initialQty, warehouseId, locationId, performedBy, type } = params;
 
     return await prisma.$transaction(async (tx) => {
       // 1. Create product record
@@ -39,6 +39,7 @@ class ProductWorkflow {
           businessId,
           productId: product.id,
           warehouseId,
+          locationId,
           quantity: Number(initialQty),
           type: 'OPENING_STOCK', // Initial quantity labeled as OPENING_STOCK
           reference: {

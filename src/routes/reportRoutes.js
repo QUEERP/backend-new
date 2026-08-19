@@ -66,6 +66,30 @@ router.get(
   Controller.getGeneralLedger
 );
 
+router.get(
+  "/cash-flow",
+  auth,
+  business,
+  checkPermission("report", "read"),
+  Controller.getCashFlow
+);
+
+router.get(
+  "/accounts-receivable",
+  auth,
+  business,
+  checkPermission("report", "read"),
+  Controller.getAccountsReceivable
+);
+
+router.get(
+  "/accounts-payable",
+  auth,
+  business,
+  checkPermission("report", "read"),
+  Controller.getAccountsPayable
+);
+
 // Exports
 router.get("/balance-sheet/export/excel", auth, business, checkPermission("report", "read"), ExportController.exportBalanceSheetExcel);
 router.get("/balance-sheet/export/pdf", auth, business, checkPermission("report", "read"), ExportController.exportBalanceSheetPDF);

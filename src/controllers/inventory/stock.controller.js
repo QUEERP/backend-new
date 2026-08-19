@@ -1,4 +1,5 @@
 const stockService = require("../../services/inventory/stock.service");
+const { isTradingBusiness } = require("../../utils/businessHelper");
 const adjustmentService = require("../../services/inventory/stockAdjustment.service");
 const transferService = require("../../services/inventory/stockTransfer.service");
 const movementService = require("../../services/inventory/movement.service");
@@ -32,6 +33,8 @@ exports.getStockMovements = async (req, res) => {
     if (req.query.warehouseId) where.warehouseId = req.query.warehouseId;
     if (req.query.type) where.type = req.query.type;
 
+    const isTrading = isTradingBusiness(req.business);
+
     const [movements, total] = await Promise.all([
       prisma.stockMovement.findMany({
         where,
@@ -39,16 +42,27 @@ exports.getStockMovements = async (req, res) => {
         take: limit,
         include: {
           product: { select: { id: true, name: true, sku: true } },
-          warehouse: { select: { id: true, name: true } }
+          warehouse: { select: { id: true, name: true } },
+          ...(isTrading && {
+            location: { select: { id: true, code: true, name: true } }
+          })
         },
         orderBy: { createdAt: "desc" }
       }),
       prisma.stockMovement.count({ where })
     ]);
 
+    let finalMovements = movements;
+    if (!isTrading) {
+      finalMovements = movements.map(m => {
+        const { locationId, ...rest } = m;
+        return rest;
+      });
+    }
+
     res.json({
       success: true,
-      movements,
+      movements: finalMovements,
       total,
       page,
       limit,

@@ -1,4 +1,5 @@
 const prisma = require("../../config/prisma");
+const { isTradingBusiness } = require("../../utils/businessHelper");
 const { logAction } = require("../sales/audit.service");
 const { createStockMovement } = require("./movement.service");
 const { generateDocNumber } = require("../sales/quotation.service");
@@ -24,7 +25,9 @@ const createStockTransfer = async (businessId, userId, userEmail, data) => {
         businessId,
         transferNumber,
         fromWarehouseId: data.fromWarehouseId,
+        fromLocationId: data.fromLocationId || null,
         toWarehouseId: data.toWarehouseId,
+        toLocationId: data.toLocationId || null,
         status: data.status || "PENDING",
         transferDate: data.transferDate ? new Date(data.transferDate) : new Date(),
         notes: data.notes || null,
@@ -40,7 +43,9 @@ const createStockTransfer = async (businessId, userId, userEmail, data) => {
       include: {
         items: true,
         fromWarehouse: true,
-        toWarehouse: true
+        toWarehouse: true,
+        fromLocation: true,
+        toLocation: true
       }
     });
 
@@ -74,6 +79,7 @@ const executeShipment = async (tx, businessId, transfer, userEmail) => {
       businessId,
       productId: item.productId,
       warehouseId: transfer.fromWarehouseId,
+      locationId: transfer.fromLocationId,
       quantity: -parseFloat(item.quantity),
       type: "TRANSFER_OUT",
       referenceType: "TRANSFER",
@@ -93,6 +99,7 @@ const executeCompletion = async (tx, businessId, transfer, userEmail) => {
       businessId,
       productId: item.productId,
       warehouseId: transfer.toWarehouseId,
+      locationId: transfer.toLocationId,
       quantity: parseFloat(item.quantity),
       type: "TRANSFER_IN",
       referenceType: "TRANSFER",
@@ -142,6 +149,7 @@ const changeTransferStatus = async (businessId, userId, userEmail, transferId, n
             businessId,
             productId: item.productId,
             warehouseId: transfer.fromWarehouseId,
+            locationId: transfer.fromLocationId,
             quantity: parseFloat(item.quantity),
             type: "TRANSFER_IN",
             referenceType: "TRANSFER",
@@ -161,7 +169,9 @@ const changeTransferStatus = async (businessId, userId, userEmail, transferId, n
       include: {
         items: true,
         fromWarehouse: true,
-        toWarehouse: true
+        toWarehouse: true,
+        fromLocation: true,
+        toLocation: true
       }
     });
 
@@ -191,6 +201,12 @@ const getStockTransfers = async (businessId, query = {}) => {
     where.transferNumber = { contains: query.search, mode: "insensitive" };
   }
 
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { businessType: true }
+  });
+  const isTrading = isTradingBusiness(business);
+
   const [transfers, total] = await Promise.all([
     prisma.stockTransfer.findMany({
       where,
@@ -199,6 +215,10 @@ const getStockTransfers = async (businessId, query = {}) => {
       include: {
         fromWarehouse: { select: { id: true, name: true } },
         toWarehouse: { select: { id: true, name: true } },
+        ...(isTrading && {
+          fromLocation: { select: { id: true, code: true, name: true } },
+          toLocation: { select: { id: true, code: true, name: true } },
+        }),
         items: {
           include: {
             product: { select: { id: true, name: true, sku: true } }
@@ -210,8 +230,16 @@ const getStockTransfers = async (businessId, query = {}) => {
     prisma.stockTransfer.count({ where })
   ]);
 
+  let finalTransfers = transfers;
+  if (!isTrading) {
+    finalTransfers = transfers.map(t => {
+      const { fromLocationId, toLocationId, ...rest } = t;
+      return rest;
+    });
+  }
+
   return {
-    transfers,
+    transfers: finalTransfers,
     total,
     page,
     limit,
@@ -220,11 +248,21 @@ const getStockTransfers = async (businessId, query = {}) => {
 };
 
 const getStockTransferById = async (businessId, id) => {
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { businessType: true }
+  });
+  const isTrading = isTradingBusiness(business);
+
   const transfer = await prisma.stockTransfer.findFirst({
     where: { id, businessId },
     include: {
       fromWarehouse: true,
       toWarehouse: true,
+      ...(isTrading && {
+        fromLocation: true,
+        toLocation: true,
+      }),
       items: {
         include: {
           product: true
@@ -234,6 +272,12 @@ const getStockTransferById = async (businessId, id) => {
   });
 
   if (!transfer) throw new Error("Stock transfer not found");
+  
+  if (!isTrading) {
+    const { fromLocationId, toLocationId, ...rest } = transfer;
+    return rest;
+  }
+  
   return transfer;
 };
 

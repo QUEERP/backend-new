@@ -1,6 +1,7 @@
 const prisma = require("../../config/prisma");
 const { logAction, triggerNotification } = require("./audit.service");
 const { generateDocNumber } = require("./quotation.service");
+const { getSystemAccounts, postJournalEntries } = require("../ledgerService");
 
 const createPayment = async (businessId, userId, userEmail, invoiceId, data) => {
   return await prisma.$transaction(async (tx) => {
@@ -40,7 +41,9 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
         paymentMode: data.paymentMode || "CASH",
         transactionId: data.transactionId || null,
         note: data.note || null,
-        createdBy: userId
+        createdBy: userId,
+        currency: data.currency || "AED",
+        exchangeRate: Number(data.exchangeRate) || 1.0
       }
     });
 
@@ -96,6 +99,40 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
         data: { collectedRevenue: { increment: paymentAmount } }
       });
     }
+
+    // 6.5 POST TO LEDGER
+    const accounts = await getSystemAccounts(tx, businessId);
+    const paymentRate = Number(data.exchangeRate) || 1.0;
+    const invoiceRate = Number(invoice.exchangeRate) || 1.0;
+
+    const journalEntries = [
+      // Debit: Cash/Bank for the full amount received
+      { businessId, accountId: accounts.SYSTEM_CASH, debit: paymentAmount, credit: 0, description: `Payment Received ${paymentNumber} for Invoice #${invoice.invoiceNumber}`, exchangeRate: paymentRate },
+    ];
+
+    // Credit: Accounts Receivable (up to the remaining balance)
+    const arCredit = paymentAmount - overpaidAmount;
+    if (arCredit > 0) {
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_AR, debit: 0, credit: arCredit, description: `Payment Applied ${paymentNumber} for Invoice #${invoice.invoiceNumber}`, exchangeRate: invoiceRate });
+      
+      const baseCashForAR = arCredit * paymentRate;
+      const baseAR = arCredit * invoiceRate;
+      
+      if (baseCashForAR > baseAR) {
+        // Derived base-currency amount, passed with rate 1.0
+        journalEntries.push({ businessId, accountId: accounts.SYSTEM_FX_GAIN_LOSS, debit: 0, credit: (baseCashForAR - baseAR), description: `Realized FX Gain on Payment ${paymentNumber}`, exchangeRate: 1.0 });
+      } else if (baseCashForAR < baseAR) {
+        // Derived base-currency amount, passed with rate 1.0
+        journalEntries.push({ businessId, accountId: accounts.SYSTEM_FX_GAIN_LOSS, debit: (baseAR - baseCashForAR), credit: 0, description: `Realized FX Loss on Payment ${paymentNumber}`, exchangeRate: 1.0 });
+      }
+    }
+
+    // Credit: Customer Advances (for any overpayment)
+    if (overpaidAmount > 0) {
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_CUSTOMER_ADVANCE, debit: 0, credit: overpaidAmount, description: `Overpayment recorded as Customer Advance ${paymentNumber}`, exchangeRate: paymentRate });
+    }
+
+    await postJournalEntries(tx, journalEntries);
 
     // 7. Log Audit & Trigger System Alert
     await logAction(tx, {

@@ -1,4 +1,5 @@
 const prisma = require("../../config/prisma");
+const { isTradingBusiness } = require("../../utils/businessHelper");
 
 /**
  * Enterprise Stock Movement Service
@@ -12,6 +13,7 @@ const createStockMovement = async (tx, {
   businessId,
   productId,
   warehouseId,
+  locationId = null,
   quantity, // positive for inbound, negative for outbound
   type, // StockMovementType enum
   referenceType = null,
@@ -30,10 +32,33 @@ const createStockMovement = async (tx, {
     throw new Error("Invalid parameters for stock movement creation");
   }
 
-  // 1. Fetch or create Stock record for product & warehouse
-  let stockRecord = await tx.stock.findUnique({
+  const business = await tx.business.findUnique({ where: { id: businessId } });
+  const isTrading = isTradingBusiness(business);
+  let resolvedLocationId = isTrading ? (locationId || null) : null;
+
+  if (isTrading && !resolvedLocationId) {
+    let defaultLoc = await tx.warehouseLocation.findFirst({
+      where: { warehouseId, isDefault: true }
+    });
+    if (!defaultLoc) {
+      defaultLoc = await tx.warehouseLocation.create({
+        data: {
+          warehouseId,
+          code: 'UNASSIGNED',
+          name: 'Unassigned',
+          isDefault: true
+        }
+      });
+    }
+    resolvedLocationId = defaultLoc.id;
+  }
+
+  // 1. Fetch or create Stock record for product & warehouse & location
+  let stockRecord = await tx.stock.findFirst({
     where: {
-      productId_warehouseId: { productId, warehouseId }
+      productId,
+      warehouseId,
+      locationId: resolvedLocationId
     }
   });
 
@@ -42,6 +67,7 @@ const createStockMovement = async (tx, {
       data: {
         productId,
         warehouseId,
+        locationId: resolvedLocationId,
         quantity: 0,
         reservedQty: 0,
         damagedQty: 0,
@@ -151,6 +177,7 @@ const createStockMovement = async (tx, {
       businessId,
       productId,
       warehouseId,
+      locationId: resolvedLocationId,
       quantity,
       type,
       referenceType,
@@ -273,10 +300,16 @@ const createStockMovement = async (tx, {
 /**
  * Reserve stock for Sales Orders (increases reservedQty without changing physical quantity)
  */
-const reserveStock = async (tx, { businessId, productId, warehouseId, quantity }) => {
-  let stockRecord = await tx.stock.findUnique({
+const reserveStock = async (tx, { businessId, productId, warehouseId, locationId, quantity }) => {
+  const business = await tx.business.findUnique({ where: { id: businessId } });
+  const isTrading = isTradingBusiness(business);
+  const resolvedLocationId = isTrading ? (locationId || null) : null;
+
+  let stockRecord = await tx.stock.findFirst({
     where: {
-      productId_warehouseId: { productId, warehouseId }
+      productId,
+      warehouseId,
+      locationId: resolvedLocationId
     }
   });
 
@@ -285,6 +318,7 @@ const reserveStock = async (tx, { businessId, productId, warehouseId, quantity }
       data: {
         productId,
         warehouseId,
+        locationId: resolvedLocationId,
         quantity: 0,
         reservedQty: 0,
         damagedQty: 0,
@@ -309,10 +343,16 @@ const reserveStock = async (tx, { businessId, productId, warehouseId, quantity }
 /**
  * Release reserved stock without fulfilling it (releases reservation back to available pool)
  */
-const releaseReservedStock = async (tx, { businessId, productId, warehouseId, quantity }) => {
-  const stockRecord = await tx.stock.findUnique({
+const releaseReservedStock = async (tx, { businessId, productId, warehouseId, locationId, quantity }) => {
+  const business = await tx.business.findUnique({ where: { id: businessId } });
+  const isTrading = isTradingBusiness(business);
+  const resolvedLocationId = isTrading ? (locationId || null) : null;
+
+  const stockRecord = await tx.stock.findFirst({
     where: {
-      productId_warehouseId: { productId, warehouseId }
+      productId,
+      warehouseId,
+      locationId: resolvedLocationId
     }
   });
 
@@ -330,10 +370,16 @@ const releaseReservedStock = async (tx, { businessId, productId, warehouseId, qu
 /**
  * Adjust incomingQty for Purchase Orders (increments/decrements when PO is approved/received/cancelled)
  */
-const adjustIncomingStock = async (tx, { businessId, productId, warehouseId, quantity }) => {
-  let stockRecord = await tx.stock.findUnique({
+const adjustIncomingStock = async (tx, { businessId, productId, warehouseId, locationId, quantity }) => {
+  const business = await tx.business.findUnique({ where: { id: businessId } });
+  const isTrading = isTradingBusiness(business);
+  const resolvedLocationId = isTrading ? (locationId || null) : null;
+
+  let stockRecord = await tx.stock.findFirst({
     where: {
-      productId_warehouseId: { productId, warehouseId }
+      productId,
+      warehouseId,
+      locationId: resolvedLocationId
     }
   });
 
@@ -342,6 +388,7 @@ const adjustIncomingStock = async (tx, { businessId, productId, warehouseId, qua
       data: {
         productId,
         warehouseId,
+        locationId: resolvedLocationId,
         quantity: 0,
         reservedQty: 0,
         damagedQty: 0,

@@ -64,6 +64,10 @@ const notificationRoutes = require("./routes/notificationRoutes");
 const salesReturnRoutes = require("./routes/salesReturnRoutes");
 const recurringInvoiceRoutes = require("./routes/recurringInvoiceRoutes");
 const salesReportRoutes = require("./routes/salesReportRoutes");
+const projectOperationsReportRoutes = require("./routes/projectOperationsReportRoutes");
+const procurementReportRoutes = require("./routes/procurementReportRoutes");
+const inventoryReportRoutes2 = require("./routes/inventoryReportRoutes");
+const hrReportRoutes = require("./routes/hrReportRoutes");
 
 // ── Upgraded CRM Routes
 const crmNoteRoutes = require("./routes/crm/noteRoutes");
@@ -171,6 +175,10 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/sales-returns", salesReturnRoutes);
 app.use("/api/recurring-invoices", recurringInvoiceRoutes);
 app.use("/api/sales-reports", salesReportRoutes);
+app.use("/api/project-operations-reports", projectOperationsReportRoutes);
+app.use("/api/procurement-reports", procurementReportRoutes);
+app.use("/api/inventory-reports", inventoryReportRoutes2);
+app.use("/api/hr-reports", hrReportRoutes);
 
 // ── Upgraded CRM Mounts ───────────────────────────────────────────────────────
 app.use("/api/crm-notes", crmNoteRoutes);

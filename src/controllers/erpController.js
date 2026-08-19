@@ -1,6 +1,7 @@
 const ProductWorkflow = require("../services/productWorkflow");
 const InvoiceWorkflow = require("../services/invoiceWorkflow");
 const PurchaseWorkflow = require("../services/purchaseWorkflow");
+const { isTradingBusiness } = require("../utils/businessHelper");
 const { successResponse, errorResponse } = require("../utils/response");
 const prisma = require("../config/prisma");
 
@@ -216,8 +217,17 @@ class ErpController {
         prisma.stockMovement.count({ where: whereClause })
       ]);
 
+      let finalMovements = movements;
+      const isTrading = isTradingBusiness(req.business);
+      if (!isTrading) {
+        finalMovements = movements.map(m => {
+          const { locationId, ...rest } = m;
+          return rest;
+        });
+      }
+
       return successResponse(res, {
-        movements,
+        movements: finalMovements,
         pagination: {
           total,
           page: Number(page),

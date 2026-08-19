@@ -9,12 +9,36 @@ exports.getDashboardSummary = async (req, res) => {
         }
 
         let totalSales = 0;
+        // 1. Fetch Tax Ledger Balances (Post-Cutover)
+        const accounts = await prisma.account.findMany({
+            where: { businessId, code: { in: ['SYSTEM_TAX_PAYABLE', 'SYSTEM_TAX_RECEIVABLE'] } }
+        });
+        const taxPayableAcc = accounts.find(a => a.code === 'SYSTEM_TAX_PAYABLE');
+        const taxReceivableAcc = accounts.find(a => a.code === 'SYSTEM_TAX_RECEIVABLE');
+
         let outputVat = 0;
+        let inputVat = 0;
         let taxableSales = 0;
         let zeroRatedSales = 0;
         let exemptSales = 0;
 
-        // Try to aggregate invoices
+        if (taxPayableAcc) {
+            const payableEntries = await prisma.journalEntry.aggregate({
+                where: { businessId, accountId: taxPayableAcc.id },
+                _sum: { credit: true, debit: true }
+            });
+            outputVat = (payableEntries._sum.credit || 0) - (payableEntries._sum.debit || 0);
+        }
+
+        if (taxReceivableAcc) {
+            const receivableEntries = await prisma.journalEntry.aggregate({
+                where: { businessId, accountId: taxReceivableAcc.id },
+                _sum: { credit: true, debit: true }
+            });
+            inputVat = (receivableEntries._sum.debit || 0) - (receivableEntries._sum.credit || 0);
+        }
+
+        // 2. Fetch Sales Breakdowns from Invoices
         try {
             const invoices = await prisma.invoice.findMany({
                 where: { businessId, isDeleted: false, status: { not: "CANCELLED" } },
@@ -23,7 +47,11 @@ exports.getDashboardSummary = async (req, res) => {
 
             for (const inv of invoices) {
                 totalSales += (inv.grandTotal || 0);
-                outputVat += (inv.totalTax || 0);
+                
+                // For pre-cutover compatibility, if ledger has no output VAT, we fallback to invoice tax
+                if (!taxPayableAcc) {
+                    outputVat += (inv.totalTax || 0);
+                }
                 
                 const type = (inv.vatType || "").toLowerCase();
                 if (type.includes("zero")) {
@@ -39,7 +67,6 @@ exports.getDashboardSummary = async (req, res) => {
         }
 
         let totalPurchases = 0;
-        let inputVat = 0;
 
         // Try to aggregate bills
         try {
@@ -50,7 +77,10 @@ exports.getDashboardSummary = async (req, res) => {
 
             for (const bill of bills) {
                 totalPurchases += (bill.totalAmount || 0);
-                inputVat += (bill.tax || 0);
+                // For pre-cutover compatibility
+                if (!taxReceivableAcc) {
+                    inputVat += (bill.tax || 0);
+                }
             }
         } catch (e) {
              console.error("Error fetching bills for statutory stats:", e);
