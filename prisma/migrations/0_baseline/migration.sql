@@ -1,4 +1,4 @@
-﻿-- CreateSchema
+-- CreateSchema
 CREATE SCHEMA IF NOT EXISTS "public";
 
 -- CreateEnum
@@ -1520,7 +1520,7 @@ CREATE TABLE "public"."Settings" (
     "leaveTypes" JSONB,
     "overtimeThreshold" DOUBLE PRECISION NOT NULL DEFAULT 2,
     "currency" TEXT NOT NULL DEFAULT 'INR',
-    "currencySymbol" TEXT NOT NULL DEFAULT 'Γé╣',
+    "currencySymbol" TEXT NOT NULL DEFAULT '₹',
     "invoiceTemplate" TEXT NOT NULL DEFAULT 'modern',
     "valuationMethod" TEXT NOT NULL DEFAULT 'FIFO',
     "barcodeTracking" BOOLEAN NOT NULL DEFAULT false,

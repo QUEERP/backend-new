@@ -507,7 +507,9 @@ model Invoice {
   exchangeRate       Float?              @default(1.0)
 
   // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("InvoiceTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
   transactionCurrencyId String?
+  baseCurrency          Currency? @relation("InvoiceBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
   baseCurrencyId        String?
   baseCurrencyAmount    Float?
 
@@ -707,7 +709,9 @@ model Payment {
   exchangeRate       Float?              @default(1.0)
 
   // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("PaymentTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
   transactionCurrencyId String?
+  baseCurrency          Currency? @relation("PaymentBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
   baseCurrencyId        String?
   baseCurrencyAmount    Float?
 
@@ -775,7 +779,9 @@ model CreditNote {
   exchangeRate Float?   @default(1.0)
 
   // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("CreditNoteTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
   transactionCurrencyId String?
+  baseCurrency          Currency? @relation("CreditNoteBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
   baseCurrencyId        String?
   baseCurrencyAmount    Float?
 
@@ -1509,7 +1515,9 @@ model Quotation {
   exchangeRate Float?    @default(1.0)
 
   // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("QuotationTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
   transactionCurrencyId String?
+  baseCurrency          Currency? @relation("QuotationBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
   baseCurrencyId        String?
   baseCurrencyAmount    Float?
 
@@ -1612,7 +1620,9 @@ model SalesOrder {
   exchangeRate Float?    @default(1.0)
 
   // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("SalesOrderTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
   transactionCurrencyId String?
+  baseCurrency          Currency? @relation("SalesOrderBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
   baseCurrencyId        String?
   baseCurrencyAmount    Float?
 
@@ -1711,7 +1721,9 @@ model PurchaseOrder {
   exchangeRate Float?   @default(1.0)
 
   // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("PurchaseOrderTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
   transactionCurrencyId String?
+  baseCurrency          Currency? @relation("PurchaseOrderBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
   baseCurrencyId        String?
   baseCurrencyAmount    Float?
 
@@ -1797,7 +1809,9 @@ model Bill {
   exchangeRate Float?   @default(1.0)
 
   // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("BillTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
   transactionCurrencyId String?
+  baseCurrency          Currency? @relation("BillBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
   baseCurrencyId        String?
   baseCurrencyAmount    Float?
 
@@ -2993,9 +3007,11 @@ model PurchaseRequest {
   items     PurchaseRequestItem[]
 
   // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("PurchaseRequestTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
   transactionCurrencyId String?
+  baseCurrency          Currency? @relation("PurchaseRequestBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
   baseCurrencyId        String?
-  exchangeRate          Float?  @default(1.0)
+  exchangeRate          Float?    @default(1.0)
   baseCurrencyAmount    Float?
 
   @@unique([businessId, requestNumber])
@@ -3085,7 +3101,9 @@ model PurchaseReturn {
   exchangeRate Float?               @default(1.0)
 
   // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("PurchaseReturnTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
   transactionCurrencyId String?
+  baseCurrency          Currency? @relation("PurchaseReturnBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
   baseCurrencyId        String?
   baseCurrencyAmount    Float?
 
@@ -4191,12 +4209,30 @@ model Country {
 }
 
 model Currency {
-  id             String     @id @default(uuid())
-  code           String     @unique
-  name           String
-  symbol         String
-  decimals       Int        @default(2)
-  businessesBase Business[] @relation("BusinessBaseCurrency")
+  id                          String            @id @default(uuid())
+  code                        String            @unique
+  name                        String
+  symbol                      String
+  decimals                    Int               @default(2)
+  businessesBase              Business[]        @relation("BusinessBaseCurrency")
+  billsTransaction            Bill[]            @relation("BillTransactionCurrency")
+  billsBase                   Bill[]            @relation("BillBaseCurrency")
+  creditNotesTransaction      CreditNote[]      @relation("CreditNoteTransactionCurrency")
+  creditNotesBase             CreditNote[]      @relation("CreditNoteBaseCurrency")
+  purchaseOrdersTransaction   PurchaseOrder[]   @relation("PurchaseOrderTransactionCurrency")
+  purchaseOrdersBase          PurchaseOrder[]   @relation("PurchaseOrderBaseCurrency")
+  quotationsTransaction       Quotation[]       @relation("QuotationTransactionCurrency")
+  quotationsBase              Quotation[]       @relation("QuotationBaseCurrency")
+  salesOrdersTransaction      SalesOrder[]      @relation("SalesOrderTransactionCurrency")
+  salesOrdersBase             SalesOrder[]      @relation("SalesOrderBaseCurrency")
+  invoicesTransaction         Invoice[]         @relation("InvoiceTransactionCurrency")
+  invoicesBase                Invoice[]         @relation("InvoiceBaseCurrency")
+  paymentsTransaction         Payment[]         @relation("PaymentTransactionCurrency")
+  paymentsBase                Payment[]         @relation("PaymentBaseCurrency")
+  purchaseRequestsTransaction PurchaseRequest[] @relation("PurchaseRequestTransactionCurrency")
+  purchaseRequestsBase        PurchaseRequest[] @relation("PurchaseRequestBaseCurrency")
+  purchaseReturnsTransaction  PurchaseReturn[]  @relation("PurchaseReturnTransactionCurrency")
+  purchaseReturnsBase         PurchaseReturn[]  @relation("PurchaseReturnBaseCurrency")
 }
 
 model ExchangeRate {
