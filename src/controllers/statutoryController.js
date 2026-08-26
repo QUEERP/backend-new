@@ -1,9 +1,10 @@
 const prisma = require("../config/prisma");
+const statutoryRegistry = require("../config/reports/statutoryRegistry");
 
 exports.getDashboardSummary = async (req, res) => {
     try {
         const businessId = req.business ? req.business.id : req.headers['x-business-id'];
-        
+
         if (!businessId) {
             return res.status(400).json({ success: false, message: "Business ID is required" });
         }
@@ -47,12 +48,12 @@ exports.getDashboardSummary = async (req, res) => {
 
             for (const inv of invoices) {
                 totalSales += (inv.grandTotal || 0);
-                
+
                 // For pre-cutover compatibility, if ledger has no output VAT, we fallback to invoice tax
                 if (!taxPayableAcc) {
                     outputVat += (inv.totalTax || 0);
                 }
-                
+
                 const type = (inv.vatType || "").toLowerCase();
                 if (type.includes("zero")) {
                     zeroRatedSales += (inv.subtotal || 0);
@@ -83,12 +84,12 @@ exports.getDashboardSummary = async (req, res) => {
                 }
             }
         } catch (e) {
-             console.error("Error fetching bills for statutory stats:", e);
+            console.error("Error fetching bills for statutory stats:", e);
         }
 
         const vatPayable = outputVat > inputVat ? outputVat - inputVat : 0;
         const vatRefund = inputVat > outputVat ? inputVat - outputVat : 0;
-        
+
         let recentReports = [];
         try {
             // Check if StatutoryReport model exists
@@ -121,5 +122,60 @@ exports.getDashboardSummary = async (req, res) => {
     } catch (error) {
         console.error("Error fetching statutory dashboard summary:", error);
         return res.status(500).json({ success: false, message: "Server error", error: error.message });
+    }
+};
+
+exports.listAvailableReports = async (req, res) => {
+    try {
+        const businessId = req.business.id; // STRICT SCOPING
+        const business = await prisma.business.findUnique({
+            where: { id: businessId },
+            include: { taxFramework: true }
+        });
+
+        if (!business || !business.taxFramework) {
+            return res.json({ success: true, framework: null, availableReports: [] });
+        }
+
+        const frameworkName = business.taxFramework.name;
+        const availableReports = statutoryRegistry.getAvailableReports(frameworkName);
+
+        res.json({
+            success: true,
+            framework: frameworkName,
+            availableReports
+        });
+    } catch (error) {
+        console.error("Error listing statutory reports:", error);
+        res.status(500).json({ success: false, message: "Server error", error: error.message });
+    }
+};
+
+exports.generateStatutoryReport = async (req, res) => {
+    try {
+        const businessId = req.business.id; // STRICT SCOPING
+        const { reportCode } = req.params;
+        const filters = req.query;
+
+        const business = await prisma.business.findUnique({
+            where: { id: businessId },
+            include: { taxFramework: true }
+        });
+
+        if (!business || !business.taxFramework) {
+            return res.status(400).json({ success: false, message: "No tax framework configured for this business" });
+        }
+
+        const frameworkName = business.taxFramework.name;
+
+        const reportData = await statutoryRegistry.generateReport(frameworkName, reportCode, businessId, filters);
+
+        res.json({
+            success: true,
+            report: reportData
+        });
+    } catch (error) {
+        console.error("Error generating statutory report:", error);
+        res.status(500).json({ success: false, message: "Server error", error: error.message });
     }
 };

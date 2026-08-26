@@ -70,8 +70,8 @@ const postJournalEntries = async (tx, entries) => {
     const rate = Number(e.exchangeRate) || 1.0;
     return {
       ...e,
-      baseDebit: (e.debit || 0) * rate,
-      baseCredit: (e.credit || 0) * rate
+      baseDebit: e.baseDebit !== undefined ? e.baseDebit : (e.debit || 0) * rate,
+      baseCredit: e.baseCredit !== undefined ? e.baseCredit : (e.credit || 0) * rate
     };
   });
 
@@ -88,8 +88,10 @@ const postJournalEntries = async (tx, entries) => {
     data: processedEntries.map(e => ({
       businessId: e.businessId,
       accountId: e.accountId,
-      debit: e.baseDebit, // Always store base currency in debit/credit
-      credit: e.baseCredit,
+      debit: e.debit || 0,
+      credit: e.credit || 0,
+      baseDebit: e.baseDebit,
+      baseCredit: e.baseCredit,
       description: e.description,
       date: e.date || new Date(),
       currency: e.currency || "AED",

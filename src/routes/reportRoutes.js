@@ -6,6 +6,51 @@ const checkPermission = require("../middlewares/checkPermission");
 
 const Controller = require("../controllers/reportController");
 const ExportController = require("../controllers/generalReportExportController");
+const TaxExportController = require("../controllers/taxStatutoryExportController");
+const CurrencyExportController = require("../controllers/currencyExportController");
+
+//////////////////////////////////////////////////////
+// TAX REPORTS
+//////////////////////////////////////////////////////
+router.get(
+  "/tax/summary",
+  auth,
+  business,
+  checkPermission("report", "read"),
+  Controller.getTaxSummary
+);
+
+router.get(
+  "/tax/transactions",
+  auth,
+  business,
+  checkPermission("report", "read"),
+  Controller.getTaxTransactions
+);
+
+router.get("/tax/summary/export/:format", auth, business, checkPermission("report", "read"), TaxExportController.exportTaxSummary);
+router.get("/tax/transactions/export/:format", auth, business, checkPermission("report", "read"), TaxExportController.exportTaxTransactions);
+
+//////////////////////////////////////////////////////
+// CURRENCY REPORTS
+//////////////////////////////////////////////////////
+router.get(
+  "/currency/usage",
+  auth,
+  business,
+  checkPermission("report", "read"),
+  Controller.getCurrencyUsage
+);
+
+router.get(
+  "/currency/gain-loss",
+  auth,
+  business,
+  checkPermission("report", "read"),
+  Controller.getCurrencyGainLoss
+);
+
+router.get("/currency/transactions/export/:format", auth, business, checkPermission("report", "read"), CurrencyExportController.exportCurrencyTransactions);
 
 //////////////////////////////////////////////////////
 // PROFIT & LOSS

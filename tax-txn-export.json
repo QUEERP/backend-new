@@ -1,0 +1,74 @@
+[
+  {
+    "date": "2026-08-24T12:39:04.033Z",
+    "type": "PURCHASE_RETURN",
+    "reference": "74a0e64b-33b4-4899-985e-ff37a863e485",
+    "taxType": "CGST",
+    "taxRate": 9,
+    "transactionCurrency": "USD",
+    "baseCurrency": "INR",
+    "exchangeRate": 83.5,
+    "taxAmountTxnCcy": 4.5,
+    "taxAmountBaseCcy": 375.75
+  },
+  {
+    "date": "2026-08-24T12:39:04.033Z",
+    "type": "PURCHASE_RETURN",
+    "reference": "74a0e64b-33b4-4899-985e-ff37a863e485",
+    "taxType": "SGST",
+    "taxRate": 9,
+    "transactionCurrency": "USD",
+    "baseCurrency": "INR",
+    "exchangeRate": 83.5,
+    "taxAmountTxnCcy": 4.5,
+    "taxAmountBaseCcy": 375.75
+  },
+  {
+    "date": "2026-08-24T12:38:06.889Z",
+    "type": "BILL",
+    "reference": "2a825390-d23c-49b7-940e-dfe7485ee60f",
+    "taxType": "CGST",
+    "taxRate": 9,
+    "transactionCurrency": "USD",
+    "baseCurrency": "INR",
+    "exchangeRate": 83.5,
+    "taxAmountTxnCcy": 9,
+    "taxAmountBaseCcy": 751.5
+  },
+  {
+    "date": "2026-08-24T12:38:06.889Z",
+    "type": "BILL",
+    "reference": "2a825390-d23c-49b7-940e-dfe7485ee60f",
+    "taxType": "SGST",
+    "taxRate": 9,
+    "transactionCurrency": "USD",
+    "baseCurrency": "INR",
+    "exchangeRate": 83.5,
+    "taxAmountTxnCcy": 9,
+    "taxAmountBaseCcy": 751.5
+  },
+  {
+    "date": "2026-08-24T12:37:51.235Z",
+    "type": "BILL",
+    "reference": "d9533983-376c-440c-be4b-34bbb99cda05",
+    "taxType": "CGST",
+    "taxRate": 9,
+    "transactionCurrency": "INR",
+    "baseCurrency": "INR",
+    "exchangeRate": 1,
+    "taxAmountTxnCcy": 90,
+    "taxAmountBaseCcy": 90
+  },
+  {
+    "date": "2026-08-24T12:37:51.235Z",
+    "type": "BILL",
+    "reference": "d9533983-376c-440c-be4b-34bbb99cda05",
+    "taxType": "SGST",
+    "taxRate": 9,
+    "transactionCurrency": "INR",
+    "baseCurrency": "INR",
+    "exchangeRate": 1,
+    "taxAmountTxnCcy": 90,
+    "taxAmountBaseCcy": 90
+  }
+]

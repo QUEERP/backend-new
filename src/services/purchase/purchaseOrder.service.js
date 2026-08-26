@@ -2,6 +2,8 @@ const prisma = require("../../config/prisma");
 const { logAction } = require("../sales/audit.service");
 const { generateDocNumber } = require("../sales/quotation.service");
 const { adjustIncomingStock } = require("../inventory/movement.service");
+const TransactionHelper = require("../TransactionHelper");
+const { CurrencyService } = require("../currencyService");
 
 const getPagination = (query) => {
   const page = parseInt(query.page) || 1;
@@ -53,8 +55,39 @@ const createPurchaseOrder = async (businessId, userId, userEmail, data) => {
     // Generate unique PO number
     const poNumber = await generateDocNumber(tx, businessId, "PO", "purchaseOrder", "poNumber");
 
-    // Calculate Pricing
-    const pricing = calculatePOPricing(data.items);
+    const transactionDate = data.orderDate ? new Date(data.orderDate) : new Date();
+    const discount = data.discount ? parseFloat(data.discount) : 0;
+
+    // Use Engine for pricing, tax, and multi-currency
+    const financials = await TransactionHelper.processTransactionFinancials({
+      businessId,
+      transactionDate,
+      currencyCode: data.currency || "AED",
+      items: data.items || [],
+      customerId: null, // PO doesn't use customer state
+      globalDiscount: discount,
+      txClient: tx
+    });
+
+    const grandTotal = financials.subtotal + financials.totalTax - discount;
+
+    const processedItems = data.items.map(item => {
+      const origQty = parseFloat(item.quantity || 0);
+      const origPrice = parseFloat(item.price || 0);
+      const sub = origQty * origPrice;
+      const taxAmt = item.taxPercent ? sub * (parseFloat(item.taxPercent) / 100) : 0;
+      
+      return {
+        productId: item.productId || null,
+        description: item.description,
+        itemType: item.itemType || "GOODS",
+        hsnSacCode: item.hsnSacCode || null,
+        quantity: origQty,
+        price: origPrice,
+        taxPercent: item.taxPercent ? parseFloat(item.taxPercent) : 0,
+        total: sub + taxAmt
+      };
+    });
 
     const purchaseOrder = await tx.purchaseOrder.create({
       data: {
@@ -64,15 +97,27 @@ const createPurchaseOrder = async (businessId, userId, userEmail, data) => {
         warehouseId: data.warehouseId || null,
         assignedToId: data.assignedToId || null,
         status: data.status || "DRAFT",
-        subtotal: pricing.subtotal,
-        tax: pricing.tax,
-        discount: data.discount ? parseFloat(data.discount) : 0,
-        totalAmount: pricing.totalAmount - (data.discount ? parseFloat(data.discount) : 0),
-        orderDate: data.orderDate ? new Date(data.orderDate) : new Date(),
+        subtotal: financials.subtotal,
+        tax: financials.totalTax,
+        discount: discount,
+        totalAmount: grandTotal,
+        currency: data.currency || "AED",
+        
+        // Currency engine fields
+        transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+        baseCurrencyId: financials.currencyData.baseCurrencyId,
+        exchangeRate: financials.currencyData.exchangeRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+        statutoryExchangeRate: financials.currencyData.statutoryRate,
+        statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+        
+
+
+        orderDate: transactionDate,
         expectedDeliveryDate: data.expectedDeliveryDate ? new Date(data.expectedDeliveryDate) : null,
         notes: data.notes || null,
         items: {
-          create: pricing.processedItems
+          create: processedItems
         }
       },
       include: {
@@ -81,9 +126,11 @@ const createPurchaseOrder = async (businessId, userId, userEmail, data) => {
       }
     });
 
+    await TransactionHelper.saveTaxLedger(tx, businessId, "PURCHASE_ORDER", purchaseOrder.id, financials.taxTransactions);
+
     // If initial status is APPROVED, adjust incoming stock
     if (purchaseOrder.status === "APPROVED" && purchaseOrder.warehouseId) {
-      for (const item of pricing.processedItems) {
+      for (const item of processedItems) {
         if (item.productId && item.itemType === "GOODS") {
           await adjustIncomingStock(tx, {
             businessId,
@@ -188,33 +235,69 @@ const updatePurchaseOrder = async (businessId, userId, userEmail, id, data) => {
       throw new Error(`Cannot update purchase order in ${existing.status} status.`);
     }
 
-    let pricing = {};
-    if (data.items) {
-      // If previously approved, reverse previous incoming stock
-      if (existing.status === "APPROVED" && existing.warehouseId) {
-        for (const item of existing.items) {
-          if (item.productId && item.itemType === "GOODS") {
-            await adjustIncomingStock(tx, {
-              businessId,
-              productId: item.productId,
-              warehouseId: existing.warehouseId,
-              quantity: -item.quantity
-            });
+    let financials = null;
+    let grandTotal = existing.totalAmount;
+    let discount = existing.discount;
+
+    // Trigger recalculation if any financial input changes
+    if (data.items || data.currency || data.discount !== undefined || data.orderDate) {
+      discount = data.discount !== undefined ? parseFloat(data.discount) : existing.discount;
+      const transactionDate = data.orderDate ? new Date(data.orderDate) : existing.orderDate;
+      const itemsToProcess = data.items || await tx.purchaseOrderItem.findMany({ where: { purchaseOrderId: id } });
+
+      financials = await TransactionHelper.processTransactionFinancials({
+        businessId,
+        transactionDate,
+        currencyCode: data.currency || existing.currency || "AED",
+        items: itemsToProcess,
+        customerId: null,
+        globalDiscount: discount,
+        txClient: tx
+      });
+      
+      grandTotal = financials.subtotal + financials.totalTax - discount;
+
+      const processedItems = itemsToProcess.map(item => {
+        const origQty = parseFloat(item.quantity || 0);
+        const origPrice = parseFloat(item.price || 0);
+        const sub = origQty * origPrice;
+        const taxAmt = item.taxPercent ? sub * (parseFloat(item.taxPercent) / 100) : 0;
+        
+        return {
+          productId: item.productId || null,
+          description: item.description,
+          itemType: item.itemType || "GOODS",
+          hsnSacCode: item.hsnSacCode || null,
+          quantity: origQty,
+          price: origPrice,
+          taxPercent: item.taxPercent ? parseFloat(item.taxPercent) : 0,
+          total: sub + taxAmt
+        };
+      });
+
+      if (data.items) {
+        if (existing.status === "APPROVED" && existing.warehouseId) {
+          for (const item of existing.items) {
+            if (item.productId && item.itemType === "GOODS") {
+              await adjustIncomingStock(tx, {
+                businessId,
+                productId: item.productId,
+                warehouseId: existing.warehouseId,
+                quantity: -item.quantity
+              });
+            }
           }
         }
+        await tx.purchaseOrderItem.deleteMany({
+          where: { purchaseOrderId: id }
+        });
+        financials.processedItemsToSave = processedItems;
       }
 
-      pricing = calculatePOPricing(data.items);
-
-      await tx.purchaseOrderItem.deleteMany({
-        where: { purchaseOrderId: id }
+      await tx.taxTransaction.deleteMany({
+        where: { transactionId: id, transactionType: "PURCHASE_ORDER" }
       });
     }
-
-    const discountVal = data.discount !== undefined ? parseFloat(data.discount) : existing.discount;
-    const subtotalVal = pricing.subtotal !== undefined ? pricing.subtotal : existing.subtotal;
-    const taxVal = pricing.tax !== undefined ? pricing.tax : existing.tax;
-    const totalVal = (pricing.totalAmount !== undefined ? pricing.totalAmount : (existing.subtotal + existing.tax)) - discountVal;
 
     const updated = await tx.purchaseOrder.update({
       where: { id },
@@ -223,15 +306,27 @@ const updatePurchaseOrder = async (businessId, userId, userEmail, id, data) => {
         warehouseId: data.warehouseId !== undefined ? data.warehouseId : existing.warehouseId,
         assignedToId: data.assignedToId !== undefined ? data.assignedToId : existing.assignedToId,
         status: data.status || existing.status,
-        subtotal: subtotalVal,
-        tax: taxVal,
-        discount: discountVal,
-        totalAmount: totalVal,
+        subtotal: financials ? financials.subtotal : existing.subtotal,
+        tax: financials ? financials.totalTax : existing.tax,
+        discount: discount,
+        totalAmount: grandTotal,
+        currency: data.currency || existing.currency,
+        
+        // Currency engine fields
+        ...(financials ? {
+          transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+          baseCurrencyId: financials.currencyData.baseCurrencyId,
+          exchangeRate: financials.currencyData.exchangeRate,
+          baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+          statutoryExchangeRate: financials.currencyData.statutoryRate,
+          statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+        } : {}),
+
         orderDate: data.orderDate ? new Date(data.orderDate) : existing.orderDate,
         expectedDeliveryDate: data.expectedDeliveryDate !== undefined ? (data.expectedDeliveryDate ? new Date(data.expectedDeliveryDate) : null) : existing.expectedDeliveryDate,
         notes: data.notes !== undefined ? data.notes : existing.notes,
-        items: data.items ? {
-          create: pricing.processedItems
+        items: (financials && data.items) ? {
+          create: financials.processedItemsToSave
         } : undefined
       },
       include: {
@@ -239,9 +334,12 @@ const updatePurchaseOrder = async (businessId, userId, userEmail, id, data) => {
       }
     });
 
-    // If new status is APPROVED and warehouse is set, adjust incoming stock
+    if (financials) {
+      await TransactionHelper.saveTaxLedger(tx, businessId, "PURCHASE_ORDER", updated.id, financials.taxTransactions);
+    }
+
     if (updated.status === "APPROVED" && updated.warehouseId) {
-      const itemsToAdjust = data.items ? pricing.processedItems : existing.items;
+      const itemsToAdjust = (financials && data.items) ? financials.processedItemsToSave : existing.items;
       for (const item of itemsToAdjust) {
         if (item.productId && (item.itemType === "GOODS" || item.product?.type === "GOODS")) {
           await adjustIncomingStock(tx, {

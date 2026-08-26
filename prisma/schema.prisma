@@ -53,7 +53,7 @@ model Business {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  country            Country   @default(INDIA)
+  country            LegacyCountry @default(INDIA)
   state              String?
   city               String?
   currency           String?
@@ -192,9 +192,19 @@ model Business {
   ticketComments         TicketComment[]
   ticketAttachments      TicketAttachment[]
 
+  // Phase 1 Multi-Country / Multi-Currency Additions
+  countryId      String?
+  baseCurrencyId String?
+  taxFrameworkId String?
+
+  countryRef         Country?            @relation(fields: [countryId], references: [id])
+  baseCurrency       Currency?           @relation("BusinessBaseCurrency", fields: [baseCurrencyId], references: [id])
+  taxFramework       TaxFramework?       @relation(fields: [taxFrameworkId], references: [id])
+  taxTransactions    TaxTransaction[]
+  taxRules           TaxRule[]
+  taxAccountMappings TaxAccountMapping[]
+
   @@map("businesses")
-  taxRules               TaxRule[]
-  taxAccountMappings     TaxAccountMapping[]
 }
 
 //////////////////////////////////////////////////////
@@ -489,18 +499,31 @@ model Invoice {
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 
-  auditLogs    InvoiceAuditLog[]
-  salesReturns SalesReturn[]
-  payments     Payment[]
-  creditNotes  CreditNote[]
-  paymentAllocations PaymentAllocation[]  exchangeRate    Float?    @default(1.0)
+  auditLogs          InvoiceAuditLog[]
+  salesReturns       SalesReturn[]
+  payments           Payment[]
+  creditNotes        CreditNote[]
+  paymentAllocations PaymentAllocation[]
+  exchangeRate       Float?
+  baseCurrencyAmount Float?
 
+  statutoryExchangeRate Float?
+  statutoryBaseAmount   Float?
+
+  isLegacyUntracked Boolean @default(false)
+
+  // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("InvoiceTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+  transactionCurrencyId String?
+  baseCurrency          Currency? @relation("InvoiceBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
+  baseCurrencyId        String?
 
   @@unique([businessId, invoiceNumber]) // invoice numbers unique per business
   @@index([businessId])
-  @@map("invoices")
   @@index([businessId, invoiceDate])
   @@index([businessId, status])
+  @@index([businessId, transactionCurrencyId])
+  @@map("invoices")
 }
 
 model InvoiceAuditLog {
@@ -655,46 +678,60 @@ model Settings {
 }
 
 model Payment {
-  id            String   @id @default(uuid())
-  invoiceId     String?
-  quotationId   String?
-  customerId    String? // 🔥 Added for unassigned payments / advances
+  id                 String              @id @default(uuid())
+  invoiceId          String?
+  quotationId        String?
+  customerId         String? // 🔥 Added for unassigned payments / advances
   /// ///////////////////////////////////////////////////
   /// ///////////////////////////////////////////////////
-  businessId    String
+  businessId         String
   /// ///////////////////////////////////////////////////
   /// ///////////////////////////////////////////////////
-  amount        Float
-  amountAllocated Float @default(0)
-  status        String @default("unapplied")
-  paymentDate   DateTime
-  paymentMode   String
-  transactionId String?
-  note          String?
-  createdAt     DateTime @default(now())
+  amount             Float
+  amountAllocated    Float               @default(0)
+  status             String              @default("unapplied")
+  paymentDate        DateTime
+  paymentMode        String
+  transactionId      String?
+  note               String?
+  createdAt          DateTime            @default(now())
   /// ///////////////////////////////////////////////////
   /// ///////////////////////////////////////////////////
-  createdBy     String
-  pdfUrl        String?
+  createdBy          String
+  pdfUrl             String?
   //   creditNoteId  String?
-  paymentNumber String
-  billId        String?
-  projectId     String?
-  bill          Bill?    @relation(fields: [billId], references: [id])
-  business      Business @relation(fields: [businessId], references: [id])
-  customer      Customer? @relation(fields: [customerId], references: [id]) // 🔥 Relation
-  project       Project?  @relation(fields: [projectId], references: [id])
+  paymentNumber      String
+  billId             String?
+  projectId          String?
+  bill               Bill?               @relation(fields: [billId], references: [id])
+  business           Business            @relation(fields: [businessId], references: [id])
+  customer           Customer?           @relation(fields: [customerId], references: [id]) // 🔥 Relation
+  project            Project?            @relation(fields: [projectId], references: [id])
   //   creditNote    CreditNote? @relation(fields: [creditNoteId], references: [id])
-  invoice       Invoice? @relation(fields: [invoiceId], references: [id])
-  quotation     Quotation? @relation(fields: [quotationId], references: [id])
-  paymentAllocations PaymentAllocation[]  currency        String?   @default("AED")
-  exchangeRate    Float?    @default(1.0)
+  invoice            Invoice?            @relation(fields: [invoiceId], references: [id])
+  quotation          Quotation?          @relation(fields: [quotationId], references: [id])
+  paymentAllocations PaymentAllocation[]
+  currency           String?             @default("AED")
+  exchangeRate       Float?
+  baseCurrencyAmount Float?
 
+  statutoryExchangeRate Float?
+  statutoryBaseAmount   Float?
 
+  isLegacyUntracked Boolean @default(false)
+
+  // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("PaymentTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+  transactionCurrencyId String?
+  baseCurrency          Currency? @relation("PaymentBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
+  baseCurrencyId        String?
+
+  @@index([businessId, paymentDate, transactionCurrencyId])
   @@index([invoiceId])
   @@index([customerId])
-  @@map("payments")
   @@index([businessId, paymentDate])
+  @@index([businessId, transactionCurrencyId])
+  @@map("payments")
 }
 
 model PaymentAllocation {
@@ -702,12 +739,12 @@ model PaymentAllocation {
   paymentId       String
   invoiceId       String
   allocatedAmount Float
-  allocationType  String   // 'new_invoice' | 'existing_invoice'
+  allocationType  String // 'new_invoice' | 'existing_invoice'
   createdBy       String
   createdAt       DateTime @default(now())
 
-  payment         Payment  @relation(fields: [paymentId], references: [id])
-  invoice         Invoice  @relation(fields: [invoiceId], references: [id])
+  payment Payment @relation(fields: [paymentId], references: [id])
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
 
   @@unique([paymentId, invoiceId])
   @@index([paymentId])
@@ -748,13 +785,27 @@ model CreditNote {
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt  currency        String?   @default("AED")
-  exchangeRate    Float?    @default(1.0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  currency           String?  @default("AED")
+  exchangeRate       Float?
+  baseCurrencyAmount Float?
 
+  statutoryExchangeRate Float?
+  statutoryBaseAmount   Float?
+
+  isLegacyUntracked Boolean @default(false)
+
+  // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("CreditNoteTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+  transactionCurrencyId String?
+  baseCurrency          Currency? @relation("CreditNoteBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
+  baseCurrencyId        String?
 
   @@index([businessId])
   @@index([customerId])
+  @@index([businessId, transactionCurrencyId])
+  @@index([businessId, createdAt])
 }
 
 model Employee {
@@ -928,8 +979,8 @@ model Expense {
   referenceType String? // 'Quotation' or 'Invoice'
   referenceId   String? // ID of the quotation or invoice
 
-  auditLogs ExpenseAuditLog[]
-  exchangeRate    Float?    @default(1.0)
+  auditLogs    ExpenseAuditLog[]
+  exchangeRate Float?            @default(1.0)
 }
 
 model ExpenseAuditLog {
@@ -1477,15 +1528,29 @@ model Quotation {
   invoices    Invoice[]
   payments    Payment[]
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  projects  Project[]  exchangeRate    Float?    @default(1.0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  projects           Project[]
+  exchangeRate       Float?
+  baseCurrencyAmount Float?
 
+  statutoryExchangeRate Float?
+  statutoryBaseAmount   Float?
+
+  isLegacyUntracked Boolean @default(false)
+
+  // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("QuotationTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+  transactionCurrencyId String?
+  baseCurrency          Currency? @relation("QuotationBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
+  baseCurrencyId        String?
 
   @@unique([businessId, quoteNumber])
   @@index([customerId])
   @@index([dealId])
   @@index([isDeleted])
+  @@index([businessId, transactionCurrencyId])
+  @@index([businessId, issueDate])
 }
 
 model QuotationItem {
@@ -1575,15 +1640,29 @@ model SalesOrder {
   invoices     Invoice[]
   salesReturns SalesReturn[]
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  projects  Project[]  exchangeRate    Float?    @default(1.0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  projects           Project[]
+  exchangeRate       Float?
+  baseCurrencyAmount Float?
 
+  statutoryExchangeRate Float?
+  statutoryBaseAmount   Float?
+
+  isLegacyUntracked Boolean @default(false)
+
+  // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("SalesOrderTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+  transactionCurrencyId String?
+  baseCurrency          Currency? @relation("SalesOrderBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
+  baseCurrencyId        String?
 
   @@unique([businessId, orderNumber])
   @@index([customerId])
   @@index([quotationId])
   @@index([isDeleted])
+  @@index([businessId, transactionCurrencyId])
+  @@index([businessId, orderDate])
 }
 
 model SalesOrderItem {
@@ -1670,11 +1749,26 @@ model PurchaseOrder {
   bills             Bill[]
   goodsReceiveNotes GoodsReceiveNote[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt  exchangeRate    Float?    @default(1.0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  exchangeRate       Float?
+  baseCurrencyAmount Float?
 
+  statutoryExchangeRate Float?
+  statutoryBaseAmount   Float?
 
+  isLegacyUntracked Boolean @default(false)
+
+  // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("PurchaseOrderTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+  transactionCurrencyId String?
+  baseCurrency          Currency? @relation("PurchaseOrderBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
+  baseCurrencyId        String?
+
+  @@index([businessId, orderDate, transactionCurrencyId])
   @@index([businessId])
+  @@index([businessId, transactionCurrencyId])
+  @@index([businessId, orderDate])
 }
 
 model PurchaseOrderItem {
@@ -1749,13 +1843,28 @@ model Bill {
   payments        Payment[]
   purchaseReturns PurchaseReturn[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt  currency        String?   @default("AED")
-  exchangeRate    Float?    @default(1.0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  currency           String?  @default("AED")
+  exchangeRate       Float?
+  baseCurrencyAmount Float?
 
+  statutoryExchangeRate Float?
+  statutoryBaseAmount   Float?
+
+  isLegacyUntracked Boolean @default(false)
+
+  // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("BillTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+  transactionCurrencyId String?
+  baseCurrency          Currency? @relation("BillBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
+  baseCurrencyId        String?
 
   @@unique([businessId, billNumber])
+  @@index([businessId, billDate, transactionCurrencyId])
   @@index([businessId])
+  @@index([businessId, transactionCurrencyId])
+  @@index([businessId, billDate])
 }
 
 model BillItem {
@@ -1864,7 +1973,7 @@ model Warehouse {
 
   createdAt DateTime @default(now())
 
-  locations           WarehouseLocation[]
+  locations WarehouseLocation[]
 
   stock               Stock[]
   stockMovements      StockMovement[]
@@ -1901,10 +2010,10 @@ model Stock {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  locationId  String?
+  locationId String?
 
-  product   Product   @relation(fields: [productId], references: [id])
-  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  product   Product            @relation(fields: [productId], references: [id])
+  warehouse Warehouse          @relation(fields: [warehouseId], references: [id])
   location  WarehouseLocation? @relation(fields: [locationId], references: [id])
 
   @@unique([productId, warehouseId, locationId])
@@ -1920,13 +2029,13 @@ model WarehouseLocation {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
-  
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
   stocks           Stock[]
   stockMovements   StockMovement[]
   stockAdjustments StockAdjustment[]
-  fromTransfers    StockTransfer[] @relation("FromLocation")
-  toTransfers      StockTransfer[] @relation("ToLocation")
+  fromTransfers    StockTransfer[]   @relation("FromLocation")
+  toTransfers      StockTransfer[]   @relation("ToLocation")
 
   @@unique([warehouseId, code])
   @@index([warehouseId])
@@ -1944,8 +2053,8 @@ model Account {
 
   createdAt DateTime @default(now())
 
-  business Business       @relation(fields: [businessId], references: [id])
-  entries  JournalEntry[]
+  business           Business            @relation(fields: [businessId], references: [id])
+  entries            JournalEntry[]
   taxAccountMappings TaxAccountMapping[]
 }
 
@@ -1963,9 +2072,19 @@ model JournalEntry {
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   account  Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  
-  currency        String?   @default("AED")
-  exchangeRate    Float?    @default(1.0)
+
+  currency     String? @default("AED")
+  exchangeRate Float?
+
+  // Phase 1 Additions
+  baseDebit  Float?
+  baseCredit Float?
+
+  statutoryRate   Float?
+  statutoryDebit  Float?
+  statutoryCredit Float?
+
+  isLegacyUntracked Boolean @default(false)
 }
 
 // model stock_transfer_items {
@@ -2567,10 +2686,10 @@ model SalesReturn {
   items       SalesReturnItem[]
   creditNotes CreditNote[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt  currency        String?   @default("AED")
-  exchangeRate    Float?    @default(1.0)
-
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  currency     String?  @default("AED")
+  exchangeRate Float?   @default(1.0)
 
   @@index([businessId])
   @@index([customerId])
@@ -2638,9 +2757,9 @@ model RecurringInvoice {
 
   items RecurringInvoiceItem[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt  exchangeRate    Float?    @default(1.0)
-
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  exchangeRate Float?   @default(1.0)
 
   @@index([businessId])
   @@index([customerId])
@@ -2789,17 +2908,17 @@ model StockMovement {
   valuationMethod String?
   createdAt       DateTime          @default(now())
 
-  business  Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  business  Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product   Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse Warehouse          @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   location  WarehouseLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   @@index([businessId])
   @@index([productId])
   @@index([warehouseId])
   @@index([referenceType, referenceId])
-  @@map("stock_movements")
   @@index([businessId, createdAt])
+  @@map("stock_movements")
 }
 
 model Batch {
@@ -2940,8 +3059,24 @@ model PurchaseRequest {
   requester BusinessUser?         @relation(fields: [requesterId], references: [id], onDelete: SetNull)
   items     PurchaseRequestItem[]
 
+  // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("PurchaseRequestTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+  transactionCurrencyId String?
+  baseCurrency          Currency? @relation("PurchaseRequestBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
+  baseCurrencyId        String?
+  exchangeRate          Float?
+  baseCurrencyAmount    Float?
+
+  statutoryExchangeRate Float?
+  statutoryBaseAmount   Float?
+
+  isLegacyUntracked Boolean @default(false)
+  rateIsEstimated   Boolean @default(false)
+
   @@unique([businessId, requestNumber])
   @@index([businessId])
+  @@index([businessId, transactionCurrencyId])
+  @@index([businessId, createdAt])
   @@map("purchase_requests")
 }
 
@@ -3018,16 +3153,25 @@ model PurchaseReturn {
   createdAt    DateTime             @default(now())
   updatedAt    DateTime             @updatedAt
 
-  business Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  vendor   Vendor               @relation(fields: [vendorId], references: [id])
-  bill     Bill?                @relation(fields: [billId], references: [id])
-  grn      GoodsReceiveNote?    @relation(fields: [grnId], references: [id])
-  items    PurchaseReturnItem[]  currency        String?   @default("AED")
-  exchangeRate    Float?    @default(1.0)
+  business     Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  vendor       Vendor               @relation(fields: [vendorId], references: [id])
+  bill         Bill?                @relation(fields: [billId], references: [id])
+  grn          GoodsReceiveNote?    @relation(fields: [grnId], references: [id])
+  items        PurchaseReturnItem[]
+  currency     String?              @default("AED")
+  exchangeRate Float?               @default(1.0)
 
+  // Phase 1 Multi-Currency Additions
+  transactionCurrency   Currency? @relation("PurchaseReturnTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+  transactionCurrencyId String?
+  baseCurrency          Currency? @relation("PurchaseReturnBaseCurrency", fields: [baseCurrencyId], references: [id], onDelete: SetNull)
+  baseCurrencyId        String?
+  baseCurrencyAmount    Float?
 
   @@unique([businessId, returnNumber])
   @@index([businessId])
+  @@index([businessId, transactionCurrencyId])
+  @@index([businessId, createdAt])
   @@map("purchase_returns")
 }
 
@@ -3137,7 +3281,7 @@ model InventoryLayer {
   @@map("inventory_layers")
 }
 
-enum Country {
+enum LegacyCountry {
   AFGHANISTAN
   ALBANIA
   ALGERIA
@@ -3216,6 +3360,8 @@ enum Country {
   ZIMBABWE
   UAE
   OTHER
+
+  @@map("Country")
 }
 
 enum TaxTreatment {
@@ -3502,7 +3648,7 @@ model Project {
   executionType String? @default("SERVICE") // SERVICE, PRODUCT, HYBRID
   billingMethod String?
   templateId    String?
-  note          String?   @db.Text
+  note          String? @db.Text
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3535,8 +3681,8 @@ model Project {
   plannings           ProjectPlanning[]
   resourceAllocations ResourceAllocation[]
   projectItems        ProjectItem[]
-  payments            Payment[]  exchangeRate    Float?    @default(1.0)
-
+  payments            Payment[]
+  exchangeRate        Float?                 @default(1.0)
 
   @@unique([businessId, projectCode])
   @@index([businessId, createdAt])
@@ -3544,15 +3690,15 @@ model Project {
 }
 
 model ProjectItem {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   projectId   String
   itemName    String
   description String?
-  quantity    Float    @default(1)
-  rate        Float    @default(0)
-  amount      Float    @default(0)
+  quantity    Float   @default(1)
+  rate        Float   @default(0)
+  amount      Float   @default(0)
 
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model ProjectMilestone {
@@ -3606,7 +3752,7 @@ model ProjectTask {
   timeEntries         TimeEntry[]
   expenses            Expense[]
   resourceAllocations ResourceAllocation[]
-  exchangeRate    Float?    @default(1.0)
+  exchangeRate        Float?               @default(1.0)
 }
 
 // ==========================================
@@ -3856,7 +4002,7 @@ model ProjectBudget {
   requirement    ProjectRequirement? @relation(fields: [requirementId], references: [id])
   estimate       ProjectEstimation?  @relation(fields: [estimateId], references: [id])
   projectManager User?               @relation(fields: [projectManagerId], references: [id])
-  exchangeRate    Float?    @default(1.0)
+  exchangeRate   Float?              @default(1.0)
 }
 
 // ==========================================
@@ -4075,46 +4221,182 @@ model ResourceAllocation {
   employee User         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
-
 //////////////////////////////////////////////////////
 // TAX ENGINE (Phase 3)
 //////////////////////////////////////////////////////
 
 model TaxRule {
-  id              String   @id @default(uuid())
-  businessId      String
-  name            String   // e.g., "UAE Standard VAT 5%"
-  rate            Float    // e.g., 5.0
-  type            String   // e.g., "VAT", "GST", "SALES_TAX"
-  jurisdiction    String?  // e.g., "UAE", "UK", "IN"
-  isRecoverable   Boolean  @default(true) // For input tax
-  
-  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  mappings        TaxAccountMapping[]
-  
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id            String  @id @default(uuid())
+  businessId    String
+  name          String // e.g., "UAE Standard VAT 5%"
+  rate          Float // e.g., 5.0
+  type          String // e.g., "VAT", "GST", "SALES_TAX"
+  jurisdiction  String? // e.g., "UAE", "UK", "IN" (Geographic splitting)
+  taxCategory   String? // e.g., "REVERSE_CHARGE", "ZERO_RATED" (Supply type classification)
+  isRecoverable Boolean @default(true) // For input tax
+  autoProvisioned Boolean @default(false) // True = created by TaxProvisioningService; safe to replace on country change
+
+  business Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  mappings TaxAccountMapping[]
+  rates    TaxRate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([businessId])
   @@map("tax_rules")
 }
 
 model TaxAccountMapping {
-  id              String   @id @default(uuid())
-  businessId      String
-  taxRuleId       String
-  accountId       String   // Ledger account to post this tax to (e.g. SYSTEM_TAX_PAYABLE)
-  type            String   // 'PAYABLE' (Output Tax on Sales) or 'RECEIVABLE' (Input Tax on Purchases)
+  id         String @id @default(uuid())
+  businessId String
+  taxRuleId  String
+  accountId  String // Ledger account to post this tax to (e.g. SYSTEM_TAX_PAYABLE)
+  type       String // 'PAYABLE' (Output Tax on Sales) or 'RECEIVABLE' (Input Tax on Purchases)
 
-  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  taxRule         TaxRule  @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
-  account         Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  taxRule  TaxRule  @relation(fields: [taxRuleId], references: [id], onDelete: Cascade)
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([taxRuleId, type])
   @@index([businessId])
   @@index([accountId])
   @@map("tax_account_mappings")
+}
+
+// --- Phase 1 Multi-Country / Multi-Currency Models ---
+
+model Country {
+  id                String             @id @default(uuid())
+  code              String             @unique
+  name              String
+  businesses        Business[]
+  exchangeRateRules ExchangeRateRule[]
+
+  @@map("countries")
+}
+
+model Currency {
+  id               String     @id @default(uuid())
+  code             String     @unique
+  name             String
+  symbol           String
+  decimals         Int        @default(2)
+  businessesBase   Business[] @relation("BusinessBaseCurrency")
+  decimalPrecision Int        @default(2)
+
+  exchangeRateRules ExchangeRateRule[]
+  ratesFrom         ExchangeRate[]     @relation("FromExchangeRates")
+  ratesTo           ExchangeRate[]     @relation("ToExchangeRates")
+  taxTransactions   TaxTransaction[]   @relation("TaxTransactionCurrency")
+
+  paymentsTransaction    Payment[]         @relation("PaymentTransactionCurrency")
+  paymentsBase           Payment[]         @relation("PaymentBaseCurrency")
+  creditNotesTransaction CreditNote[]      @relation("CreditNoteTransactionCurrency")
+  creditNotesBase        CreditNote[]      @relation("CreditNoteBaseCurrency")
+  quotationsTransaction  Quotation[]       @relation("QuotationTransactionCurrency")
+  quotationsBase         Quotation[]       @relation("QuotationBaseCurrency")
+  salesOrdersTransaction SalesOrder[]      @relation("SalesOrderTransactionCurrency")
+  salesOrdersBase        SalesOrder[]      @relation("SalesOrderBaseCurrency")
+  purchaseOrdersTxn      PurchaseOrder[]   @relation("PurchaseOrderTransactionCurrency")
+  purchaseOrdersBase     PurchaseOrder[]   @relation("PurchaseOrderBaseCurrency")
+  billsTransaction       Bill[]            @relation("BillTransactionCurrency")
+  billsBase              Bill[]            @relation("BillBaseCurrency")
+  purchaseRequestsTxn    PurchaseRequest[] @relation("PurchaseRequestTransactionCurrency")
+  purchaseRequestsBase   PurchaseRequest[] @relation("PurchaseRequestBaseCurrency")
+  purchaseReturnsTxn     PurchaseReturn[]  @relation("PurchaseReturnTransactionCurrency")
+  purchaseReturnsBase    PurchaseReturn[]  @relation("PurchaseReturnBaseCurrency")
+  invoicesTransaction    Invoice[]         @relation("InvoiceTransactionCurrency")
+  invoicesBase           Invoice[]         @relation("InvoiceBaseCurrency")
+
+  @@map("currencies")
+}
+
+model ExchangeRate {
+  id             String   @id @default(uuid())
+  fromCurrencyId String
+  toCurrencyId   String
+  rate           Float
+  effectiveDate  DateTime
+  source         String?
+  rateType       String   @default("COMMERCIAL") // 'COMMERCIAL' | 'STATUTORY'
+  createdAt      DateTime @default(now())
+  createdBy      String?
+
+  fromCurrency Currency @relation("FromExchangeRates", fields: [fromCurrencyId], references: [id])
+  toCurrency   Currency @relation("ToExchangeRates", fields: [toCurrencyId], references: [id])
+
+  @@unique([fromCurrencyId, toCurrencyId, effectiveDate, rateType])
+  @@index([fromCurrencyId, toCurrencyId, rateType, effectiveDate])
+  @@map("exchange_rates")
+}
+
+model TaxFramework {
+  id         String     @id @default(uuid())
+  countryId  String     @unique
+  name       String
+  taxTypes   TaxType[]
+  businesses Business[]
+}
+
+model TaxType {
+  id             String       @id @default(uuid())
+  taxFrameworkId String
+  name           String
+  rates          TaxRate[]
+  taxFramework   TaxFramework @relation(fields: [taxFrameworkId], references: [id], onDelete: Cascade)
+}
+
+model TaxRate {
+  id              String           @id @default(uuid())
+  taxTypeId       String
+  name            String
+  rate            Float
+  effectiveFrom   DateTime
+  effectiveTo     DateTime?
+  taxRuleId       String?
+  taxType         TaxType          @relation(fields: [taxTypeId], references: [id], onDelete: Cascade)
+  taxRule         TaxRule?         @relation(fields: [taxRuleId], references: [id], onDelete: SetNull)
+  taxTransactions TaxTransaction[]
+}
+
+model TaxTransaction {
+  id                    String   @id @default(uuid())
+  businessId            String
+  transactionType       String
+  transactionId         String
+  taxRateId             String
+  taxAmountTxnCcy       Float
+  taxAmountBaseCcy      Float
+  taxableAmountBaseCcy  Float    @default(0)
+  taxAmountStatutoryCcy Float?
+  transactionCurrencyId String?
+  createdAt             DateTime @default(now())
+
+  business            Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  taxRate             TaxRate   @relation(fields: [taxRateId], references: [id], onDelete: Restrict)
+  transactionCurrency Currency? @relation("TaxTransactionCurrency", fields: [transactionCurrencyId], references: [id], onDelete: SetNull)
+
+  @@index([businessId])
+  @@index([transactionType, transactionId])
+  @@index([taxRateId])
+  @@index([businessId, createdAt])
+}
+
+model ExchangeRateRule {
+  id             String @id @default(uuid())
+  countryId      String
+  baseCurrencyId String
+
+  requiresStatutoryRate Boolean @default(false)
+  statutoryRateSource   String?
+
+  country      Country  @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  baseCurrency Currency @relation(fields: [baseCurrencyId], references: [id], onDelete: Cascade)
+
+  @@unique([countryId, baseCurrencyId])
+  @@map("exchange_rate_rules")
 }

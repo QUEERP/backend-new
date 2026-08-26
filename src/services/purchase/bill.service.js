@@ -2,6 +2,8 @@ const prisma = require("../../config/prisma");
 const { logAction } = require("../sales/audit.service");
 const { createStockMovement } = require("../inventory/movement.service");
 const { getSystemAccounts, getDynamicExpenseAccount, postJournalEntries } = require("../ledgerService");
+const TransactionHelper = require("../TransactionHelper");
+const { CurrencyService } = require("../currencyService");
 
 const getPagination = (query) => {
   const page = parseInt(query.page) || 1;
@@ -26,9 +28,23 @@ const createBill = async (businessId, userId, userEmail, data) => {
       throw new Error(`Bill number "${data.billNumber}" already exists.`);
     }
 
+    const transactionDate = data.billDate ? new Date(data.billDate) : new Date();
+    const discount = data.discount ? parseFloat(data.discount) : 0;
+
     let subtotal = 0;
     let goodsTotal = 0;
     let servicesTotal = 0;
+
+    // Use Engine for pricing, tax, and multi-currency
+    const financials = await TransactionHelper.processTransactionFinancials({
+      businessId,
+      transactionDate,
+      currencyCode: data.currency || "AED",
+      items: data.items || [],
+      customerId: null, // Bill doesn't use customer state
+      globalDiscount: discount,
+      txClient: tx
+    });
 
     const itemsData = await Promise.all(data.items.map(async (item) => {
       const qty = parseFloat(item.quantity);
@@ -37,10 +53,13 @@ const createBill = async (businessId, userId, userEmail, data) => {
       subtotal += total;
 
       let isGoods = false;
+      let itemType = "SERVICES";
+      let product = null;
       if (item.productId) {
-        const product = await tx.product.findUnique({ where: { id: item.productId } });
+        product = await tx.product.findUnique({ where: { id: item.productId } });
         if (product && product.type === "GOODS") {
           isGoods = true;
+          itemType = "GOODS";
         }
       }
 
@@ -53,16 +72,14 @@ const createBill = async (businessId, userId, userEmail, data) => {
       return {
         productId: item.productId || null,
         warehouseId: item.warehouseId || null,
-        name: item.name,
+        name: item.name || (product ? product.name : "Unknown Item"),
         quantity: qty,
         price,
         total
       };
     }));
 
-    const tax = data.tax ? parseFloat(data.tax) : 0;
-    const discount = data.discount ? parseFloat(data.discount) : 0;
-    const totalAmount = subtotal + tax - discount;
+    const grandTotal = financials.subtotal + financials.totalTax - discount;
 
     const bill = await tx.bill.create({
       data: {
@@ -72,14 +89,22 @@ const createBill = async (businessId, userId, userEmail, data) => {
         vendorId: data.vendorId,
         purchaseOrderId: data.purchaseOrderId || null,
         grnId: data.grnId || null,
-        subtotal,
-        tax,
-        discount,
-        totalAmount,
-        outstandingAmount: totalAmount,
+        subtotal: financials.subtotal,
+        tax: financials.totalTax,
+        discount: discount,
+        totalAmount: grandTotal,
+        outstandingAmount: grandTotal,
         currency: data.currency || "AED",
-        exchangeRate: Number(data.exchangeRate) || 1.0,
-        billDate: data.billDate ? new Date(data.billDate) : new Date(),
+
+        // Currency engine fields
+        transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+        baseCurrencyId: financials.currencyData.baseCurrencyId,
+        exchangeRate: financials.currencyData.exchangeRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+        statutoryExchangeRate: financials.currencyData.statutoryRate,
+        statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+
+        billDate: transactionDate,
         dueDate: data.dueDate ? new Date(data.dueDate) : null,
         notes: data.notes || null,
         items: {
@@ -113,19 +138,16 @@ const createBill = async (businessId, userId, userEmail, data) => {
       where: { id: data.vendorId },
       data: {
         balance: {
-          increment: totalAmount
+          increment: grandTotal
         }
       }
     });
 
     // POST TO LEDGER
     const accounts = await getSystemAccounts(tx, businessId);
-    const billRate = Number(data.exchangeRate) || 1.0;
-
-    const journalEntries = [
-      // Credit: Accounts Payable (Full Bill Amount)
-      { businessId, accountId: accounts.SYSTEM_AP, debit: 0, credit: totalAmount, description: `Vendor Bill ${bill.billNumber}`, exchangeRate: billRate }
-    ];
+    
+    // Save Tax Ledger (statutory requirement)
+    await TransactionHelper.saveTaxLedger(tx, businessId, "BILL", bill.id, financials.taxTransactions);
 
     // Determine if tax is recoverable
     let isRecoverable = true;
@@ -138,33 +160,65 @@ const createBill = async (businessId, userId, userEmail, data) => {
       isRecoverable = data.isRecoverable === 'true' || data.isRecoverable === true;
     }
 
-    let recoverableTax = 0;
+    const billRate = financials.currencyData.exchangeRate;
+    const decimals = financials.currencyData.decimals;
+    const tax = financials.totalTax;
+    
+    // Base amounts scaled directly and independently to guarantee consistency
+    const grandTotalBaseCcy = CurrencyService.scaleAmount(grandTotal, billRate, decimals);
+    
+    // Determine the precise base currency legs based on proportions
+    // Cost basis in txn currency
     let nonRecoverableTax = 0;
+    if (tax > 0 && !isRecoverable) {
+      nonRecoverableTax = tax;
+    }
+    
+    const costBasisTxn = financials.subtotal - discount + nonRecoverableTax;
+    const goodsRatio = financials.subtotal > 0 ? goodsTotal / financials.subtotal : 0;
+    const servicesRatio = financials.subtotal > 0 ? servicesTotal / financials.subtotal : 0;
 
-    // Debit: Tax Receivable (if recoverable)
-    if (tax > 0) {
-      if (isRecoverable) {
-        recoverableTax = tax;
-        journalEntries.push({ businessId, accountId: accounts.SYSTEM_TAX_RECEIVABLE, debit: recoverableTax, credit: 0, description: `Recoverable Tax on Bill ${bill.billNumber}`, exchangeRate: billRate });
-      } else {
-        nonRecoverableTax = tax;
+    let allocatedGoodsTxn = 0;
+    let allocatedServicesTxn = 0;
+    
+    if (goodsRatio > 0) allocatedGoodsTxn = costBasisTxn * goodsRatio;
+    if (servicesRatio > 0) allocatedServicesTxn = costBasisTxn * servicesRatio;
+
+    // Scale precisely
+    let taxAmountBaseCcy = isRecoverable ? CurrencyService.scaleAmount(tax, billRate, decimals) : 0;
+    let goodsAmountBaseCcy = CurrencyService.scaleAmount(allocatedGoodsTxn, billRate, decimals);
+    let servicesAmountBaseCcy = CurrencyService.scaleAmount(allocatedServicesTxn, billRate, decimals);
+    
+    // PLUG technique: find the difference and apply it to the largest non-zero leg
+    const baseSum = taxAmountBaseCcy + goodsAmountBaseCcy + servicesAmountBaseCcy;
+    const difference = Number((grandTotalBaseCcy - baseSum).toFixed(decimals));
+
+    if (difference !== 0) {
+      if (allocatedGoodsTxn >= allocatedServicesTxn && allocatedGoodsTxn > 0) {
+        goodsAmountBaseCcy = Number((goodsAmountBaseCcy + difference).toFixed(decimals));
+      } else if (allocatedServicesTxn > 0) {
+        servicesAmountBaseCcy = Number((servicesAmountBaseCcy + difference).toFixed(decimals));
+      } else if (isRecoverable && tax > 0) {
+        taxAmountBaseCcy = Number((taxAmountBaseCcy + difference).toFixed(decimals));
       }
     }
 
-    // Distribute net subtotal minus discount PLUS non-recoverable tax to Inventory and Services
-    const costBasis = subtotal - discount + nonRecoverableTax;
-    const goodsRatio = subtotal > 0 ? goodsTotal / subtotal : 0;
-    const servicesRatio = subtotal > 0 ? servicesTotal / subtotal : 0;
+    const journalEntries = [
+      // Credit: Accounts Payable (Full Bill Amount)
+      { businessId, accountId: accounts.SYSTEM_AP, debit: 0, credit: grandTotal, baseDebit: 0, baseCredit: grandTotalBaseCcy, description: `Vendor Bill ${bill.billNumber}`, exchangeRate: billRate }
+    ];
 
-    if (goodsRatio > 0) {
-      const allocatedGoodsAmount = costBasis * goodsRatio;
-      journalEntries.push({ businessId, accountId: accounts.SYSTEM_INVENTORY, debit: allocatedGoodsAmount, credit: 0, description: `Inventory from Bill ${bill.billNumber}`, exchangeRate: billRate });
+    if (isRecoverable && taxAmountBaseCcy > 0) {
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_TAX_RECEIVABLE, debit: tax, credit: 0, baseDebit: taxAmountBaseCcy, baseCredit: 0, description: `Recoverable Tax on Bill ${bill.billNumber}`, exchangeRate: billRate });
     }
 
-    if (servicesRatio > 0) {
-      const allocatedServicesAmount = costBasis * servicesRatio;
+    if (goodsAmountBaseCcy > 0) {
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_INVENTORY, debit: allocatedGoodsTxn, credit: 0, baseDebit: goodsAmountBaseCcy, baseCredit: 0, description: `Inventory from Bill ${bill.billNumber}`, exchangeRate: billRate });
+    }
+
+    if (servicesAmountBaseCcy > 0) {
       const expenseAccountId = await getDynamicExpenseAccount(tx, businessId, "General Expense");
-      journalEntries.push({ businessId, accountId: expenseAccountId, debit: allocatedServicesAmount, credit: 0, description: `Service Expense from Bill ${bill.billNumber}`, exchangeRate: billRate });
+      journalEntries.push({ businessId, accountId: expenseAccountId, debit: allocatedServicesTxn, credit: 0, baseDebit: servicesAmountBaseCcy, baseCredit: 0, description: `Service Expense from Bill ${bill.billNumber}`, exchangeRate: billRate });
     }
 
     await postJournalEntries(tx, journalEntries);
@@ -177,11 +231,11 @@ const createBill = async (businessId, userId, userEmail, data) => {
       module: "PURCHASE",
       entityType: "Bill",
       entityId: bill.id,
-      details: { billNumber: bill.billNumber, totalAmount }
+      details: { billNumber: bill.billNumber, totalAmount: grandTotal }
     });
 
     return bill;
-  });
+  }, { maxWait: 5000, timeout: 30000 });
 };
 
 const getBills = async (businessId, query = {}) => {

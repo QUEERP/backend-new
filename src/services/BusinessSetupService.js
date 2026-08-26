@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const { getCountryData } = require("../utils/countryHelper");
+const { provisionTaxRules } = require('./taxProvisioning.service');
 
 class BusinessSetupService {
   async setupNewBusiness(name, country, businessType, userId) {
@@ -29,6 +30,24 @@ class BusinessSetupService {
       { name: "Cost of Goods Sold", type: "EXPENSE", code: "E-301" }
     ] : []);
 
+    // Resolve new relational fields: countryId, baseCurrencyId, taxFrameworkId
+    const countryRecord = await prisma.country.upsert({
+      where: { code: countryCode },
+      update: {},
+      create: { code: countryCode, name: countryInfo?.name || countryCode }
+    });
+    const currencyRecord = await prisma.currency.upsert({
+      where: { code: currencyCode },
+      update: {},
+      create: { code: currencyCode, name: currencyCode, symbol: currencySymbol || currencyCode, decimalPrecision: 2 }
+    });
+    // TaxFramework is optional — only link if seeded for this country.
+    // TaxFramework.countryId is a plain scalar String (no relation object),
+    // so we resolve via countryRecord.id (already upserted above).
+    const taxFrameworkRecord = await prisma.taxFramework.findFirst({
+      where: { countryId: countryRecord.id }
+    });
+
     const business = await prisma.$transaction(async (tx) => {
       // 1. Create Business
       const newBusiness = await tx.business.create({
@@ -41,7 +60,11 @@ class BusinessSetupService {
           currency: currencyCode, // Keeping old field populated to prevent immediate breakages
           businessType: businessType || "Trading",
           ownerId: userId,
-          isActive: false, // Wait for subscription/admin approval if needed, though prompt says "immediately after creation"
+          isActive: false,
+          // New relational fields — enable TaxEngine, CurrencyService, and TaxProvisioning
+          countryId: countryRecord.id,
+          baseCurrencyId: currencyRecord.id,
+          taxFrameworkId: taxFrameworkRecord?.id || null,
         }
       });
 
@@ -126,12 +149,10 @@ class BusinessSetupService {
   }
 
   async setupCountryCompliance(businessId, countryCode) {
-    // This connects to the Country Compliance Service.
-    // For now, we simulate inserting a few rules based on the country.
-    
     const isIndia = countryCode === 'IN';
     const isUAE = countryCode === 'AE';
 
+    // 1. Compliance rules (field validation reminders)
     const rulesToCreate = [];
 
     if (isIndia) {
@@ -170,12 +191,20 @@ class BusinessSetupService {
       });
       if (!existingRule) {
         await prisma.complianceRule.create({
-          data: {
-            ...ruleData,
-            isActive: true
-          }
+          data: { ...ruleData, isActive: true }
         });
       }
+    }
+
+    // 2. Auto-provision TaxRule rows for this business based on its country
+    //    This makes the TaxEngine work immediately without manual configuration.
+    //    Countries without a manifest are skipped with a warning (not an error).
+    try {
+      await provisionTaxRules(businessId, countryCode);
+    } catch (err) {
+      // Log but don't fail business creation — a missing framework is a data gap,
+      // not a reason to block the business from being created.
+      console.error(`[BusinessSetup] TaxProvisioning failed for ${countryCode}: ${err.message}`);
     }
   }
 }

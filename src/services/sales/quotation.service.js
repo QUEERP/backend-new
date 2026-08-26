@@ -1,5 +1,7 @@
 const prisma = require("../../config/prisma");
 const { logAction, triggerNotification } = require("./audit.service");
+const TransactionHelper = require("../TransactionHelper");
+const { CurrencyService } = require("../currencyService");
 
 /**
  * Robust document number generator preventing duplicates and collision on deletion.
@@ -107,10 +109,22 @@ const createQuotation = async (businessId, userId, userEmail, data) => {
         // 1. Generate unique quote number
         const quoteNumber = await generateDocNumber(tx, businessId, "QT", "quotation", "quoteNumber");
 
-        // 2. Compute new pricing (including global discount and tax)
-        const pricing = calculatePricing(data.items, Number(data.discount || 0), Number(data.tax || 0));
+        const transactionDate = data.issueDate ? new Date(data.issueDate) : new Date();
+        const discount = Number(data.discount || 0);
 
-        // 3. Create Quotation and Items
+        // 2. Compute Financials via Engine (Taxes, Exchange Rates, Projections)
+        const financials = await TransactionHelper.processTransactionFinancials({
+          businessId,
+          transactionDate,
+          currencyCode: data.currency,
+          items: data.items,
+          customerId: data.customerId,
+          globalDiscount: discount,
+          txClient: tx
+        });
+
+        const grandTotal = financials.subtotal + financials.totalTax - discount;
+
         const quotation = await tx.quotation.create({
           data: {
             businessId,
@@ -121,18 +135,33 @@ const createQuotation = async (businessId, userId, userEmail, data) => {
             dealId: data.dealId || null,
             assignedToId: data.assignedToId || null,
             status: "DRAFT",
-            subtotal: pricing.subtotal,
-            tax: pricing.tax,
-            discount: pricing.discount,
-            totalAmount: pricing.totalAmount,
+            subtotal: financials.subtotal,
+            tax: financials.totalTax,
+            discount: discount,
+            totalAmount: grandTotal,
             currency: data.currency || "INR",
+            
+            // Legacy Tax Projections
+            cgst: financials.legacyTaxes.cgst,
+            sgst: financials.legacyTaxes.sgst,
+            igst: financials.legacyTaxes.igst,
+            vatAmount: financials.legacyTaxes.vatAmount,
             vatType: data.taxType || data.vatType || null,
+            
+            // Engine Fields
+            transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+            baseCurrencyId: financials.currencyData.baseCurrencyId,
+            exchangeRate: financials.currencyData.exchangeRate,
+            baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+            statutoryExchangeRate: financials.currencyData.statutoryRate,
+            statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+
             termsConditions: data.termsConditions || null,
-            issueDate: data.issueDate ? new Date(data.issueDate) : new Date(),
+            issueDate: transactionDate,
             expiryDate: data.expiryDate ? new Date(data.expiryDate) : null,
             notes: data.notes || null,
             items: {
-              create: pricing.processedItems.map(item => {
+              create: data.items.map(item => {
                 const { warehouseId, productId, ...rest } = item;
                 const payload = { ...rest };
                 if (productId) payload.product = { connect: { id: productId } };
@@ -145,6 +174,9 @@ const createQuotation = async (businessId, userId, userEmail, data) => {
             customer: true
           }
         });
+
+        // 3.5 Generate TaxLedger
+        await TransactionHelper.saveTaxLedger(tx, businessId, "QUOTATION", quotation.id, financials.taxTransactions);
 
         // 4. Log Action & Notification
         await logAction(tx, {
@@ -189,17 +221,41 @@ const updateQuotation = async (businessId, userId, userEmail, quotationId, data)
       throw new Error("Quotation not found");
     }
 
-    if (["APPROVED", "ACCEPTED", "CANCELLED"].includes(existing.status) && !data.status) {
-      throw new Error(`Cannot update quotation in ${existing.status} status.`);
+    if (["APPROVED", "ACCEPTED", "CANCELLED", "LOCKED", "INVOICED"].includes(existing.status)) {
+      throw new Error(`Cannot modify a finalized transaction (Status: ${existing.status}).`);
     }
 
-    let pricing = {};
-    if (data.items) {
-      // Re-calculate pricing if items are provided
-      pricing = calculatePricing(data.items, Number(data.discount || 0), Number(data.tax || 0));
-      // Delete old items
-      await tx.quotationItem.deleteMany({
-        where: { quotationId }
+    let financials = null;
+    let grandTotal = existing.totalAmount;
+    let discount = existing.discount;
+
+    // Trigger recalculation if any financial input changes: items, currency, discount, or date
+    if (data.items || data.currency || data.discount !== undefined || data.issueDate) {
+      discount = data.discount !== undefined ? Number(data.discount) : existing.discount;
+      const transactionDate = data.issueDate ? new Date(data.issueDate) : existing.issueDate;
+      const itemsToProcess = data.items || await tx.quotationItem.findMany({ where: { quotationId } });
+
+      // Re-calculate pricing via Engine
+      financials = await TransactionHelper.processTransactionFinancials({
+        businessId,
+        transactionDate,
+        currencyCode: data.currency || existing.currency,
+        items: itemsToProcess,
+        customerId: data.customerId || existing.customerId,
+        globalDiscount: discount,
+        txClient: tx
+      });
+      
+      grandTotal = financials.subtotal + financials.totalTax - discount;
+
+      if (data.items) {
+        // Delete old items if we are fully replacing them
+        await tx.quotationItem.deleteMany({ where: { quotationId } });
+      }
+      
+      // Always delete old tax ledger rows because we are regenerating them
+      await tx.taxTransaction.deleteMany({
+        where: { transactionId: quotationId, transactionType: "QUOTATION" }
       });
     }
 
@@ -212,18 +268,37 @@ const updateQuotation = async (businessId, userId, userEmail, quotationId, data)
         dealId: data.dealId !== undefined ? data.dealId : existing.dealId,
         assignedToId: data.assignedToId !== undefined ? data.assignedToId : existing.assignedToId,
         status: data.status || existing.status,
-        subtotal: pricing.subtotal !== undefined ? pricing.subtotal : existing.subtotal,
-        tax: pricing.tax !== undefined ? pricing.tax : existing.tax,
-        discount: pricing.discount !== undefined ? pricing.discount : existing.discount,
-        totalAmount: pricing.totalAmount !== undefined ? pricing.totalAmount : existing.totalAmount,
+        subtotal: financials ? financials.subtotal : existing.subtotal,
+        tax: financials ? financials.totalTax : existing.tax,
+        discount: discount,
+        totalAmount: grandTotal,
         currency: data.currency || existing.currency,
+        
+        // Legacy Tax Projections
+        ...(financials ? {
+          cgst: financials.legacyTaxes.cgst,
+          sgst: financials.legacyTaxes.sgst,
+          igst: financials.legacyTaxes.igst,
+          vatAmount: financials.legacyTaxes.vatAmount
+        } : {}),
+        
+        // Engine Fields
+        ...(financials ? {
+          transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+          baseCurrencyId: financials.currencyData.baseCurrencyId,
+          exchangeRate: financials.currencyData.exchangeRate,
+          baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+          statutoryExchangeRate: financials.currencyData.statutoryRate,
+          statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+        } : {}),
+
         vatType: data.taxType !== undefined ? data.taxType : (data.vatType !== undefined ? data.vatType : existing.vatType),
         termsConditions: data.termsConditions !== undefined ? data.termsConditions : existing.termsConditions,
         issueDate: data.issueDate ? new Date(data.issueDate) : existing.issueDate,
         expiryDate: data.expiryDate !== undefined ? (data.expiryDate ? new Date(data.expiryDate) : null) : existing.expiryDate,
         notes: data.notes !== undefined ? data.notes : existing.notes,
         items: data.items ? {
-          create: pricing.processedItems.map(item => {
+          create: data.items.map(item => {
             const { warehouseId, productId, ...rest } = item;
             const payload = { ...rest };
             if (productId) payload.product = { connect: { id: productId } };
@@ -236,6 +311,10 @@ const updateQuotation = async (businessId, userId, userEmail, quotationId, data)
         customer: true
       }
     });
+
+    if (financials) {
+      await TransactionHelper.saveTaxLedger(tx, businessId, "QUOTATION", updated.id, financials.taxTransactions);
+    }
 
     await logAction(tx, {
       businessId,
