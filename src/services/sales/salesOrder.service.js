@@ -1,7 +1,8 @@
 const prisma = require("../../config/prisma");
 const { logAction, triggerNotification } = require("./audit.service");
-const { generateDocNumber, calculatePricing } = require("./quotation.service");
 const { reserveStock: reserveStockHelper, releaseReservedStock } = require("../inventory/movement.service");
+const TransactionHelper = require("../TransactionHelper");
+const { CurrencyService } = require("../currencyService");
 
 /**
  * Enterprise Stock Reservation logic
@@ -76,8 +77,21 @@ const createSalesOrder = async (businessId, userId, userEmail, data) => {
     // 1. Generate unique SO number
     const orderNumber = await generateDocNumber(tx, businessId, "SO", "salesOrder", "orderNumber");
 
-    // 2. Compute pricing
-    const pricing = calculatePricing(data.items, Number(data.discount || 0), Number(data.tax || 0));
+    // 2. Compute pricing via TransactionHelper
+    const transactionDate = data.orderDate ? new Date(data.orderDate) : new Date();
+    const discount = Number(data.discount || 0);
+
+    const financials = await TransactionHelper.processTransactionFinancials({
+      businessId,
+      transactionDate,
+      currencyCode: data.currency,
+      items: data.items,
+      customerId: data.customerId,
+      globalDiscount: discount,
+      txClient: tx
+    });
+
+    const grandTotal = financials.subtotal + financials.totalTax - discount;
 
     // 3. Create Sales Order
     const salesOrder = await tx.salesOrder.create({
@@ -90,17 +104,32 @@ const createSalesOrder = async (businessId, userId, userEmail, data) => {
         dealId: data.dealId || null,
         assignedToId: data.assignedToId || null,
         status: "DRAFT",
-        subtotal: pricing.subtotal,
-        tax: pricing.tax,
-        discount: pricing.discount,
-        totalAmount: pricing.totalAmount,
+        subtotal: financials.subtotal,
+        tax: financials.totalTax,
+        discount: discount,
+        totalAmount: grandTotal,
         currency: data.currency || "INR",
+        
+        // Legacy fields mapping
+        cgst: financials.legacyTaxes.cgst,
+        sgst: financials.legacyTaxes.sgst,
+        igst: financials.legacyTaxes.igst,
+        vatAmount: financials.legacyTaxes.vatAmount,
+        
+        // Engine Fields
+        transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+        baseCurrencyId: financials.currencyData.baseCurrencyId,
+        exchangeRate: financials.currencyData.exchangeRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+        statutoryExchangeRate: financials.currencyData.statutoryRate,
+        statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+
         termsConditions: data.termsConditions || null,
-        orderDate: data.orderDate ? new Date(data.orderDate) : new Date(),
+        orderDate: transactionDate,
         deliveryDate: data.deliveryDate ? new Date(data.deliveryDate) : null,
         notes: data.notes || null,
         items: {
-          create: pricing.processedItems.map(item => {
+          create: data.items.map(item => {
             const { warehouseId, productId, itemName, ...rest } = item;
             const payload = { ...rest };
             if (productId) payload.product = { connect: { id: productId } };
@@ -115,8 +144,10 @@ const createSalesOrder = async (businessId, userId, userEmail, data) => {
       }
     });
 
+    await TransactionHelper.saveTaxLedger(tx, businessId, "SALES_ORDER", salesOrder.id, financials.taxTransactions);
+
     // 4. Reserve Stock
-    await reserveStock(tx, businessId, pricing.processedItems);
+    await reserveStock(tx, businessId, salesOrder.items);
 
     // 5. Log & Notify
     await logAction(tx, {
@@ -126,7 +157,7 @@ const createSalesOrder = async (businessId, userId, userEmail, data) => {
       action: "SALES_ORDER_CREATED",
       entityType: "SalesOrder",
       entityId: salesOrder.id,
-      details: { orderNumber, totalAmount: pricing.totalAmount }
+      details: { orderNumber, totalAmount: grandTotal }
     });
 
     await triggerNotification(tx, {
@@ -191,6 +222,21 @@ const convertQuotationToSalesOrder = async (businessId, userId, userEmail, quota
         discount: quotation.discount,
         totalAmount: quotation.totalAmount,
         currency: quotation.currency,
+        
+        // Propagate Currency Fields
+        transactionCurrencyId: quotation.transactionCurrencyId,
+        baseCurrencyId: quotation.baseCurrencyId,
+        exchangeRate: quotation.exchangeRate,
+        baseCurrencyAmount: quotation.baseCurrencyAmount,
+        statutoryExchangeRate: quotation.statutoryExchangeRate,
+        statutoryBaseAmount: quotation.statutoryBaseAmount,
+
+        // Propagate Legacy Tax
+        cgst: quotation.cgst,
+        sgst: quotation.sgst,
+        igst: quotation.igst,
+        vatAmount: quotation.vatAmount,
+
         termsConditions: quotation.termsConditions,
         orderDate: new Date(),
         items: {
@@ -202,6 +248,24 @@ const convertQuotationToSalesOrder = async (businessId, userId, userEmail, quota
         customer: true
       }
     });
+
+    // 4.5 Generate TaxLedger by copying quotation's ledger
+    const quoteTaxes = await tx.taxTransaction.findMany({
+      where: { transactionId: quotationId, transactionType: "QUOTATION" }
+    });
+    
+    if (quoteTaxes.length > 0) {
+      await tx.taxTransaction.createMany({
+        data: quoteTaxes.map(qt => {
+          const { id, createdAt, updatedAt, ...copyData } = qt;
+          return {
+            ...copyData,
+            transactionType: "SALES_ORDER",
+            transactionId: salesOrder.id
+          };
+        })
+      });
+    }
 
     // 5. Reserve Stock
     await reserveStock(tx, businessId, processedItems);
@@ -251,21 +315,40 @@ const updateSalesOrder = async (businessId, userId, userEmail, orderId, data) =>
       throw new Error(`Cannot update order in ${existing.status} status.`);
     }
 
-    let pricing = {};
-    if (data.items) {
+    let financials = null;
+    let grandTotal = existing.totalAmount;
+    let discount = existing.discount;
+
+    // Trigger recalculation if any financial input changes: items, currency, discount, or date
+    if (data.items || data.currency || data.discount !== undefined || data.orderDate) {
+      discount = data.discount !== undefined ? Number(data.discount) : existing.discount;
+      const transactionDate = data.orderDate ? new Date(data.orderDate) : existing.orderDate;
+      const itemsToProcess = data.items || await tx.salesOrderItem.findMany({ where: { salesOrderId: orderId } });
+
       // 1. Release previous stock reservation
       await releaseStock(tx, businessId, existing.items);
 
-      // 2. Calculate new pricing
-      pricing = calculatePricing(data.items, Number(data.discount || 0), Number(data.tax || 0));
-
-      // 3. Delete old items
-      await tx.salesOrderItem.deleteMany({
-        where: { salesOrderId: orderId }
+      // 2. Re-calculate pricing via Engine
+      financials = await TransactionHelper.processTransactionFinancials({
+        businessId,
+        transactionDate,
+        currencyCode: data.currency || existing.currency,
+        items: itemsToProcess,
+        customerId: data.customerId || existing.customerId,
+        globalDiscount: discount,
+        txClient: tx
       });
+      
+      grandTotal = financials.subtotal + financials.totalTax - discount;
 
-      // 4. Reserve new stock
-      await reserveStock(tx, businessId, pricing.processedItems);
+      if (data.items) {
+        // Delete old items if fully replacing them
+        await tx.salesOrderItem.deleteMany({ where: { salesOrderId: orderId } });
+      }
+
+      await tx.taxTransaction.deleteMany({
+        where: { transactionId: orderId, transactionType: "SALES_ORDER" }
+      });
     }
 
     const updated = await tx.salesOrder.update({
@@ -276,17 +359,36 @@ const updateSalesOrder = async (businessId, userId, userEmail, orderId, data) =>
         dealId: data.dealId !== undefined ? data.dealId : existing.dealId,
         assignedToId: data.assignedToId !== undefined ? data.assignedToId : existing.assignedToId,
         status: data.status ? data.status.toUpperCase() : existing.status,
-        subtotal: pricing.subtotal !== undefined ? pricing.subtotal : existing.subtotal,
-        tax: pricing.tax !== undefined ? pricing.tax : existing.tax,
-        discount: pricing.discount !== undefined ? pricing.discount : existing.discount,
-        totalAmount: pricing.totalAmount !== undefined ? pricing.totalAmount : existing.totalAmount,
+        subtotal: financials ? financials.subtotal : existing.subtotal,
+        tax: financials ? financials.totalTax : existing.tax,
+        discount: discount,
+        totalAmount: grandTotal,
         currency: data.currency || existing.currency,
+        
+        // Legacy Tax Projections
+        ...(financials ? {
+          cgst: financials.legacyTaxes.cgst,
+          sgst: financials.legacyTaxes.sgst,
+          igst: financials.legacyTaxes.igst,
+          vatAmount: financials.legacyTaxes.vatAmount
+        } : {}),
+        
+        // Engine Fields
+        ...(financials ? {
+          transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+          baseCurrencyId: financials.currencyData.baseCurrencyId,
+          exchangeRate: financials.currencyData.exchangeRate,
+          baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+          statutoryExchangeRate: financials.currencyData.statutoryRate,
+          statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+        } : {}),
+
         termsConditions: data.termsConditions !== undefined ? data.termsConditions : existing.termsConditions,
         orderDate: data.orderDate ? new Date(data.orderDate) : existing.orderDate,
         deliveryDate: data.deliveryDate !== undefined ? (data.deliveryDate ? new Date(data.deliveryDate) : null) : existing.deliveryDate,
         notes: data.notes !== undefined ? data.notes : existing.notes,
         items: data.items ? {
-          create: pricing.processedItems.map(item => {
+          create: data.items.map(item => {
             const { warehouseId, productId, itemName, ...rest } = item;
             const payload = { ...rest };
             if (productId) payload.product = { connect: { id: productId } };
@@ -300,6 +402,11 @@ const updateSalesOrder = async (businessId, userId, userEmail, orderId, data) =>
         customer: true
       }
     });
+
+    if (financials) {
+      await reserveStock(tx, businessId, updated.items);
+      await TransactionHelper.saveTaxLedger(tx, businessId, "SALES_ORDER", updated.id, financials.taxTransactions);
+    }
 
     await logAction(tx, {
       businessId,

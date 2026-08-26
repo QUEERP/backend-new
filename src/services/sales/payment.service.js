@@ -2,6 +2,7 @@ const prisma = require("../../config/prisma");
 const { logAction, triggerNotification } = require("./audit.service");
 const { generateDocNumber } = require("./quotation.service");
 const { getSystemAccounts, postJournalEntries } = require("../ledgerService");
+const { CurrencyService } = require("../currencyService");
 
 const createPayment = async (businessId, userId, userEmail, invoiceId, data) => {
   return await prisma.$transaction(async (tx) => {
@@ -30,6 +31,10 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
     // 3. Generate unique payment number
     const paymentNumber = await generateDocNumber(tx, businessId, "PAY", "payment", "paymentNumber");
 
+    const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
+    const currencyCode = data.currency || "AED";
+    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate);
+
     // 4. Create Payment Record
     const payment = await tx.payment.create({
       data: {
@@ -37,13 +42,20 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
         invoiceId,
         businessId,
         amount: paymentAmount,
-        paymentDate: data.paymentDate ? new Date(data.paymentDate) : new Date(),
+        paymentDate,
         paymentMode: data.paymentMode || "CASH",
         transactionId: data.transactionId || null,
         note: data.note || null,
         createdBy: userId,
-        currency: data.currency || "AED",
-        exchangeRate: Number(data.exchangeRate) || 1.0
+        
+        // Currency Fields
+        currency: currencyCode,
+        transactionCurrencyId: currencyData.transactionCurrencyId,
+        baseCurrencyId: currencyData.baseCurrencyId,
+        exchangeRate: currencyData.exchangeRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.exchangeRate, currencyData.decimals),
+        statutoryExchangeRate: currencyData.statutoryRate,
+        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, currencyData.decimals)
       }
     });
 
@@ -61,7 +73,16 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
           amount: overpaidAmount,
           remainingAmount: overpaidAmount,
           reason: `Overpayment for invoice ${invoice.invoiceNumber}`,
-          status: "OPEN"
+          status: "OPEN",
+          
+          // Currency Fields from payment
+          currency: currencyCode,
+          transactionCurrencyId: currencyData.transactionCurrencyId,
+          baseCurrencyId: currencyData.baseCurrencyId,
+          exchangeRate: currencyData.exchangeRate,
+          baseCurrencyAmount: CurrencyService.scaleAmount(overpaidAmount, currencyData.exchangeRate, currencyData.decimals),
+          statutoryExchangeRate: currencyData.statutoryRate,
+          statutoryBaseAmount: CurrencyService.scaleAmount(overpaidAmount, currencyData.statutoryRate, currencyData.decimals)
         }
       });
     }
@@ -102,35 +123,46 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
 
     // 6.5 POST TO LEDGER
     const accounts = await getSystemAccounts(tx, businessId);
-    const paymentRate = Number(data.exchangeRate) || 1.0;
-    const invoiceRate = Number(invoice.exchangeRate) || 1.0;
+    
+    // We already derived the base currency amounts using the resolved exchange rate.
+    // We pass explicit baseDebit/baseCredit to ledger to avoid rounding drift, while logging the actual rate.
+    const paymentRate = currencyData.exchangeRate;
+    const invoiceRate = Number(invoice.exchangeRate) || paymentRate; // Fallback if invoice doesn't have it
+
+    const paymentAmountBaseCcy = payment.baseCurrencyAmount;
+    const overpaidAmountBaseCcy = creditNote ? creditNote.baseCurrencyAmount : 0;
+    const arCreditBaseCcy = paymentAmountBaseCcy - overpaidAmountBaseCcy;
 
     const journalEntries = [
       // Debit: Cash/Bank for the full amount received
-      { businessId, accountId: accounts.SYSTEM_CASH, debit: paymentAmount, credit: 0, description: `Payment Received ${paymentNumber} for Invoice #${invoice.invoiceNumber}`, exchangeRate: paymentRate },
+      { businessId, accountId: accounts.SYSTEM_CASH, debit: paymentAmount, credit: 0, baseDebit: paymentAmountBaseCcy, baseCredit: 0, description: `Payment Received ${paymentNumber} for Invoice #${invoice.invoiceNumber}`, exchangeRate: paymentRate },
     ];
 
     // Credit: Accounts Receivable (up to the remaining balance)
     const arCredit = paymentAmount - overpaidAmount;
     if (arCredit > 0) {
-      journalEntries.push({ businessId, accountId: accounts.SYSTEM_AR, debit: 0, credit: arCredit, description: `Payment Applied ${paymentNumber} for Invoice #${invoice.invoiceNumber}`, exchangeRate: invoiceRate });
+      // Historical Invoice AR Base Value
+      const historicalARCreditBaseCcy = CurrencyService.scaleAmount(arCredit, invoiceRate, currencyData.decimals);
       
-      const baseCashForAR = arCredit * paymentRate;
-      const baseAR = arCredit * invoiceRate;
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_AR, debit: 0, credit: arCredit, baseDebit: 0, baseCredit: historicalARCreditBaseCcy, description: `Payment Applied ${paymentNumber} for Invoice #${invoice.invoiceNumber}`, exchangeRate: invoiceRate });
       
-      if (baseCashForAR > baseAR) {
-        // Derived base-currency amount, passed with rate 1.0
-        journalEntries.push({ businessId, accountId: accounts.SYSTEM_FX_GAIN_LOSS, debit: 0, credit: (baseCashForAR - baseAR), description: `Realized FX Gain on Payment ${paymentNumber}`, exchangeRate: 1.0 });
-      } else if (baseCashForAR < baseAR) {
-        // Derived base-currency amount, passed with rate 1.0
-        journalEntries.push({ businessId, accountId: accounts.SYSTEM_FX_GAIN_LOSS, debit: (baseAR - baseCashForAR), credit: 0, description: `Realized FX Loss on Payment ${paymentNumber}`, exchangeRate: 1.0 });
+      if (arCreditBaseCcy > historicalARCreditBaseCcy) {
+        // FX Gain/Loss is a derived base-currency amount, so we pass it explicitly with rate 1.0 since it's a variance
+        journalEntries.push({ businessId, accountId: accounts.SYSTEM_FX_GAIN_LOSS, debit: 0, credit: (arCreditBaseCcy - historicalARCreditBaseCcy), baseDebit: 0, baseCredit: (arCreditBaseCcy - historicalARCreditBaseCcy), description: `Realized FX Gain on Payment ${paymentNumber}`, exchangeRate: 1.0 });
+      } else if (arCreditBaseCcy < historicalARCreditBaseCcy) {
+        journalEntries.push({ businessId, accountId: accounts.SYSTEM_FX_GAIN_LOSS, debit: (historicalARCreditBaseCcy - arCreditBaseCcy), credit: 0, baseDebit: (historicalARCreditBaseCcy - arCreditBaseCcy), baseCredit: 0, description: `Realized FX Loss on Payment ${paymentNumber}`, exchangeRate: 1.0 });
       }
     }
 
     // Credit: Customer Advances (for any overpayment)
-    if (overpaidAmount > 0) {
-      journalEntries.push({ businessId, accountId: accounts.SYSTEM_CUSTOMER_ADVANCE, debit: 0, credit: overpaidAmount, description: `Overpayment recorded as Customer Advance ${paymentNumber}`, exchangeRate: paymentRate });
+    if (overpaidAmountBaseCcy > 0) {
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_CUSTOMER_ADVANCE, debit: 0, credit: overpaidAmount, baseDebit: 0, baseCredit: overpaidAmountBaseCcy, description: `Overpayment recorded as Customer Advance ${paymentNumber}`, exchangeRate: paymentRate });
     }
+
+    // Ensure currency is set on all journal entries
+    journalEntries.forEach(je => {
+      je.currency = currencyData.code;
+    });
 
     await postJournalEntries(tx, journalEntries);
 
@@ -155,7 +187,7 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
     });
 
     return { payment, creditNote };
-  });
+  }, { timeout: 30000, maxWait: 30000 });
 };
 
 const createQuotationPayment = async (businessId, userId, userEmail, quotationId, data) => {
@@ -179,6 +211,10 @@ const createQuotationPayment = async (businessId, userId, userEmail, quotationId
     // 3. Generate unique payment number
     const paymentNumber = await generateDocNumber(tx, businessId, "PAY", "payment", "paymentNumber");
 
+    const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
+    const currencyCode = data.currency || quotation.currency || "AED";
+    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate);
+
     // 4. Create Payment Record
     const payment = await tx.payment.create({
       data: {
@@ -186,11 +222,20 @@ const createQuotationPayment = async (businessId, userId, userEmail, quotationId
         quotationId,
         businessId,
         amount: paymentAmount,
-        paymentDate: data.paymentDate ? new Date(data.paymentDate) : new Date(),
+        paymentDate,
         paymentMode: data.paymentMode || "CASH",
         transactionId: data.transactionId || null,
         note: data.note || null,
-        createdBy: userId
+        createdBy: userId,
+
+        // Currency Fields
+        currency: currencyCode,
+        transactionCurrencyId: currencyData.transactionCurrencyId,
+        baseCurrencyId: currencyData.baseCurrencyId,
+        exchangeRate: currencyData.exchangeRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.exchangeRate, currencyData.decimals),
+        statutoryExchangeRate: currencyData.statutoryRate,
+        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, currencyData.decimals)
       }
     });
 
@@ -256,6 +301,10 @@ const createCustomerPayment = async (businessId, userId, userEmail, customerId, 
     // Generate unique payment number
     const paymentNumber = await generateDocNumber(tx, businessId, "PAY", "payment", "paymentNumber");
 
+    const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
+    const currencyCode = data.currency || "AED";
+    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate);
+
     // Create Payment Record
     const payment = await tx.payment.create({
       data: {
@@ -263,11 +312,20 @@ const createCustomerPayment = async (businessId, userId, userEmail, customerId, 
         customerId,
         businessId,
         amount: paymentAmount,
-        paymentDate: data.paymentDate ? new Date(data.paymentDate) : new Date(),
+        paymentDate,
         paymentMode: data.paymentMode || "CASH",
         transactionId: data.transactionId || null,
         note: data.note || null,
-        createdBy: userId
+        createdBy: userId,
+
+        // Currency Fields
+        currency: currencyCode,
+        transactionCurrencyId: currencyData.transactionCurrencyId,
+        baseCurrencyId: currencyData.baseCurrencyId,
+        exchangeRate: currencyData.exchangeRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.exchangeRate, currencyData.decimals),
+        statutoryExchangeRate: currencyData.statutoryRate,
+        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, currencyData.decimals)
       }
     });
 
@@ -311,6 +369,10 @@ const createProjectPayment = async (businessId, userId, userEmail, projectId, da
     // Generate unique payment number
     const paymentNumber = await generateDocNumber(tx, businessId, "PAY", "payment", "paymentNumber");
 
+    const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
+    const currencyCode = data.currency || "AED";
+    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate);
+
     // Create Payment Record
     const payment = await tx.payment.create({
       data: {
@@ -319,11 +381,20 @@ const createProjectPayment = async (businessId, userId, userEmail, projectId, da
         customerId: project.customerId,
         businessId,
         amount: paymentAmount,
-        paymentDate: data.paymentDate ? new Date(data.paymentDate) : new Date(),
+        paymentDate,
         paymentMode: data.paymentMode || "CASH",
         transactionId: data.transactionId || null,
         note: data.note || null,
-        createdBy: userId
+        createdBy: userId,
+
+        // Currency Fields
+        currency: currencyCode,
+        transactionCurrencyId: currencyData.transactionCurrencyId,
+        baseCurrencyId: currencyData.baseCurrencyId,
+        exchangeRate: currencyData.exchangeRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.exchangeRate, currencyData.decimals),
+        statutoryExchangeRate: currencyData.statutoryRate,
+        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, currencyData.decimals)
       }
     });
 

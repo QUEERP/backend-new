@@ -1,0 +1,50 @@
+[
+  {
+    "transactionType": "BILL",
+    "transactionCurrency": "INR",
+    "taxType": "CGST",
+    "taxRate": 9,
+    "totalTaxBaseCcy": 90,
+    "totalTaxTxnCcy": 90
+  },
+  {
+    "transactionType": "BILL",
+    "transactionCurrency": "USD",
+    "taxType": "CGST",
+    "taxRate": 9,
+    "totalTaxBaseCcy": 751.5,
+    "totalTaxTxnCcy": 9
+  },
+  {
+    "transactionType": "BILL",
+    "transactionCurrency": "INR",
+    "taxType": "SGST",
+    "taxRate": 9,
+    "totalTaxBaseCcy": 90,
+    "totalTaxTxnCcy": 90
+  },
+  {
+    "transactionType": "BILL",
+    "transactionCurrency": "USD",
+    "taxType": "SGST",
+    "taxRate": 9,
+    "totalTaxBaseCcy": 751.5,
+    "totalTaxTxnCcy": 9
+  },
+  {
+    "transactionType": "PURCHASE_RETURN",
+    "transactionCurrency": "USD",
+    "taxType": "CGST",
+    "taxRate": 9,
+    "totalTaxBaseCcy": 375.75,
+    "totalTaxTxnCcy": 4.5
+  },
+  {
+    "transactionType": "PURCHASE_RETURN",
+    "transactionCurrency": "USD",
+    "taxType": "SGST",
+    "taxRate": 9,
+    "totalTaxBaseCcy": 375.75,
+    "totalTaxTxnCcy": 4.5
+  }
+]

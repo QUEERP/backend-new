@@ -4,6 +4,320 @@ const prisma = require("../config/prisma");
 // not JournalEntry. They may diverge from Trial Balance for periods with manual journal entries.
 
 //////////////////////////////////////////////////////
+// TAX REPORTS
+//////////////////////////////////////////////////////
+exports.getTaxSummary = async (req, res) => {
+  try {
+    const businessId = req.business.id; // STRICT SCOPING
+    const { fromDate, toDate, taxFrameworkId, taxTypeId, taxRateId, transactionType } = req.query;
+
+    const where = { businessId };
+    if (fromDate || toDate) {
+      where.createdAt = {};
+      if (fromDate) where.createdAt.gte = new Date(fromDate);
+      if (toDate) where.createdAt.lte = new Date(toDate);
+    }
+    if (transactionType) where.transactionType = transactionType;
+    if (taxRateId) where.taxRateId = taxRateId;
+
+    if (taxFrameworkId || taxTypeId) {
+      where.taxRate = {
+        taxType: {}
+      };
+      if (taxTypeId) where.taxRate.taxType.id = taxTypeId;
+      if (taxFrameworkId) where.taxRate.taxType.taxFrameworkId = taxFrameworkId;
+    }
+
+    const summary = await prisma.taxTransaction.groupBy({
+      by: ['transactionType', 'taxRateId', 'transactionCurrencyId'],
+      where,
+      _sum: {
+        taxAmountBaseCcy: true,
+        taxAmountTxnCcy: true
+      }
+    });
+
+    // Enhance with tax type and rate info
+    const rateIds = summary.map(s => s.taxRateId);
+    const rates = await prisma.taxRate.findMany({
+      where: { id: { in: rateIds } },
+      include: { taxType: true }
+    });
+    
+    const rateMap = {};
+    rates.forEach(r => { rateMap[r.id] = r; });
+
+    // Fetch currency codes for transactionCurrencyId
+    const currencyIds = [...new Set(summary.map(s => s.transactionCurrencyId).filter(Boolean))];
+    const currencies = await prisma.currency.findMany({ where: { id: { in: currencyIds } } });
+    const ccyMap = {};
+    currencies.forEach(c => { ccyMap[c.id] = c.code; });
+
+    const enhancedSummary = summary.map(s => {
+      const rate = rateMap[s.taxRateId];
+      return {
+        transactionType: s.transactionType,
+        transactionCurrency: s.transactionCurrencyId ? (ccyMap[s.transactionCurrencyId] || 'UNKNOWN') : 'BASE',
+        taxType: rate?.taxType?.name,
+        taxRate: rate?.rate,
+        totalTaxBaseCcy: s._sum.taxAmountBaseCcy,
+        totalTaxTxnCcy: s._sum.taxAmountTxnCcy
+      };
+    });
+
+    res.json({ success: true, summary: enhancedSummary });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getTaxTransactions = async (req, res) => {
+  try {
+    const businessId = req.business.id; // STRICT SCOPING
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 25;
+    const { fromDate, toDate, taxFrameworkId, taxTypeId, taxRateId, transactionType } = req.query;
+
+    const where = { businessId };
+    if (fromDate || toDate) {
+      where.createdAt = {};
+      if (fromDate) where.createdAt.gte = new Date(fromDate);
+      if (toDate) where.createdAt.lte = new Date(toDate);
+    }
+    if (transactionType) where.transactionType = transactionType;
+    if (taxRateId) where.taxRateId = taxRateId;
+
+    if (taxFrameworkId || taxTypeId) {
+      where.taxRate = {
+        taxType: {}
+      };
+      if (taxTypeId) where.taxRate.taxType.id = taxTypeId;
+      if (taxFrameworkId) where.taxRate.taxType.taxFrameworkId = taxFrameworkId;
+    }
+
+    const totalCount = await prisma.taxTransaction.count({ where });
+    
+    const transactions = await prisma.taxTransaction.findMany({
+      where,
+      include: {
+        taxRate: { include: { taxType: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit
+    });
+
+    res.json({
+      success: true,
+      transactions,
+      pagination: {
+        total: totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+//////////////////////////////////////////////////////
+// CURRENCY REPORTS
+//////////////////////////////////////////////////////
+exports.getCurrencyUsage = async (req, res) => {
+  try {
+    const businessId = req.business.id; // STRICT SCOPING
+    const { fromDate, toDate, currencyId } = req.query;
+    
+    // Fetch business base currency
+    const business = await prisma.business.findUnique({ 
+      where: { id: businessId },
+      include: { baseCurrency: true }
+    });
+
+    const dateFilter = {};
+    if (fromDate) dateFilter.gte = new Date(fromDate);
+    if (toDate) dateFilter.lte = new Date(toDate);
+
+    // Helper to run query safely
+    const getUsage = async (model, dateField, typeName, sumField, extraWhere = {}) => {
+      const where = { businessId, ...extraWhere };
+      if (Object.keys(dateFilter).length > 0) where[dateField] = dateFilter;
+      if (currencyId) where.transactionCurrencyId = currencyId;
+
+      const agg = await prisma[model].groupBy({
+        by: ['transactionCurrencyId'],
+        where,
+        _sum: { [sumField]: true }
+      });
+      return agg.map(a => ({
+        transactionCurrencyId: a.transactionCurrencyId,
+        transactionType: typeName,
+        volumeBaseCcy: a._sum[sumField] || 0
+      }));
+    };
+
+    // Sales side
+    const qAgg = await getUsage('quotation', 'issueDate', 'Quotation', 'baseCurrencyAmount');
+    const soAgg = await getUsage('salesOrder', 'orderDate', 'SalesOrder', 'baseCurrencyAmount');
+    const invAgg = await getUsage('invoice', 'invoiceDate', 'Invoice', 'baseCurrencyAmount');
+    const cnAgg = await getUsage('creditNote', 'createdAt', 'CreditNote', 'baseCurrencyAmount');
+    const custPayAgg = await getUsage('payment', 'paymentDate', 'CustomerPayment', 'baseCurrencyAmount', { billId: null });
+    
+    // Procurement side
+    const prAgg = await getUsage('purchaseRequest', 'createdAt', 'PurchaseRequest', 'baseCurrencyAmount');
+    const poAgg = await getUsage('purchaseOrder', 'orderDate', 'PurchaseOrder', 'baseCurrencyAmount');
+    const billAgg = await getUsage('bill', 'billDate', 'Bill', 'baseCurrencyAmount');
+    const prtAgg = await getUsage('purchaseReturn', 'createdAt', 'PurchaseReturn', 'baseCurrencyAmount');
+    const vendPayAgg = await getUsage('payment', 'paymentDate', 'VendorPayment', 'baseCurrencyAmount', { billId: { not: null } });
+
+    // Combine all
+    const allAggs = [...qAgg, ...soAgg, ...invAgg, ...cnAgg, ...custPayAgg, ...prAgg, ...poAgg, ...billAgg, ...prtAgg, ...vendPayAgg];
+
+    // Group by currency
+    const grouped = {};
+    const currencyIds = new Set(allAggs.map(a => a.transactionCurrencyId).filter(Boolean));
+    const currencies = await prisma.currency.findMany({ where: { id: { in: Array.from(currencyIds) } } });
+    const ccyMap = {};
+    currencies.forEach(c => { ccyMap[c.id] = c.code; });
+
+    allAggs.forEach(a => {
+      if (!a.transactionCurrencyId) return; // ignore legacy/null
+      const code = ccyMap[a.transactionCurrencyId] || 'UNKNOWN';
+      if (!grouped[code]) {
+        grouped[code] = {
+          currency: code,
+          currencyId: a.transactionCurrencyId,
+          breakdown: [],
+          summary: {
+            sales: 0,
+            purchases: 0,
+            receivables: 0,
+            payables: 0
+          }
+        };
+      }
+      grouped[code].breakdown.push({
+        transactionType: a.transactionType,
+        volumeBaseCcy: a.volumeBaseCcy
+      });
+      
+      const v = a.volumeBaseCcy;
+      switch(a.transactionType) {
+        case 'Invoice':
+          grouped[code].summary.sales += v;
+          break;
+        case 'CreditNote':
+          grouped[code].summary.sales -= v; // Reversal reduces sales
+          break;
+        case 'Bill':
+          grouped[code].summary.purchases += v;
+          break;
+        case 'PurchaseReturn':
+          grouped[code].summary.purchases -= v; // Reversal reduces purchases
+          break;
+        case 'CustomerPayment':
+          grouped[code].summary.receivables += v;
+          break;
+        case 'VendorPayment':
+          grouped[code].summary.payables += v;
+          break;
+        // Quotation, SalesOrder, PurchaseRequest, PurchaseOrder are intentionally excluded 
+        // from the 4 financial buckets to avoid double-counting the same deal across its lifecycle.
+      }
+    });
+
+    const usageValues = Object.values(grouped);
+    
+    // Fetch latest exchange rate for each currency
+    const baseCcyId = business?.baseCurrencyId;
+    if (baseCcyId) {
+      for (const item of usageValues) {
+        if (item.currencyId && item.currencyId !== baseCcyId) {
+          const rate = await prisma.exchangeRate.findFirst({
+            where: {
+              fromCurrencyId: item.currencyId,
+              toCurrencyId: baseCcyId
+            },
+            orderBy: { effectiveDate: 'desc' }
+          });
+          if (rate) {
+            item.exchangeRate = rate.rate;
+          } else {
+            const reverseRate = await prisma.exchangeRate.findFirst({
+              where: {
+                fromCurrencyId: baseCcyId,
+                toCurrencyId: item.currencyId
+              },
+              orderBy: { effectiveDate: 'desc' }
+            });
+            if (reverseRate && reverseRate.rate !== 0) {
+              item.exchangeRate = 1 / reverseRate.rate;
+            }
+          }
+        } else if (item.currencyId === baseCcyId) {
+          item.exchangeRate = 1;
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      baseCurrency: business?.baseCurrency?.code || 'UNKNOWN',
+      usage: usageValues
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getCurrencyGainLoss = async (req, res) => {
+  try {
+    const businessId = req.business.id; // STRICT SCOPING
+    const { fromDate, toDate } = req.query;
+
+    const fxAccount = await prisma.account.findFirst({
+      where: { businessId, code: 'SYSTEM_FX_GAIN_LOSS' }
+    });
+
+    if (!fxAccount) {
+      return res.json({ success: true, fxGainLoss: [] });
+    }
+
+    const where = { businessId, accountId: fxAccount.id };
+    if (fromDate || toDate) {
+      where.date = {};
+      if (fromDate) where.date.gte = new Date(fromDate);
+      if (toDate) where.date.lte = new Date(toDate);
+    }
+
+    const grouped = await prisma.journalEntry.groupBy({
+      by: ['currency'],
+      where,
+      _sum: {
+        baseDebit: true,
+        baseCredit: true
+      }
+    });
+
+    const breakdown = grouped.map(g => ({
+      currency: g.currency || 'UNKNOWN',
+      realizedLoss: g._sum.baseDebit || 0,
+      realizedGain: g._sum.baseCredit || 0,
+      netGainLoss: (g._sum.baseCredit || 0) - (g._sum.baseDebit || 0)
+    }));
+
+    res.json({
+      success: true,
+      fxGainLoss: breakdown
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+//////////////////////////////////////////////////////
 // PROFIT & LOSS (SYNTHETIC LEDGER)
 //////////////////////////////////////////////////////
 exports.getProfitLoss = async (req, res) => {

@@ -4,6 +4,8 @@ const { getSystemAccounts, postJournalEntries } = require("../ledgerService");
 const { generateDocNumber, calculatePricing } = require("./quotation.service");
 const { releaseStock } = require("./salesOrder.service");
 const { createStockMovement } = require("../inventory/movement.service");
+const TransactionHelper = require("../TransactionHelper");
+const { CurrencyService } = require("../currencyService");
 
 /**
  * Deducts stock from physical inventory upon dispatch (invoice creation)
@@ -103,26 +105,42 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
     // 1. Generate unique invoice number
     const invoiceNumber = await generateDocNumber(tx, businessId, "INV", "invoice", "invoiceNumber");
 
-    // 2. Compute pricing
-    const pricing = calculatePricing(data.items, Number(data.discount || 0), Number(data.tax || 0));
+    // 2. Compute pricing via TransactionHelper
+    const transactionDate = data.invoiceDate ? new Date(data.invoiceDate) : new Date();
+    const discount = Number(data.discount || 0);
+
+    const financials = await TransactionHelper.processTransactionFinancials({
+      businessId,
+      transactionDate,
+      currencyCode: data.currency,
+      items: data.items,
+      customerId: data.customerId,
+      globalDiscount: discount,
+      txClient: tx
+    });
+
+    const grandTotal = financials.subtotal + financials.totalTax - discount;
 
     // 3. Process invoice items with backward compatibility fields (hours, rate, amount)
-    const processedItems = pricing.processedItems.map((item) => {
+    const processedItems = data.items.map((item) => {
       const orig = data.items.find(i => i.productId === item.productId || i.description === item.description) || {};
+      const qty = Number(item.quantity || 0);
+      const prc = Number(item.price || item.rate || 0);
+      const dsc = Number(item.discount || 0);
+      const amt = Math.max((qty * prc) - dsc, 0);
+
       const base = {
         ...item,
         hours: Number(orig.hours || 0),
-        rate: Number(orig.rate || item.price),
-        amount: item.total, // backward compatibility mapping
-        totalTax: item.total * (item.taxPercent / (100 + item.taxPercent)), // approximate tax amount in total
-        totalAmount: item.total,
-        cgstPercent: Number(orig.cgstPercent || item.cgstPercent || 0),
-        sgstPercent: Number(orig.sgstPercent || item.sgstPercent || 0),
-        igstPercent: Number(orig.igstPercent || item.igstPercent || 0)
+        rate: prc,
+        amount: amt, // backward compatibility mapping
+        totalTax: 0, // This is superseded by TaxTransaction, keep 0 for backward compat structure
+        totalAmount: amt,
       };
       // Remove any leftover relation fields that must be explicitly connected
       delete base.productId;
       delete base.warehouseId;
+      delete base.price;
       if (item.productId) {
         base.product = { connect: { id: item.productId } };
       }
@@ -139,12 +157,25 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
         quotationId: data.quotationId || null,
         salesOrderId: data.salesOrderId || null,
         status: "DRAFT",
-        subtotal: pricing.subtotal,
-        totalTax: pricing.tax,
-        discount: pricing.discount,
-        grandTotal: pricing.totalAmount,
+        subtotal: financials.subtotal,
+        totalTax: financials.totalTax,
+        discount: discount,
+        grandTotal: grandTotal,
         currency: data.currency || "AED",
-        exchangeRate: Number(data.exchangeRate) || 1.0,
+        
+        // Legacy fields mapping
+        cgst: financials.legacyTaxes.cgst,
+        sgst: financials.legacyTaxes.sgst,
+        igst: financials.legacyTaxes.igst,
+        vatAmount: financials.legacyTaxes.vatAmount,
+        
+        // Engine Fields
+        transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+        baseCurrencyId: financials.currencyData.baseCurrencyId,
+        exchangeRate: financials.currencyData.exchangeRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+        statutoryExchangeRate: financials.currencyData.statutoryRate,
+        statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
         poNumber: data.poNumber || null,
         poDate: data.poDate ? new Date(data.poDate) : null,
         soNumber: data.soNumber || null,
@@ -177,6 +208,8 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
       }
     });
 
+    await TransactionHelper.saveTaxLedger(tx, businessId, "INVOICE", invoice.id, financials.taxTransactions);
+
     // 5. Deduct Stock immediately from physical inventory
     const { totalCogs, totalGrossProfit } = await deductStock(tx, businessId, invoice.items, false);
 
@@ -193,8 +226,8 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
       await tx.project.update({
         where: { id: data.projectId },
         data: { 
-          revenue: { increment: pricing.totalAmount },
-          invoicedRevenue: { increment: pricing.totalAmount }
+          revenue: { increment: grandTotal },
+          invoicedRevenue: { increment: grandTotal }
         }
       });
     }
@@ -203,18 +236,23 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
     const accounts = await getSystemAccounts(tx, businessId);
     
     // Tax Engine: Split Revenue and Tax Payable
-    const netRevenue = (pricing.subtotal || 0) - (pricing.discount || 0);
-    const taxAmount = (pricing.tax || 0);
-    const invoiceRate = Number(data.exchangeRate) || 1.0;
+    const taxAmountBaseCcy = CurrencyService.scaleAmount(financials.totalTax, financials.currencyData.exchangeRate, financials.currencyData.decimals);
+    const grandTotalBaseCcy = invoice.baseCurrencyAmount;
+    
+    // Plug technique: derive revenue to guarantee perfectly balanced journal entries
+    const netRevenueBaseCcy = grandTotalBaseCcy - taxAmountBaseCcy;
+
+    // Pass the actual exchange rate for audit/reporting, but provide pre-scaled base values directly.
+    const invoiceRate = financials.currencyData.exchangeRate;
 
     const journalEntries = [
       // Leg 1: Invoice Issue
-      { businessId, accountId: accounts.SYSTEM_AR, debit: pricing.totalAmount, credit: 0, description: `Invoice #${invoiceNumber}`, exchangeRate: invoiceRate },
-      { businessId, accountId: accounts.SYSTEM_REVENUE, debit: 0, credit: netRevenue, description: `Invoice #${invoiceNumber} (Net Revenue)`, exchangeRate: invoiceRate }
+      { businessId, accountId: accounts.SYSTEM_AR, debit: grandTotal, credit: 0, baseDebit: grandTotalBaseCcy, baseCredit: 0, description: `Invoice #${invoiceNumber}`, exchangeRate: invoiceRate },
+      { businessId, accountId: accounts.SYSTEM_REVENUE, debit: 0, credit: (financials.subtotal - discount), baseDebit: 0, baseCredit: netRevenueBaseCcy, description: `Invoice #${invoiceNumber} (Net Revenue)`, exchangeRate: invoiceRate }
     ];
 
-    if (taxAmount > 0) {
-      journalEntries.push({ businessId, accountId: accounts.SYSTEM_TAX_PAYABLE, debit: 0, credit: taxAmount, description: `Invoice #${invoiceNumber} (Tax)`, exchangeRate: invoiceRate });
+    if (taxAmountBaseCcy > 0) {
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_TAX_PAYABLE, debit: 0, credit: financials.totalTax, baseDebit: 0, baseCredit: taxAmountBaseCcy, description: `Invoice #${invoiceNumber} (Tax)`, exchangeRate: invoiceRate });
     }
 
     // Leg 2: COGS / Inventory Outflow
@@ -236,7 +274,7 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
       action: "INVOICE_CREATED",
       entityType: "Invoice",
       entityId: invoice.id,
-      details: { invoiceNumber, grandTotal: pricing.totalAmount }
+      details: { invoiceNumber, grandTotal: grandTotal }
     });
 
     await triggerNotification(tx, {
@@ -249,7 +287,7 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
     });
 
     return invoice;
-  });
+  }, { timeout: 30000, maxWait: 30000 });
 };
 
 const convertSalesOrderToInvoice = async (businessId, userId, userEmail, salesOrderId) => {
@@ -311,7 +349,21 @@ const convertSalesOrderToInvoice = async (businessId, userId, userEmail, salesOr
         discount: salesOrder.discount,
         grandTotal: salesOrder.totalAmount,
         currency: salesOrder.currency,
-        exchangeRate: salesOrder.exchangeRate || 1.0,
+        
+        // Propagate Currency Fields
+        transactionCurrencyId: salesOrder.transactionCurrencyId,
+        baseCurrencyId: salesOrder.baseCurrencyId,
+        exchangeRate: salesOrder.exchangeRate,
+        baseCurrencyAmount: salesOrder.baseCurrencyAmount,
+        statutoryExchangeRate: salesOrder.statutoryExchangeRate,
+        statutoryBaseAmount: salesOrder.statutoryBaseAmount,
+
+        // Propagate Legacy Tax
+        cgst: salesOrder.cgst,
+        sgst: salesOrder.sgst,
+        igst: salesOrder.igst,
+        vatAmount: salesOrder.vatAmount,
+
         terms: salesOrder.termsConditions,
         invoiceDate: new Date(),
         dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000), // Default 15 days due date
@@ -326,6 +378,24 @@ const convertSalesOrderToInvoice = async (businessId, userId, userEmail, salesOr
         customer: true
       }
     });
+
+    // 4.5 Generate TaxLedger by copying sales order's ledger
+    const soTaxes = await tx.taxTransaction.findMany({
+      where: { transactionId: salesOrderId, transactionType: "SALES_ORDER" }
+    });
+    
+    if (soTaxes.length > 0) {
+      await tx.taxTransaction.createMany({
+        data: soTaxes.map(st => {
+          const { id, createdAt, updatedAt, ...copyData } = st;
+          return {
+            ...copyData,
+            transactionType: "INVOICE",
+            transactionId: invoice.id
+          };
+        })
+      });
+    }
 
     // 5. Deduct Stock, recognizing it was previously reserved by Sales Order
     const { totalCogs, totalGrossProfit } = await deductStock(tx, businessId, invoice.items, true);
@@ -394,44 +464,71 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
       throw new Error(`Cannot edit invoice in ${existing.status} status.`);
     }
 
-    let pricing = {};
-    if (data.items) {
+    let financials = null;
+    let grandTotal = existing.grandTotal;
+    let discount = existing.discount;
+
+    // Trigger recalculation if any financial input changes
+    if (data.items || data.currency || data.discount !== undefined || data.invoiceDate) {
+      discount = data.discount !== undefined ? Number(data.discount) : existing.discount;
+      const transactionDate = data.invoiceDate ? new Date(data.invoiceDate) : existing.invoiceDate;
+      const itemsToProcess = data.items || await tx.invoiceItem.findMany({ where: { invoiceId } });
+
       // Restore previous dispatched stock
       await restoreStock(tx, businessId, existing.items);
 
-      // Compute pricing
-      pricing = calculatePricing(data.items, Number(data.discount || 0), Number(data.tax || 0));
+      // 2. Re-calculate pricing via Engine
+      financials = await TransactionHelper.processTransactionFinancials({
+        businessId,
+        transactionDate,
+        currencyCode: data.currency || existing.currency,
+        items: itemsToProcess,
+        customerId: data.customerId || existing.customerId,
+        globalDiscount: discount,
+        txClient: tx
+      });
+      
+      grandTotal = financials.subtotal + financials.totalTax - discount;
 
       // Process invoice items
-      const processedItems = pricing.processedItems.map((item) => {
-        const orig = data.items.find(i => i.productId === item.productId || i.description === item.description) || {};
+      const processedItems = itemsToProcess.map((item) => {
+        const orig = (data.items || []).find(i => i.productId === item.productId || i.description === item.description) || {};
+        const qty = Number(item.quantity || 0);
+        const prc = Number(item.price || item.rate || 0);
+        const dsc = Number(item.discount || 0);
+        const amt = Math.max((qty * prc) - dsc, 0);
+
         const base = {
           ...item,
           hours: Number(orig.hours || 0),
-          rate: Number(orig.rate || item.price),
-          amount: item.total,
-          totalTax: item.total * (item.taxPercent / (100 + item.taxPercent)),
-          totalAmount: item.total,
-          cgstPercent: Number(orig.cgstPercent || item.cgstPercent || 0),
-          sgstPercent: Number(orig.sgstPercent || item.sgstPercent || 0),
-          igstPercent: Number(orig.igstPercent || item.igstPercent || 0)
+          rate: prc,
+          amount: amt,
+          totalTax: 0,
+          totalAmount: amt
         };
         // Remove relation fields that must be connected
         delete base.productId;
         delete base.warehouseId;
+        delete base.invoiceId;
+        delete base.id;
         if (item.productId) {
           base.product = { connect: { id: item.productId } };
         }
         return base;
       });
 
-      // Delete old items
-      await tx.invoiceItem.deleteMany({
-        where: { invoiceId }
-      });
+      if (data.items) {
+        // Delete old items
+        await tx.invoiceItem.deleteMany({
+          where: { invoiceId }
+        });
+        
+        financials.processedItemsToSave = processedItems;
+      }
 
-      // Since items are recreated we can't deduct stock yet until invoice is updated
-      pricing.processedItems = processedItems;
+      await tx.taxTransaction.deleteMany({
+        where: { transactionId: invoiceId, transactionType: "INVOICE" }
+      });
     }
 
     const updated = await tx.invoice.update({
@@ -442,11 +539,30 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         quotationId: data.quotationId !== undefined ? data.quotationId : existing.quotationId,
         salesOrderId: data.salesOrderId !== undefined ? data.salesOrderId : existing.salesOrderId,
         status: data.status || existing.status,
-        subtotal: pricing.subtotal !== undefined ? pricing.subtotal : existing.subtotal,
-        totalTax: pricing.tax !== undefined ? pricing.tax : existing.totalTax,
-        discount: pricing.discount !== undefined ? pricing.discount : existing.discount,
-        grandTotal: pricing.totalAmount !== undefined ? pricing.totalAmount : existing.grandTotal,
+        subtotal: financials ? financials.subtotal : existing.subtotal,
+        totalTax: financials ? financials.totalTax : existing.totalTax,
+        discount: discount,
+        grandTotal: grandTotal,
         currency: data.currency || existing.currency,
+        
+        // Legacy Tax Projections
+        ...(financials ? {
+          cgst: financials.legacyTaxes.cgst,
+          sgst: financials.legacyTaxes.sgst,
+          igst: financials.legacyTaxes.igst,
+          vatAmount: financials.legacyTaxes.vatAmount
+        } : {}),
+        
+        // Engine Fields
+        ...(financials ? {
+          transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+          baseCurrencyId: financials.currencyData.baseCurrencyId,
+          exchangeRate: financials.currencyData.exchangeRate,
+          baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+          statutoryExchangeRate: financials.currencyData.statutoryRate,
+          statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+        } : {}),
+
         poNumber: data.poNumber !== undefined ? data.poNumber : existing.poNumber,
         poDate: data.poDate !== undefined ? (data.poDate ? new Date(data.poDate) : null) : existing.poDate,
         soNumber: data.soNumber !== undefined ? data.soNumber : existing.soNumber,
@@ -457,11 +573,6 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         adminNote: data.adminNote !== undefined ? data.adminNote : existing.adminNote,
         designTemplate: data.designTemplate !== undefined ? data.designTemplate : existing.designTemplate,
         projectId: data.projectId !== undefined ? data.projectId : existing.projectId,
-        cgst: data.cgst !== undefined ? data.cgst : existing.cgst,
-        sgst: data.sgst !== undefined ? data.sgst : existing.sgst,
-        igst: data.igst !== undefined ? data.igst : existing.igst,
-        tds: data.tds !== undefined ? data.tds : existing.tds,
-        vatAmount: data.vatAmount !== undefined ? data.vatAmount : existing.vatAmount,
         vatPercentage: data.vatPercentage !== undefined ? data.vatPercentage : existing.vatPercentage,
         vatType: data.vatType !== undefined ? data.vatType : existing.vatType,
         emirate: data.emirate !== undefined ? data.emirate : existing.emirate,
@@ -469,8 +580,8 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         transportDetails: data.transportDetails !== undefined ? data.transportDetails : existing.transportDetails,
         reverseCharge: data.reverseCharge !== undefined ? data.reverseCharge : existing.reverseCharge,
         shippingCharges: data.shippingCharges !== undefined ? data.shippingCharges : existing.shippingCharges,
-        items: data.items ? {
-          create: pricing.processedItems
+        items: (financials && data.items) ? {
+          create: financials.processedItemsToSave
         } : undefined
       },
       include: {
@@ -479,12 +590,16 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
       }
     });
 
-    if (data.items) {
-      const { totalCogs, totalGrossProfit } = await deductStock(tx, businessId, updated.items, false);
-      await tx.invoice.update({
-        where: { id: updated.id },
-        data: { totalCogs, totalGrossProfit }
-      });
+    if (financials) {
+      if (data.items) {
+        const { totalCogs, totalGrossProfit } = await deductStock(tx, businessId, updated.items, false);
+        await tx.invoice.update({
+          where: { id: updated.id },
+          data: { totalCogs, totalGrossProfit }
+        });
+      }
+      
+      await TransactionHelper.saveTaxLedger(tx, businessId, "INVOICE", updated.id, financials.taxTransactions);
     }
 
     await logAction(tx, {
