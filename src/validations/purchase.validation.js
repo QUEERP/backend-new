@@ -132,7 +132,7 @@ const purchaseReturnItemSchema = z.object({
   description: z.string().optional().nullable(),
   quantity: z.number().positive(),
   price: z.number().nonnegative(),
-  taxPercent: z.number().nonnegative().default(0),
+  
   warehouseId: z.string().uuid().optional().nullable(),
   isStockReturned: z.boolean().default(true)
 });
@@ -202,7 +202,7 @@ const createProductSchema = z.object({
   costPrice: z.number().nonnegative().default(0),
   type: z.enum(["GOODS", "SERVICE"]).default("GOODS"),
   taxCode: z.string().optional().nullable(),
-  taxPercent: z.number().nonnegative().default(0),
+  
   unit: z.string().default("pcs"),
   categoryId: z.string().uuid().optional().nullable(),
   brandId: z.string().uuid().optional().nullable(),

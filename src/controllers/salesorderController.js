@@ -86,7 +86,7 @@ exports.createSalesOrder = async (req, res) => {
           companyState: settings?.state || '',
           customerCountry: customer.country || 'UAE',
           customerState: customer.state || '',
-          taxPercent: Number(item.taxPercent || 0),
+          
           lineSubtotal: lineAmount,
           vatType: vatType || 'exclusive',
           manualTax: {
@@ -124,10 +124,10 @@ exports.createSalesOrder = async (req, res) => {
           hsnSacCode: item.hsnSacCode || item.hsn,
           quantity: Number(item.quantity || 0),
           price: Number(item.price || 0),
-          taxPercent: Number(item.taxPercent || 0),
-          cgstPercent: Number(item.cgstPercent || 0),
-          sgstPercent: Number(item.sgstPercent || 0),
-          igstPercent: Number(item.igstPercent || 0),
+          
+          
+          
+          
           unit: item.unit || 'pcs',
           total: effectiveSubtotal + taxResult.totalTaxAmount,
           taxDetails: taxResult.breakdown,
@@ -353,7 +353,7 @@ exports.updateSalesOrder = async (req, res) => {
             companyState: settings?.state || '',
             customerCountry: customer?.country || 'UAE',
             customerState: customer?.state || '',
-            taxPercent: Number(item.taxPercent || 0),
+            
             lineSubtotal: lineAmount,
             vatType: vatType || 'exclusive',
             manualTax: {
@@ -375,10 +375,10 @@ exports.updateSalesOrder = async (req, res) => {
             hsnSacCode: item.hsnSacCode,
             quantity: Number(item.quantity || 0),
             price: Number(item.price || 0),
-            taxPercent: Number(item.taxPercent || 0),
-            cgstPercent: Number(item.cgstPercent || 0),
-            sgstPercent: Number(item.sgstPercent || 0),
-            igstPercent: Number(item.igstPercent || 0),
+            
+            
+            
+            
             unit: item.unit || 'pcs',
             total: effectiveSubtotal + taxResult.totalTaxAmount,
             taxDetails: taxResult.breakdown,

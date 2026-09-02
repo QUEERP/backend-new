@@ -88,6 +88,7 @@ const createSalesOrder = async (businessId, userId, userEmail, data) => {
       items: data.items,
       customerId: data.customerId,
       globalDiscount: discount,
+      userId,
       txClient: tx
     });
 
@@ -200,7 +201,7 @@ const convertQuotationToSalesOrder = async (businessId, userId, userEmail, quota
       hsnSacCode: item.hsnSacCode,
       quantity: item.quantity,
       price: item.price,
-      taxPercent: item.taxPercent,
+      
       taxDetails: item.taxDetails || [],
       discount: item.discount || 0,
       total: item.total
@@ -336,6 +337,7 @@ const updateSalesOrder = async (businessId, userId, userEmail, orderId, data) =>
         items: itemsToProcess,
         customerId: data.customerId || existing.customerId,
         globalDiscount: discount,
+        userId,
         txClient: tx
       });
       

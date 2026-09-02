@@ -116,7 +116,8 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
       items: data.items,
       customerId: data.customerId,
       globalDiscount: discount,
-      txClient: tx
+      txClient: tx,
+      userId
     });
 
     const grandTotal = financials.subtotal + financials.totalTax - discount;
@@ -141,6 +142,7 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
       delete base.productId;
       delete base.warehouseId;
       delete base.price;
+      delete base.taxRuleId;
       if (item.productId) {
         base.product = { connect: { id: item.productId } };
       }
@@ -316,10 +318,10 @@ const convertSalesOrderToInvoice = async (businessId, userId, userEmail, salesOr
         itemType: item.itemType,
         hsnSacCode: item.hsnSacCode,
         quantity: item.quantity,
-        taxPercent: item.taxPercent,
-        cgstPercent: Number(item.cgstPercent || 0),
-        sgstPercent: Number(item.sgstPercent || 0),
-        igstPercent: Number(item.igstPercent || 0),
+        
+        
+        
+        
         taxDetails: item.taxDetails || [],
         discount: item.discount || 0,
         hours: 0,
@@ -446,7 +448,7 @@ const convertSalesOrderToInvoice = async (businessId, userId, userEmail, salesOr
     });
 
     return invoice;
-  });
+  }, { maxWait: 20000, timeout: 30000 });
 };
 
 const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => {
@@ -485,6 +487,7 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         items: itemsToProcess,
         customerId: data.customerId || existing.customerId,
         globalDiscount: discount,
+        userId,
         txClient: tx
       });
       
@@ -511,6 +514,8 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         delete base.warehouseId;
         delete base.invoiceId;
         delete base.id;
+        delete base.price;
+        delete base.taxRuleId;
         if (item.productId) {
           base.product = { connect: { id: item.productId } };
         }

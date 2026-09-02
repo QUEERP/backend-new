@@ -9,7 +9,7 @@ const fixProduct = (product) => {
     ...product,
     price: product.price ?? 0,
     costPrice: product.costPrice ?? 0,
-    taxPercent: product.taxPercent ?? 0,
+    
     unit: product.unit ?? "pcs",
     isActive: product.isActive ?? true,
     reorderLevel: product.reorderLevel ?? 0,

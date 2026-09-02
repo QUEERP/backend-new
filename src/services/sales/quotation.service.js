@@ -77,10 +77,10 @@ const calculatePricing = (items, globalDiscount = 0, globalTaxRate = 0) => {
       hsnSacCode: item.hsnSacCode || null,
       quantity: qty,
       price: prc,
-      taxPercent: taxRate,
-      cgstPercent: Number(item.cgstPercent || 0),
-      sgstPercent: Number(item.sgstPercent || 0),
-      igstPercent: Number(item.igstPercent || 0),
+      
+      
+      
+      
       taxDetails: item.taxDetails || [],
       discount: itemDiscount,
       total
@@ -120,6 +120,7 @@ const createQuotation = async (businessId, userId, userEmail, data) => {
           items: data.items,
           customerId: data.customerId,
           globalDiscount: discount,
+          userId,
           txClient: tx
         });
 
@@ -243,6 +244,7 @@ const updateQuotation = async (businessId, userId, userEmail, quotationId, data)
         items: itemsToProcess,
         customerId: data.customerId || existing.customerId,
         globalDiscount: discount,
+        userId,
         txClient: tx
       });
       

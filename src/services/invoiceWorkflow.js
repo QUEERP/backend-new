@@ -51,7 +51,7 @@ class InvoiceWorkflow {
           rate: item.price,
           hsnSacCode: item.hsnSacCode || (item.product ? item.product.taxCode : null),
           amount: itemSubtotal, // pre-tax total amount
-          taxPercent: taxRate,
+          
           totalTax: itemTax,
           totalAmount: itemSubtotal + itemTax,
           unit: item.unit || null

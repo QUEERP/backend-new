@@ -18,9 +18,9 @@ class CurrencyService {
    * @param {Date} transactionDate 
    * @returns {Promise<{ transactionCurrencyId, baseCurrencyId, exchangeRate, statutoryRate, decimals }>}
    */
-  static async resolveCurrencyData(businessId, transactionCurrencyCode, transactionDate = new Date()) {
+  static async resolveCurrencyData(businessId, transactionCurrencyCode, transactionDate = new Date(), txClient = prisma) {
     // 1. Fetch Business with its Base Currency and Country
-    const business = await prisma.business.findUnique({
+    const business = await txClient.business.findUnique({
       where: { id: businessId },
       include: { baseCurrency: true, countryRef: true }
     });
@@ -55,14 +55,17 @@ class CurrencyService {
     }
 
     // 4. Cross Currency - Fetch ExchangeRateRule for Business Country + Base Currency
-    const rule = await prisma.exchangeRateRule.findUnique({
-      where: {
-        countryId_baseCurrencyId: {
-          countryId: business.countryId,
-          baseCurrencyId: baseCurrencyId
+    let rule = null;
+    if (business.countryId) {
+      rule = await prisma.exchangeRateRule.findUnique({
+        where: {
+          countryId_baseCurrencyId: {
+            countryId: business.countryId,
+            baseCurrencyId: baseCurrencyId
+          }
         }
-      }
-    });
+      });
+    }
 
     const requiresStatutoryRate = rule?.requiresStatutoryRate || false;
     const statutoryRateSource = rule?.statutoryRateSource || null;

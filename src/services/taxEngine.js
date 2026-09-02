@@ -1,85 +1,114 @@
 const prisma = require('../config/prisma');
 const { RateResolutionError } = require('./currencyService');
 
+const TaxResolver = require('./TaxResolver');
+
 class TaxEngine {
   /**
    * Calculates dynamic tax and generates TaxTransaction payloads based on data-driven TaxRules.
-   * 
-   * @param {Object} params
-   * @param {string} params.businessId
-   * @param {string} params.businessState
-   * @param {string} params.customerState
-   * @param {number} params.lineSubtotal
-   * @param {number} params.taxPercent
-   * @param {number} params.exchangeRate
-   * @param {number} params.statutoryRate
-   * @param {number} params.decimals - the decimals returned by currencyService for proper base scaling
-   * @param {string} params.transactionDate
-   * @returns {Promise<Array>} Array of TaxTransaction data objects (unpersisted)
    */
   static async calculateTax(params) {
     const { 
       businessId, 
-      businessState,
-      customerState,
+      businessCountryCode,
+      businessRegionCode,
+      counterpartyCountryCode,
+      counterpartyRegionCode,
+      supplyCategory = 'GOODS',
+      counterpartyTaxRegistrationStatus,
+      transactionType,
       lineSubtotal, 
-      taxPercent, 
       exchangeRate = 1.0, 
       statutoryRate = 1.0, 
       decimals = 2,
-      transactionDate = new Date() 
+      transactionDate = new Date(),
+      isManualOverride = false,
+      manualOverrideRate = null,
+      manualOverrideReason = null,
+      overrideTaxTypeId = null,
+      userId = null,
+      txClient = prisma
     } = params;
 
-    if (!taxPercent || taxPercent <= 0 || !lineSubtotal) {
+    if (!lineSubtotal) {
       return [];
     }
 
-    const business = await prisma.business.findUnique({
+    const business = await txClient.business.findUnique({
       where: { id: businessId },
       include: { taxFramework: true }
     });
 
     if (!business || !business.taxFrameworkId) {
-      if (taxPercent > 0) {
-        throw new RateResolutionError(`Business ${businessId} is missing a TaxFramework setup, but tax of ${taxPercent}% was requested.`);
-      }
       return [];
     }
 
-    // 1. Determine Jurisdiction for Rule Matching (Data-driven replacement for India hardcoding)
-    // If the ERP has states for both, determine if it's an intra-state or inter-state transaction.
-    // If no states are provided or applicable (like UAE), it will match generic country rules.
-    let targetJurisdiction = null;
-    if (businessState && customerState) {
-      targetJurisdiction = (businessState.trim().toLowerCase() === customerState.trim().toLowerCase()) 
-        ? 'INTRASTATE' 
-        : 'INTERSTATE';
-    }
-
-    // 2. Fetch the matching TaxRule for this business
-    // We look for a rule that matches the requested taxPercent and the jurisdiction.
-    // Fallback to rules with no specific jurisdiction if a strict state match isn't found.
-    let taxRule = null;
-    if (targetJurisdiction) {
-      taxRule = await prisma.taxRule.findFirst({
-        where: { businessId, rate: taxPercent, jurisdiction: targetJurisdiction }
+    let taxRuleId;
+    let taxRateId;
+    
+    if (isManualOverride) {
+      if (!overrideTaxTypeId) {
+        throw new RateResolutionError("Manual tax overrides must specify a valid overrideTaxTypeId.");
+      }
+      if (manualOverrideRate === null || manualOverrideRate === undefined) {
+         throw new RateResolutionError("Manual tax overrides must specify a manualOverrideRate.");
+      }
+      if (!manualOverrideReason) {
+         throw new RateResolutionError("Manual tax overrides must specify an overrideReason.");
+      }
+      if (!userId) {
+         throw new RateResolutionError("Manual tax overrides must be performed by an authenticated user (userId missing).");
+      }
+      
+      const validTaxType = await txClient.taxType.findFirst({
+        where: { 
+          id: overrideTaxTypeId, 
+          taxFrameworkId: business.taxFrameworkId 
+        }
       });
-    }
-
-    if (!taxRule) {
-      taxRule = await prisma.taxRule.findFirst({
-        where: { businessId, rate: taxPercent }
+      if (!validTaxType) {
+        throw new RateResolutionError("Invalid or unauthorized tax type override.");
+      }
+      
+      const taxAmountTxnCcy = Number(((lineSubtotal * manualOverrideRate) / 100).toFixed(decimals));
+      
+      // Directly return the overridden transaction without going through rule resolution
+      return [{
+        taxRateId: null,
+        isManualOverride: true,
+        overrideRate: manualOverrideRate,
+        overrideReason: manualOverrideReason,
+        overrideTaxTypeId: overrideTaxTypeId,
+        overriddenBy: userId, // Assuming userId is passed in context
+        overriddenAt: new Date(),
+        taxAmountTxnCcy,
+        taxAmountBaseCcy: Number((taxAmountTxnCcy * exchangeRate).toFixed(decimals)),
+        taxableAmountBaseCcy: Number((lineSubtotal * exchangeRate).toFixed(decimals)),
+        taxAmountStatutoryCcy: Number((taxAmountTxnCcy * statutoryRate).toFixed(decimals))
+      }];
+    } else {
+      const resolved = await TaxResolver.resolveTaxRule({
+         businessId,
+         businessCountryCode,
+         businessRegionCode,
+         counterpartyCountryCode,
+         counterpartyRegionCode,
+         supplyCategory,
+         counterpartyTaxRegistrationStatus,
+         transactionType,
+         transactionDate,
+         txClient
       });
+      taxRuleId = resolved.taxRuleId;
+      taxRateId = resolved.taxRateId;
     }
 
-    if (!taxRule) {
-      throw new RateResolutionError(`No matching TaxRule found for jurisdiction ${targetJurisdiction || 'ANY'} and rate ${taxPercent}%`);
-    }
+    if (!taxRuleId) return [];
 
     // 3. Fetch active TaxRates belonging strictly to this TaxRule
-    const activeRates = await prisma.taxRate.findMany({
+    const activeRates = await txClient.taxRate.findMany({
       where: {
-        taxRuleId: taxRule.id,
+        taxRuleId: taxRuleId,
         effectiveFrom: { lte: transactionDate },
         OR: [
           { effectiveTo: null },
@@ -89,14 +118,11 @@ class TaxEngine {
     });
 
     if (activeRates.length === 0) {
-      throw new RateResolutionError(`TaxRule '${taxRule.name}' has no active TaxRates on or before ${transactionDate.toISOString()}`);
+      throw new RateResolutionError(`TaxRule ID '${taxRuleId}' has no active TaxRates on or before ${transactionDate.toISOString()}`);
     }
 
-    // 4. Validate that the sum of the active rates exactly matches the requested taxPercent
+    // 4. Validation against requested taxPercent is removed because the rate is now resolved server-side.
     const totalRate = activeRates.reduce((sum, r) => sum + r.rate, 0);
-    if (Math.abs(totalRate - taxPercent) > 0.001) {
-      throw new RateResolutionError(`Active TaxRates for rule '${taxRule.name}' sum to ${totalRate}%, which does not match requested ${taxPercent}%`);
-    }
 
     const applicableRates = activeRates;
 

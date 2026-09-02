@@ -136,7 +136,7 @@ class BusinessSetupService {
       });
 
       return newBusiness;
-    });
+    }, { timeout: 20000 });
 
     // 7. Initialize Compliance Rules (outside transaction to avoid deadlocks with existing engine)
     const complianceEngine = require('./compliance/ComplianceEngine');

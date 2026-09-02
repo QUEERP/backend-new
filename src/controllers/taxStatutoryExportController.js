@@ -24,8 +24,15 @@ const getTaxSummaryData = async (req) => {
 
   if (taxFrameworkId || taxTypeId) {
     where.taxRate = { taxType: {} };
-    if (taxTypeId) where.taxRate.taxType.id = taxTypeId;
-    if (taxFrameworkId) where.taxRate.taxType.taxFrameworkId = taxFrameworkId;
+    if (taxTypeId || taxFrameworkId) {
+      where.OR = where.OR || [];
+      if (taxTypeId) {
+        where.OR.push({ taxRate: { taxType: { id: taxTypeId } } }, { overrideTaxTypeId: taxTypeId });
+      }
+      if (taxFrameworkId) {
+        where.OR.push({ taxRate: { taxType: { taxFrameworkId } } }, { overrideTaxType: { taxFrameworkId } });
+      }
+    }
   }
 
   const summary = await prisma.taxTransaction.groupBy({
@@ -123,8 +130,15 @@ const getTaxTransactionsData = async (req) => {
 
   if (taxFrameworkId || taxTypeId) {
     where.taxRate = { taxType: {} };
-    if (taxTypeId) where.taxRate.taxType.id = taxTypeId;
-    if (taxFrameworkId) where.taxRate.taxType.taxFrameworkId = taxFrameworkId;
+    if (taxTypeId || taxFrameworkId) {
+      where.OR = where.OR || [];
+      if (taxTypeId) {
+        where.OR.push({ taxRate: { taxType: { id: taxTypeId } } }, { overrideTaxTypeId: taxTypeId });
+      }
+      if (taxFrameworkId) {
+        where.OR.push({ taxRate: { taxType: { taxFrameworkId } } }, { overrideTaxType: { taxFrameworkId } });
+      }
+    }
   }
   
   const transactions = await prisma.taxTransaction.findMany({

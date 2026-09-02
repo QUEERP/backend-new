@@ -277,7 +277,7 @@ const convertToPurchaseOrder = async (businessId, userId, userEmail, id, vendorI
         description: item.description || item.product.name,
         quantity: item.quantity,
         price: item.estimatedPrice || item.product.costPrice || 0,
-        taxPercent: item.product.taxPercent || 0,
+        
         itemType: item.product.type || "GOODS",
         hsnSacCode: item.product.taxCode || ""
     }));
@@ -290,6 +290,7 @@ const convertToPurchaseOrder = async (businessId, userId, userEmail, id, vendorI
       items: itemsToProcess,
       customerId: null,
       globalDiscount: 0,
+      userId,
       txClient: tx
     });
 

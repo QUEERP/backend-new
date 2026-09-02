@@ -226,7 +226,7 @@ exports.createProduct = async (req, res) => {
       costPrice: Number(costPrice || 0),
       type,
       hsnCode: taxCode,
-      taxPercent: Number(taxPercent),
+      
       unit,
       initialQty: type === "SERVICE" ? 0 : Number(initialQty),
       warehouseId: type === "SERVICE" ? null : warehouseId,
@@ -274,7 +274,7 @@ exports.searchProducts = async (req, res) => {
         price: p.price,
         unit: p.unit,
         taxCode: p.taxCode,
-        taxPercent: p.taxPercent,
+        
         availableStock: totalStock,
         stockDetails: p.stock
       };

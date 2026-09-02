@@ -1,0 +1,50 @@
+{
+  "rule": {
+    "id": "6bd7a927-4010-4bc9-99f0-be8d8df3f752",
+    "businessId": "954fc9b6-d5e8-4279-97d1-6936d37d7125",
+    "name": "CA GST 5%",
+    "rate": 5,
+    "type": "GST",
+    "jurisdiction": null,
+    "taxCategory": null,
+    "isRecoverable": true,
+    "autoProvisioned": true,
+    "createdAt": "2026-08-27T10:43:38.575Z",
+    "updatedAt": "2026-08-27T10:43:38.575Z",
+    "rates": [
+      {
+        "id": "910c942c-e198-4897-bf85-e0908f635156",
+        "taxTypeId": "112f1931-40fa-436c-8c9c-37055a201fda",
+        "name": "GST 5%",
+        "rate": 5,
+        "effectiveFrom": "2000-01-01T00:00:00.000Z",
+        "effectiveTo": null
+      }
+    ]
+  },
+  "tx": {
+    "id": "6525449f-31fc-4457-bf14-c03e69447278",
+    "businessId": "e24ee048-2039-4c2e-a1c9-24bf7b2f943e",
+    "transactionType": "INVOICE",
+    "transactionId": "290fd897-6038-4fb6-9867-f2ca5a3822d7",
+    "taxRateId": "910c942c-e198-4897-bf85-e0908f635156",
+    "taxAmountTxnCcy": 100,
+    "taxAmountBaseCcy": 135,
+    "taxableAmountBaseCcy": 1350,
+    "taxAmountStatutoryCcy": null,
+    "transactionCurrencyId": null,
+    "createdAt": "2026-08-27T13:10:30.037Z"
+  },
+  "config": [
+    {
+      "id": "0c04bf79-83c8-4f1c-b376-ec247e843724",
+      "countryId": "fb19ee01-a3f9-4ed8-bb58-6c4b647e35f2",
+      "name": "Canada GST/HST"
+    }
+  ],
+  "country": {
+    "id": "fb19ee01-a3f9-4ed8-bb58-6c4b647e35f2",
+    "code": "CA",
+    "name": "Canada"
+  }
+}

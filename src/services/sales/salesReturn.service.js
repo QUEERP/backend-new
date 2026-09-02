@@ -6,23 +6,80 @@ const { getSystemAccounts, postJournalEntries } = require("../ledgerService");
 const createSalesReturn = async (businessId, userId, userEmail, data) => {
   return await prisma.$transaction(async (tx) => {
     // 1. Generate unique return number
-    const returnNumber = await generateDocNumber(tx, businessId, "SR", "salesReturn", "returnNumber");
+    let returnNumber = await generateDocNumber(tx, businessId, "SR", "salesReturn", "returnNumber");
+    returnNumber += `-${Date.now()}`;
 
-    // 2. Compute pricing of returned items
-    let subtotal = 0;
-    let totalTax = 0;
+    // 2. Fetch original Invoice to extract historical currency/tax rules
+    let overrideCurrencyData = null;
+    let originalInvoice = null;
+    
+    if (data.invoiceId) {
+      originalInvoice = await tx.invoice.findUnique({
+        where: { id: data.invoiceId }
+      });
+      
+      if (originalInvoice) {
+        const taxTxs = await tx.taxTransaction.findMany({
+            where: { transactionId: originalInvoice.id, transactionType: 'INVOICE' }
+        });
+        originalInvoice.taxTransactions = taxTxs;
+        overrideCurrencyData = {
+          transactionCurrencyId: originalInvoice.transactionCurrencyId,
+          baseCurrencyId: originalInvoice.baseCurrencyId,
+          exchangeRate: originalInvoice.exchangeRate,
+          statutoryRate: originalInvoice.statutoryExchangeRate,
+          decimals: 2
+        };
+      }
+    }
+    
+    // Fetch original tax overrides to carry forward
+    const historicalOverrides = {};
+    if (originalInvoice && originalInvoice.taxTransactions) {
+       for (const tt of originalInvoice.taxTransactions) {
+           historicalOverrides[tt.taxRateId || tt.overrideTaxTypeId] = {
+               isManualOverride: !!tt.overrideTaxTypeId,
+               manualOverrideRate: tt.overrideRate,
+               manualOverrideReason: tt.overrideReason,
+               overrideTaxTypeId: tt.overrideTaxTypeId
+           };
+       }
+    }
+
+    const TransactionHelper = require("../TransactionHelper");
+    const mappedItems = data.items.map(item => {
+        const matchedOverride = historicalOverrides[item.taxRateId]; // naive match
+        return {
+           ...item,
+           isManualOverride: item.isManualOverride || (matchedOverride && matchedOverride.isManualOverride),
+           manualOverrideRate: item.manualOverrideRate || (matchedOverride && matchedOverride.manualOverrideRate),
+           overrideTaxTypeId: item.overrideTaxTypeId || (matchedOverride && matchedOverride.overrideTaxTypeId),
+           manualOverrideReason: item.manualOverrideReason || (matchedOverride && matchedOverride.manualOverrideReason) || "Carry-forward from original invoice"
+        };
+    });
+
+    const financials = await TransactionHelper.processTransactionFinancials({
+      businessId,
+      transactionDate: new Date(),
+      currencyCode: originalInvoice ? originalInvoice.currency : (data.currency || 'AED'), // fallback
+      items: mappedItems,
+      customerId: data.customerId,
+      transactionType: 'SALES_RETURN',
+      overrideCurrencyData,
+      txClient: tx,
+      userId
+    });
+
     let totalInventoryCost = 0;
-    const processedItems = await Promise.all(data.items.map(async (item) => {
+    const processedItems = await Promise.all(mappedItems.map(async (item, index) => {
       const qty = Number(item.quantity || 0);
       const prc = Number(item.price || 0);
-      const taxRate = Number(item.taxPercent || 0);
 
       const baseAmount = qty * prc;
-      const tax = baseAmount * (taxRate / 100);
-      const total = baseAmount + tax;
-
-      subtotal += baseAmount;
-      totalTax += tax;
+      // Extract tax from financials
+      const itemTxs = financials.taxTransactions.filter(t => t.itemReference === (item.productId || item.description || `item-${index}`));
+      const itemTaxAmount = itemTxs.reduce((sum, t) => sum + t.taxAmountTxnCcy, 0);
+      const total = baseAmount + itemTaxAmount;
 
       let originalUnitCost = 0;
       if (data.invoiceId && item.productId) {
@@ -43,14 +100,13 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
         description: item.description,
         quantity: qty,
         price: prc,
-        taxPercent: taxRate,
         total,
         warehouseId: item.warehouseId || null,
         isStockReturned: item.isStockReturned || false
       };
     }));
 
-    const totalAmount = subtotal + totalTax;
+    const totalAmount = financials.subtotal + financials.totalTax;
 
     // 3. Create Sales Return
     const salesReturn = await tx.salesReturn.create({
@@ -63,8 +119,8 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
         status: "RECEIVED",
         reason: data.reason || null,
         refundStatus: "CREDIT_NOTE_ISSUED",
-        subtotal,
-        tax: totalTax,
+        subtotal: financials.subtotal,
+        tax: financials.totalTax,
         totalAmount,
         items: {
           create: processedItems
@@ -110,7 +166,8 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
     }
 
     // 5. Automatically issue Credit Note for returned amount
-    const creditNumber = await generateDocNumber(tx, businessId, "CN", "creditNote", "creditNumber");
+    let creditNumber = await generateDocNumber(tx, businessId, "CN", "creditNote", "creditNumber");
+    creditNumber += `-${Date.now()}`;
     const creditNote = await tx.creditNote.create({
       data: {
         businessId,
@@ -122,9 +179,24 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
         amount: totalAmount,
         remainingAmount: totalAmount,
         reason: `Sales return ${returnNumber} credit adjustment`,
-        status: "OPEN"
+        status: "OPEN",
+        currency: originalInvoice ? originalInvoice.currency : (data.currency || 'AED'),
+        transactionCurrencyId: financials.currencyData.transactionCurrencyId,
+        baseCurrencyId: financials.currencyData.baseCurrencyId,
+        exchangeRate: financials.currencyData.exchangeRate,
+        statutoryExchangeRate: financials.currencyData.statutoryRate,
+        statutoryBaseAmount: financials.totalTax
       }
     });
+
+    // Delegated Tax Transaction write to the CreditNote ownership
+    await TransactionHelper.saveTaxLedger(
+      tx,
+      businessId,
+      'CREDIT_NOTE',
+      creditNote.id,
+      financials.taxTransactions
+    );
 
     // 6. Log Audit Trail & Notification
     await logAction(tx, {
@@ -165,7 +237,7 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
     await postJournalEntries(tx, journalEntries);
 
     return { salesReturn, creditNote };
-  });
+  }, { maxWait: 20000, timeout: 30000 });
 };
 
 const getSalesReturnsByBusiness = async (businessId) => {

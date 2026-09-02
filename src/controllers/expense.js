@@ -76,7 +76,7 @@ exports.createExpense = async (req, res) => {
                 description: item.description || '',
                 quantity: q,
                 rate: r,
-                taxPercent: t,
+                
                 taxAmount: taxAmount,
                 amount: amt,
                 category: item.category || null
@@ -206,7 +206,7 @@ exports.updateExpense = async (req, res) => {
             description: item.description || '',
             quantity: q,
             rate: r,
-            taxPercent: t,
+            
             taxAmount: taxAmount,
             amount: amt,
             category: item.category || null

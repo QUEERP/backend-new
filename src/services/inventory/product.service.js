@@ -328,7 +328,7 @@ const createProduct = async (businessId, userId, userEmail, data) => {
         costPrice: parseFloat(data.costPrice),
         type: data.type || "GOODS",
         taxCode: data.taxCode || null,
-        taxPercent: data.taxPercent !== undefined ? parseFloat(data.taxPercent) : 0,
+        
         unit: data.unit || "pcs",
         isActive: data.isActive !== undefined ? data.isActive : true,
         categoryId: data.categoryId || null,
@@ -478,7 +478,7 @@ const updateProduct = async (businessId, userId, userEmail, id, data) => {
         costPrice: data.costPrice !== undefined ? parseFloat(data.costPrice) : product.costPrice,
         type: finalType,
         taxCode: data.taxCode !== undefined ? data.taxCode : product.taxCode,
-        taxPercent: data.taxPercent !== undefined ? parseFloat(data.taxPercent) : product.taxPercent,
+        
         unit: data.unit !== undefined ? data.unit : product.unit,
         isActive: data.isActive !== undefined ? data.isActive : product.isActive,
         categoryId: data.categoryId !== undefined ? data.categoryId : product.categoryId,

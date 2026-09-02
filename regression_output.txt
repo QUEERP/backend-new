@@ -1,0 +1,310 @@
+\n\n=== RUNNING test_services_tax.js ===\n◇ injecting env (17) from .env // tip: ⌘ enable debugging { debug: true }
+Created isolated Business: 85199100-f175-4de9-9f7e-6095b052f417
+Created Product of type: SERVICE
+TaxResolver called with supplyCategory: SERVICES
+TaxResolver returned: {
+  taxRuleId: '9f32d96a-a771-4835-b0df-d8dc74379f32',
+  name: 'Standard VAT 5%',
+  rate: 5,
+  type: 'PURCHASE',
+  isRecoverable: true,
+  taxRateId: 'd60d6fc9-fb81-4b07-aaa2-26a13ac5a5ef',
+  candidateCount: 1,
+  evaluatedCount: 1
+}
+
+Bill created: 66909768-3924-4bc0-bf26-bbc11e1c268f
+
+Tax Transactions:
+[
+  {
+    id: '531d6ad1-eacc-4092-be67-4334762476cb',
+    businessId: '85199100-f175-4de9-9f7e-6095b052f417',
+    transactionType: 'BILL',
+    transactionId: '66909768-3924-4bc0-bf26-bbc11e1c268f',
+    taxRateId: 'd60d6fc9-fb81-4b07-aaa2-26a13ac5a5ef',
+    taxAmountTxnCcy: 5,
+    taxAmountBaseCcy: 5,
+    taxableAmountBaseCcy: 100,
+    taxAmountStatutoryCcy: 5,
+    transactionCurrencyId: '3f1040a5-b030-4397-9b33-878e2139fc2b',
+    itemReference: '5f77fd74-779d-4c30-9c9c-6f96cd49e63d',
+    overrideRate: null,
+    overrideReason: null,
+    overrideTaxTypeId: null,
+    createdAt: 2026-09-01T11:42:33.722Z
+  }
+]
+\n\n=== RUNNING test_debit_note_non_override_tax.js ===\n◇ injecting env (17) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Created isolated Business: e7e69993-78d8-4162-ae90-62f5dcacb5ce
+Bill created: 2a6906c6-fc88-4949-bb46-65a6a41fd7f0
+
+Tax Transactions for Bill:
+Original Bill Tax Transactions: [
+  {
+    id: '73f775d9-eb98-4477-9725-f43205a77d8f',
+    transactionType: 'BILL',
+    transactionId: '2a6906c6-fc88-4949-bb46-65a6a41fd7f0',
+    taxAmountTxnCcy: 5,
+    taxAmountBaseCcy: 5,
+    taxRateId: 'b5e54e37-d024-42a1-be9f-c165597d3940',
+    itemReference: 'a030591f-5be4-44e7-ac6c-72ee90309845',
+    overrideRate: null,
+    overrideReason: null,
+    overrideTaxTypeId: null
+  }
+]
+TaxResolver called for Debit Note with transactionType: DEBIT_NOTE
+TaxResolver returned: {
+  taxRuleId: '6156029b-928e-4296-9ca7-cef69db990c3',
+  name: 'Standard VAT',
+  rate: 5,
+  type: 'STANDARD',
+  isRecoverable: true,
+  taxRateId: 'b5e54e37-d024-42a1-be9f-c165597d3940',
+  candidateCount: 1,
+  evaluatedCount: 1
+}
+
+Debit Note created: bebfc476-6037-4403-b0ca-7d087c02e9f1
+
+Tax Transactions for Debit Note:
+[
+  {
+    id: '1919de9d-4311-4822-95b7-6cb2bfdf8777',
+    transactionType: 'DEBIT_NOTE',
+    transactionId: 'bebfc476-6037-4403-b0ca-7d087c02e9f1',
+    taxAmountTxnCcy: 5,
+    taxAmountBaseCcy: 5,
+    taxRateId: 'b5e54e37-d024-42a1-be9f-c165597d3940',
+    itemReference: 'a030591f-5be4-44e7-ac6c-72ee90309845',
+    overrideRate: null,
+    overrideReason: null,
+    overrideTaxTypeId: null
+  }
+]
+\n\n=== RUNNING test_debit_note_tax.js ===\n◇ injecting env (17) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+Created isolated Business: 0cad9825-e19d-414c-a7d0-080d046500fd
+Bill created: 84a8b1d9-5be3-4599-8a17-15f0e14136c2
+
+Tax Transactions for Bill:
+[
+  {
+    id: 'fc98b5bc-3b62-43d1-a6f0-2823fbbde66b',
+    transactionType: 'BILL',
+    transactionId: '84a8b1d9-5be3-4599-8a17-15f0e14136c2',
+    taxAmountTxnCcy: 0,
+    taxAmountBaseCcy: 0,
+    taxRateId: null,
+    itemReference: '84fd6815-f00b-4c81-9a75-6b6598a73034',
+    overrideRate: 0,
+    overrideReason: 'Exempt status test',
+    overrideTaxTypeId: '7615fa5e-2710-4984-9856-962dfb14c1b1'
+  }
+]
+
+Debit Note created: 9d5e8d1f-9231-4f87-b430-9b6e842b8d01
+
+Tax Transactions for Debit Note:
+[
+  {
+    id: '253889e4-dd26-4a96-8b36-52a8ddc7c01e',
+    transactionType: 'DEBIT_NOTE',
+    transactionId: '9d5e8d1f-9231-4f87-b430-9b6e842b8d01',
+    taxAmountTxnCcy: 0,
+    taxAmountBaseCcy: 0,
+    taxRateId: null,
+    itemReference: '84fd6815-f00b-4c81-9a75-6b6598a73034',
+    overrideRate: 0,
+    overrideReason: 'Exempt status test',
+    overrideTaxTypeId: '7615fa5e-2710-4984-9856-962dfb14c1b1'
+  }
+]
+\n\n=== RUNNING test_uae_tax.js ===\n◇ injecting env (17) from .env // tip: ⌘ enable debugging { debug: true }
+Created isolated UAE Business: 37cc67bc-7aa4-4b8a-b40d-69d346ca61d7
+Case 1 (Domestic Goods):
+[
+  {
+    id: '0363c967-6677-453b-92a8-b0683d5a3430',
+    businessId: '37cc67bc-7aa4-4b8a-b40d-69d346ca61d7',
+    transactionType: 'BILL',
+    transactionId: 'a2ebfd73-82ab-4b07-a772-7621ff005519',
+    taxRateId: 'a42601be-9430-4fdd-bde9-ea946486d86c',
+    taxAmountTxnCcy: 5,
+    taxAmountBaseCcy: 5,
+    taxableAmountBaseCcy: 100,
+    taxAmountStatutoryCcy: 5,
+    transactionCurrencyId: '84ea7a93-02e9-4dd4-94aa-3d6138a7f8fa',
+    itemReference: 'f63a6362-aac7-4f09-8a59-84708e714069',
+    overrideRate: null,
+    overrideReason: null,
+    overrideTaxTypeId: null,
+    createdAt: 2026-09-01T11:44:14.000Z
+  }
+]
+Case 2 (Export Goods) - Resolved Transactions:
+[
+  {
+    taxRateId: '9120c71d-e66f-4e3b-92fe-94a01bce22be',
+    taxAmountTxnCcy: 0,
+    taxAmountBaseCcy: 0,
+    taxableAmountBaseCcy: 100,
+    taxAmountStatutoryCcy: 0,
+    itemReference: 'f63a6362-aac7-4f09-8a59-84708e714069',
+    transactionCurrencyId: '84ea7a93-02e9-4dd4-94aa-3d6138a7f8fa'
+  }
+]
+Case 3 (Domestic Services):
+[
+  {
+    id: 'ee9750e6-776b-45e8-9cc6-79de141a092a',
+    businessId: '37cc67bc-7aa4-4b8a-b40d-69d346ca61d7',
+    transactionType: 'BILL',
+    transactionId: '8917941d-9d6d-4511-9efb-9f47f9a743ac',
+    taxRateId: '1368b752-4ac7-468d-9a09-43d4cd95d63a',
+    taxAmountTxnCcy: 5,
+    taxAmountBaseCcy: 5,
+    taxableAmountBaseCcy: 100,
+    taxAmountStatutoryCcy: 5,
+    transactionCurrencyId: '84ea7a93-02e9-4dd4-94aa-3d6138a7f8fa',
+    itemReference: '24bed3df-0230-48a3-b834-639413205f65',
+    overrideRate: null,
+    overrideReason: null,
+    overrideTaxTypeId: null,
+    createdAt: 2026-09-01T11:44:28.302Z
+  }
+]
+Case 4 (Manual Override):
+[
+  {
+    id: 'e5b96919-b344-41e1-9870-d26695c2d8c7',
+    businessId: '37cc67bc-7aa4-4b8a-b40d-69d346ca61d7',
+    transactionType: 'BILL',
+    transactionId: '35d63726-1f48-4efa-bfa4-027a07cfc2c9',
+    taxRateId: null,
+    taxAmountTxnCcy: 0,
+    taxAmountBaseCcy: 0,
+    taxableAmountBaseCcy: 100,
+    taxAmountStatutoryCcy: 0,
+    transactionCurrencyId: '84ea7a93-02e9-4dd4-94aa-3d6138a7f8fa',
+    itemReference: 'f63a6362-aac7-4f09-8a59-84708e714069',
+    overrideRate: 0,
+    overrideReason: 'UAE Exempt Status',
+    overrideTaxTypeId: 'd275480d-4916-4c15-a27c-93b73903ec87',
+    createdAt: 2026-09-01T11:44:38.627Z
+  }
+]
+Case 5 (Non-override Debit Note):
+[
+  {
+    id: 'c5c28841-f44b-4d26-81f0-b783ff8e5951',
+    businessId: '37cc67bc-7aa4-4b8a-b40d-69d346ca61d7',
+    transactionType: 'DEBIT_NOTE',
+    transactionId: '76aad79c-8b10-4061-a77c-7f104c1a590c',
+    taxRateId: 'a42601be-9430-4fdd-bde9-ea946486d86c',
+    taxAmountTxnCcy: 2.5,
+    taxAmountBaseCcy: 2.5,
+    taxableAmountBaseCcy: 50,
+    taxAmountStatutoryCcy: 2.5,
+    transactionCurrencyId: '84ea7a93-02e9-4dd4-94aa-3d6138a7f8fa',
+    itemReference: 'f63a6362-aac7-4f09-8a59-84708e714069',
+    overrideRate: null,
+    overrideReason: null,
+    overrideTaxTypeId: null,
+    createdAt: 2026-09-01T11:44:42.621Z
+  }
+]
+Case 6 (Override Debit Note):
+[
+  {
+    id: 'a126bdee-fbf3-43aa-858f-6e69c1962d90',
+    businessId: '37cc67bc-7aa4-4b8a-b40d-69d346ca61d7',
+    transactionType: 'DEBIT_NOTE',
+    transactionId: '9360ea2f-cf6e-4a11-8a77-0f75200a04ec',
+    taxRateId: null,
+    taxAmountTxnCcy: 0,
+    taxAmountBaseCcy: 0,
+    taxableAmountBaseCcy: 50,
+    taxAmountStatutoryCcy: 0,
+    transactionCurrencyId: '84ea7a93-02e9-4dd4-94aa-3d6138a7f8fa',
+    itemReference: 'f63a6362-aac7-4f09-8a59-84708e714069',
+    overrideRate: 0,
+    overrideReason: 'UAE Exempt Status',
+    overrideTaxTypeId: 'd275480d-4916-4c15-a27c-93b73903ec87',
+    createdAt: 2026-09-01T11:44:45.725Z
+  }
+]
+Case 7 (Reverse-Charge) TaxTransaction:
+[
+  {
+    id: '2ec3eb2d-28a9-4625-b525-6832669d854e',
+    businessId: '37cc67bc-7aa4-4b8a-b40d-69d346ca61d7',
+    transactionType: 'BILL',
+    transactionId: '63b50d6d-c2af-4a18-b11c-796d27f2d318',
+    taxRateId: '4084dee6-3149-4b26-ba74-48737a041a85',
+    taxAmountTxnCcy: 5,
+    taxAmountBaseCcy: 5,
+    taxableAmountBaseCcy: 100,
+    taxAmountStatutoryCcy: 5,
+    transactionCurrencyId: '84ea7a93-02e9-4dd4-94aa-3d6138a7f8fa',
+    itemReference: '24bed3df-0230-48a3-b834-639413205f65',
+    overrideRate: null,
+    overrideReason: null,
+    overrideTaxTypeId: null,
+    createdAt: 2026-09-01T11:44:56.845Z
+  }
+]
+Case 7 Matched TaxRule:
+{
+  id: 'ee2af036-4017-4da7-9059-e1b949e3ab21',
+  businessId: '37cc67bc-7aa4-4b8a-b40d-69d346ca61d7',
+  name: 'Reverse Charge 5%',
+  rate: 5,
+  type: 'REVERSE_CHARGE',
+  jurisdiction: null,
+  isRecoverable: true,
+  createdAt: 2026-09-01T11:43:58.492Z,
+  updatedAt: 2026-09-01T11:43:58.492Z,
+  autoProvisioned: false,
+  taxCategory: null,
+  countryCode: 'AE',
+  regionCode: null,
+  placeOfSupply: 'IMPORT',
+  supplyCategory: 'SERVICES',
+  priority: 5,
+  counterpartyTaxRegistrationStatus: 'UNREGISTERED'
+}
+\n\n=== RUNNING test_routing_regression.js ===\n◇ injecting env (17) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Created test business: c493ad07-3f3a-41cd-8c24-c3360336ee21
+Resolver returned: {
+  taxRuleId: 'a5725e5d-e5af-4097-b2a6-89fb21d9cb73',
+  name: 'Rule 1 - Target',
+  rate: 5,
+  type: 'STANDARD',
+  isRecoverable: true,
+  taxRateId: 'b718ce60-abcc-4b07-af76-02393b09a1f6',
+  candidateCount: 2,
+  evaluatedCount: 4
+}
+Success: Correct rule was selected based on context and priority.
+Success: Evaluated 4 rules, exactly 2 rules successfully passed the routing filters, correctly rejecting negative cases.
+\n\n=== RUNNING test_sales_return_tax.js ===\n◇ injecting env (17) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+Created isolated Business: 5ec09211-bd02-49f7-8ec4-54e212613732
+Invoice created: 0485167e-cca0-4fc2-8b2c-3069e1cf9a4f
+Sales Return created: 42fe5e03-d83c-48ea-8cfd-9d48d23ec567
+Credit Note created: fa813ab2-0990-43bd-8ad0-e15f27dc450b
+
+Tax Transactions for Credit Note:
+[
+  {
+    id: '159e68d2-ed2f-4282-8e4c-6b5b73e97db3',
+    transactionType: 'CREDIT_NOTE',
+    transactionId: 'fa813ab2-0990-43bd-8ad0-e15f27dc450b',
+    taxAmountTxnCcy: 5,
+    taxAmountBaseCcy: 5,
+    taxRateId: 'be95979d-115e-4d65-8344-df18b153c521',
+    itemReference: '330ea3db-9edd-439e-bfe1-0d459c383cfb'
+  }
+]
+
+Tax Transactions for Sales Return (should be empty): 0

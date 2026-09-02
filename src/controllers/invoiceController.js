@@ -93,7 +93,7 @@ exports.createInvoice = async (req, res) => {
           companyState: settings?.state || '',
           customerCountry: customer.country || 'UAE',
           customerState: customer.state || '',
-          taxPercent: Number(item.taxPercent || 0),
+          
           lineSubtotal: lineAmount,
           vatType: vatType || 'exclusive',
           manualTax: {
@@ -120,10 +120,10 @@ exports.createInvoice = async (req, res) => {
           rate: Number(item.rate),
           amount: effectiveSubtotal,
           taxDetails: taxResult.breakdown,
-          taxPercent: Number(item.taxPercent || 0),
-          cgstPercent: Number(item.cgstPercent || 0),
-          sgstPercent: Number(item.sgstPercent || 0),
-          igstPercent: Number(item.igstPercent || 0),
+          
+          
+          
+          
           totalTax: taxResult.totalTaxAmount,
           totalAmount: effectiveSubtotal + taxResult.totalTaxAmount,
           discount: Number(item.discount || 0)
@@ -404,7 +404,7 @@ exports.updateInvoice = async (req, res) => {
         companyState: settings?.state || '',
         customerCountry: customer?.country || 'UAE',
         customerState: customer?.state || '',
-        taxPercent: Number(i.taxPercent || 0),
+        
         lineSubtotal: lineAmount,
         vatType: vatType || 'exclusive',
         manualTax: {
@@ -439,10 +439,10 @@ exports.updateInvoice = async (req, res) => {
         rate: rate,
         amount: effectiveSubtotal,
         taxDetails: taxResult.breakdown,
-        taxPercent: Number(i.taxPercent || 0),
-        cgstPercent: Number(i.cgstPercent || 0),
-        sgstPercent: Number(i.sgstPercent || 0),
-        igstPercent: Number(i.igstPercent || 0),
+        
+        
+        
+        
         totalTax: taxResult.totalTaxAmount,
         totalAmount: effectiveSubtotal + taxResult.totalTaxAmount,
         discount: Number(i.discount || 0)

@@ -2,6 +2,7 @@ const prisma = require("../../config/prisma");
 const { logAction } = require("../sales/audit.service");
 const { generateDocNumber } = require("../sales/quotation.service");
 const { createStockMovement, adjustIncomingStock } = require("../inventory/movement.service");
+const TaxResolver = require("../TaxResolver");
 
 const getPagination = (query) => {
   const page = parseInt(query.page) || 1;
@@ -43,11 +44,47 @@ const createGRN = async (businessId, userId, userEmail, data) => {
       }
     });
 
+    const TaxResolver = require("../TaxResolver");
+    const TaxEngine = require("../taxEngine");
+
+    const business = await tx.business.findUnique({ where: { id: businessId } });
+    const vendor = await tx.vendor.findUnique({ where: { id: data.vendorId } });
+
     // Execute Stock Movements & Adjustments
     for (const item of data.items) {
       const qtyReceived = parseFloat(item.quantityReceived);
       const qtyDamaged = parseFloat(item.quantityDamaged || 0);
       const netQty = qtyReceived - qtyDamaged;
+      const basePrice = parseFloat(item.price || 0);
+
+      // Resolve Tax Rule to check if tax is recoverable
+      let capitalizedTaxPerUnit = 0;
+      if (basePrice > 0) {
+          try {
+             const product = await tx.product.findUnique({ where: { id: item.productId } });
+             const taxRule = await TaxResolver.resolveTaxRule({
+                 businessId,
+                 businessCountryCode: business.countryCode,
+                 businessRegionCode: business.state,
+                 counterpartyCountryCode: vendor.country,
+                 counterpartyRegionCode: vendor.state,
+                 counterpartyTaxRegistrationStatus: vendor.vatNumber ? 'REGISTERED' : 'UNREGISTERED',
+                 supplyCategory: TaxResolver.mapItemTypeToSupplyCategory(product?.type),
+                 transactionType: 'PURCHASE',
+                 productId: item.productId,
+                 txClient: tx
+             });
+             
+             if (taxRule && taxRule.isRecoverable === false && taxRule.rate > 0) {
+                 // Capitalize non-recoverable tax into inventory cost
+                 capitalizedTaxPerUnit = basePrice * (taxRule.rate / 100);
+             }
+          } catch (e) {
+             console.warn('GRN: Tax rule resolution failed for capitalization check', e.message);
+          }
+      }
+
+      const effectiveUnitCost = basePrice + capitalizedTaxPerUnit;
 
       // 1. Inbound stock movement for good items
       if (netQty > 0) {
@@ -56,11 +93,12 @@ const createGRN = async (businessId, userId, userEmail, data) => {
           productId: item.productId,
           warehouseId: data.warehouseId,
           quantity: netQty,
+          unitCost: effectiveUnitCost, // Capitalized cost
           type: "PURCHASE_IN",
           referenceType: "GRN",
           referenceId: grn.id,
           performedBy: userEmail,
-          notes: `Goods received via GRN: ${grnNumber}`,
+          notes: `Goods received via GRN: ${grnNumber}. ${capitalizedTaxPerUnit > 0 ? '(Includes capitalized non-recoverable tax)' : ''}`,
           batchNumber: item.batchNumber || null,
           serialNumbers: item.serialNumbers || []
         });
