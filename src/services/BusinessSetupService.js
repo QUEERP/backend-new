@@ -108,19 +108,7 @@ class BusinessSetupService {
         data: { userId, businessId: newBusiness.id, roleId: adminRole.id }
       });
 
-      // 5. Default Warehouse
-      const mainWarehouse = await tx.warehouse.create({
-        data: {
-          name: "Main Warehouse",
-          code: "WH-MAIN",
-          businessId: newBusiness.id,
-          type: "STANDARD"
-        }
-      });
-      await tx.settings.update({
-        where: { businessId: newBusiness.id },
-        data: { defaultWarehouseId: mainWarehouse.id }
-      });
+      // 5. Default Warehouse (Removed as requested by user to stop auto-creation)
 
       // 6. Default Accounts
       if (defaultAccounts.length > 0) {

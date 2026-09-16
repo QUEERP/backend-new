@@ -161,6 +161,7 @@ const updateInvoiceSchema = z.object({
 // 4. Payment Schema
 const createPaymentSchema = z.object({
   amount: z.number().positive("Payment amount must be greater than 0"),
+  currency: z.string().length(3).optional().nullable(),
   paymentDate: z.coerce.date().default(() => new Date()),
   paymentMode: z.enum(["CASH", "BANK_TRANSFER", "UPI", "CREDIT_CARD", "DEBIT_CARD", "CHEQUE", "ONLINE"]),
   transactionId: z.string().optional().nullable(),
