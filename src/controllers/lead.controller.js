@@ -85,9 +85,10 @@ exports.createLead = async (req, res) => {
     // Validate assignedTo BusinessUser
     let assignedToId = null;
     if (assignedTo) {
+      const parsedAssignedTo = typeof assignedTo === 'object' ? assignedTo.id : assignedTo;
       const member = await prisma.businessUser.findFirst({
         where: {
-          id: assignedTo,
+          id: parsedAssignedTo,
           businessId: req.business.id,
           isActive: true,
         },
@@ -99,7 +100,7 @@ exports.createLead = async (req, res) => {
           message: "Assigned user not part of this business",
         });
       }
-      assignedToId = assignedTo;
+      assignedToId = parsedAssignedTo;
     }
 
     // Format tags
@@ -329,8 +330,9 @@ exports.updateLead = async (req, res) => {
     // Validate assignment
     let assignedToId = undefined;
     if (assignedTo) {
+      const parsedAssignedTo = typeof assignedTo === 'object' ? assignedTo.id : assignedTo;
       const member = await prisma.businessUser.findFirst({
-        where: { id: assignedTo, businessId: req.business.id, isActive: true },
+        where: { id: parsedAssignedTo, businessId: req.business.id, isActive: true },
       });
       if (!member) {
         return res.status(400).json({
@@ -338,7 +340,7 @@ exports.updateLead = async (req, res) => {
           message: "Assigned user is invalid",
         });
       }
-      assignedToId = assignedTo;
+      assignedToId = parsedAssignedTo;
     }
 
     // Validate campaign
