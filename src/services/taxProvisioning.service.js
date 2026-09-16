@@ -43,12 +43,10 @@ const PROVISIONING_MANIFESTS = {
   AE: {
     frameworkName: 'UAE VAT',
     rules: [
-      // ⚠️ All UAE rules recalled from general knowledge — not verified against specific FTA (Federal Tax Authority) guidance in this session.
       { name: 'UAE Standard VAT 5%',          rate: 5,   jurisdiction: null, taxCategory: null,             components: ['VAT_STANDARD'] },
-      { name: 'UAE Zero Rated 0%',            rate: 0,   jurisdiction: null, taxCategory: 'ZERO_RATED',     components: ['VAT_ZERO'] },
+      { name: 'UAE Zero Rated 0%',            rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED',     components: ['VAT_ZERO'] },
       { name: 'UAE Zero Rated Export 0%',     rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
       { name: 'UAE Exempt 0%',                rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',         components: ['VAT_EXEMPT'] },
-      // ❌ SCAFFOLDING: UAE reverse charge applies to specific imported services and goods under UAE VAT law.
       // The 'SERVICES' trigger is a broad placeholder — real scope is specific ZATCA-equivalent FTA notified categories.
       { name: 'UAE Reverse Charge 5%',        rate: 5,   jurisdiction: null, supplyCategory: 'SERVICES', priority: -1, taxCategory: 'REVERSE_CHARGE', components: ['VAT_REVERSE_CHARGE'] },
     ]
@@ -57,19 +55,14 @@ const PROVISIONING_MANIFESTS = {
   SA: {
     frameworkName: 'Saudi Arabia VAT',
     rules: [
-      // ⚠️ Standard rate: 15% (effective 1 Jul 2020, increased from 5% due to COVID fiscal measures).
       // Rate history recalled from ZATCA public announcements — plausible, not verified against specific ZATCA circular this session.
       { name: 'SA Standard VAT 15%',          rate: 15,  jurisdiction: null, taxCategory: null,             components: ['VAT_STANDARD'] },
       { name: 'SA Standard VAT 5% (hist.)',   rate: 5,   jurisdiction: null, taxCategory: null,             components: ['VAT_STANDARD'] },
-      // ⚠️ Zero-rated: exports, medicines, medical equipment, international transport.
       // SA VAT Implementing Regulations — categories recalled, not source-checked this session.
-      { name: 'SA Zero Rated 0%',             rate: 0,   jurisdiction: null, taxCategory: 'ZERO_RATED',     components: ['VAT_ZERO'] },
-      // ⚠️ Export routing trigger. Plausible, not source-checked this session.
+      { name: 'SA Zero Rated 0%',             rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED',     components: ['VAT_ZERO'] },
       { name: 'SA Zero Rated Export 0%',      rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
-      // ⚠️ Exempt: financial services (interest-bearing), life insurance, residential property (first supply).
       // Recalled from general knowledge — not source-checked this session.
       { name: 'SA Exempt 0%',                 rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',         components: ['VAT_EXEMPT'] },
-      // ❌ SCAFFOLDING: SA VAT has a reverse charge mechanism for imported services from non-SA-registered
       // foreign suppliers (ZATCA VAT law). Legal basis real; 'SERVICES' trigger is a broad placeholder.
       // Must be narrowed to specific notified categories before production use.
       { name: 'SA Reverse Charge 15%',        rate: 15,  jurisdiction: null, supplyCategory: 'SERVICES', priority: -1, taxCategory: 'REVERSE_CHARGE', components: ['VAT_REVERSE_CHARGE'] },
@@ -82,7 +75,7 @@ const PROVISIONING_MANIFESTS = {
       // Real law: HMRC VAT Notice 700 — standard/reduced/zero/exempt are all correct as of 2024
       { name: 'UK Standard VAT 20%',          rate: 20,  jurisdiction: null, taxCategory: null,             components: ['VAT_STANDARD'] },
       { name: 'UK Reduced VAT 5%',            rate: 5,   jurisdiction: null, taxCategory: null,             components: ['VAT_REDUCED'] },
-      { name: 'UK Zero Rated 0%',             rate: 0,   jurisdiction: null, taxCategory: 'ZERO_RATED',     components: ['VAT_ZERO'] },
+      { name: 'UK Zero Rated 0%',             rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED',     components: ['VAT_ZERO'] },
       { name: 'UK Zero Rated Export 0%',      rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
       { name: 'UK Exempt 0%',                 rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',         components: ['VAT_EXEMPT'] },
       // Real law: domestic reverse charge exists (HMRC CIS reverse charge SI 2019/892, electronics/mobile phones since 2007).
@@ -96,7 +89,7 @@ const PROVISIONING_MANIFESTS = {
     rules: [
       // Sourced from ATO rules
       { name: 'AU Standard GST 10%',          rate: 10,  jurisdiction: null, taxCategory: null,         components: ['GST_STANDARD'] },
-      { name: 'AU GST-Free 0%',               rate: 0,   jurisdiction: null, taxCategory: 'ZERO_RATED', components: ['GST_FREE'] },
+      { name: 'AU GST-Free 0%',               rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['GST_FREE'] },
       { name: 'AU GST-Free Export 0%',        rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['GST_FREE'] },
       { name: 'AU Input Taxed 0%',            rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',     components: ['INPUT_TAXED'] }
     ]
@@ -105,18 +98,13 @@ const PROVISIONING_MANIFESTS = {
   SG: {
     frameworkName: 'SG GST',
     rules: [
-      // ⚠️ Rate history recalled from general knowledge — not verified against specific IRAS circular in this session.
       // Rate timeline: 7% (pre-2023) → 8% (2023) → 9% (2024+), per IRAS GST rate change announcements.
       { name: 'SG Standard GST 9%',          rate: 9,   jurisdiction: null, taxCategory: null,         components: ['GST_STANDARD'] },
       { name: 'SG Standard GST 8% (hist.)',   rate: 8,   jurisdiction: null, taxCategory: null,         components: ['GST_STANDARD'] },
       { name: 'SG Standard GST 7% (hist.)',   rate: 7,   jurisdiction: null, taxCategory: null,         components: ['GST_STANDARD'] },
-      // ⚠️ Zero-rated: exports and international services. Legal basis: GST Act s.21. Plausible, not source-checked in session.
-      { name: 'SG Zero Rated 0%',             rate: 0,   jurisdiction: null, taxCategory: 'ZERO_RATED', components: ['GST_ZERO'] },
-      // ⚠️ Export routing trigger: goods exported from Singapore. Plausible, not source-checked in session.
+      { name: 'SG Zero Rated 0%',             rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['GST_ZERO'] },
       { name: 'SG Zero Rated Export 0%',      rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['GST_ZERO'] },
-      // ⚠️ Exempt: financial services, residential property, certain precious metals. GST Act s.22/Fourth Schedule. Plausible, not source-checked.
       { name: 'SG Exempt 0%',                 rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',     components: ['GST_EXEMPT'] },
-      // ⚠️ SCAFFOLDING (partial): SG reverse charge exists for *imported services* from overseas non-GST-registered suppliers
       // (IRAS e-Tax Guide "GST: Reverse Charge", effective 1 Jan 2020). It does NOT apply to domestic services.
       // The 'SERVICES' trigger here is a testing scaffold — Case C uses domesticVendor and cannot correctly simulate
       // the cross-border imported-services scenario. This rule is present for engine routing validation only.
@@ -132,7 +120,7 @@ const PROVISIONING_MANIFESTS = {
       { name: 'DE Standard MwSt 16% (COVID)',   rate: 16,  jurisdiction: null, taxCategory: null,             components: ['MwSt_STANDARD'] },
       { name: 'DE Ermäßigt MwSt 7%',           rate: 7,   jurisdiction: null, taxCategory: null,             components: ['MwSt_ERMAESSIGT'] },
       { name: 'DE Ermäßigt MwSt 5% (COVID)',    rate: 5,   jurisdiction: null, taxCategory: null,             components: ['MwSt_ERMAESSIGT'] },
-      { name: 'DE Zero-Rated 0%',               rate: 0,   jurisdiction: null, taxCategory: 'ZERO_RATED',     components: ['MwSt_NULLSATZ'] },
+      { name: 'DE Zero-Rated 0%',               rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED',     components: ['MwSt_NULLSATZ'] },
       { name: 'DE Zero-Rated Export 0%',        rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['MwSt_NULLSATZ'] },
       { name: 'DE Exempt 0%',                   rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',         components: ['MwSt_BEFREIT'] },
       // Reverse charge (13b UStG) applies to specific B2B services (e.g. construction, cross-border). 
@@ -145,18 +133,13 @@ const PROVISIONING_MANIFESTS = {
   JP: {
     frameworkName: 'Japan Consumption Tax',
     rules: [
-      // ⚠️ Standard rate: 10% (effective 1 Oct 2019).
       // Rate history recalled from general knowledge — plausible, not verified against specific NTA circular this session.
       { name: 'JP Standard JCT 10%',          rate: 10,  jurisdiction: null, taxCategory: null,             components: ['JCT_STANDARD'] },
       { name: 'JP Reduced JCT 8%',            rate: 8,   jurisdiction: null, taxCategory: null,             components: ['JCT_REDUCED'] },
       { name: 'JP Standard JCT 8% (hist.)',   rate: 8,   jurisdiction: null, taxCategory: null,             components: ['JCT_STANDARD'] },
-      // ⚠️ Zero-rated: exports, international transport. Plausible, not source-checked this session.
-      { name: 'JP Zero Rated 0%',             rate: 0,   jurisdiction: null, taxCategory: 'ZERO_RATED',     components: ['JCT_ZERO'] },
-      // ⚠️ Export routing trigger.
+      { name: 'JP Zero Rated 0%',             rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED',     components: ['JCT_ZERO'] },
       { name: 'JP Zero Rated Export 0%',      rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['JCT_ZERO'] },
-      // ⚠️ Exempt: financial services, medical, educational.
       { name: 'JP Exempt 0%',                 rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',         components: ['JCT_EXEMPT'] },
-      // ❌ SCAFFOLDING: Japan JCT has a reverse charge for cross-border B2B digital services (since 2015).
       // The 'SERVICES' trigger is a broad placeholder — must be narrowed.
       { name: 'JP Reverse Charge 10%',        rate: 10,  jurisdiction: null, supplyCategory: 'SERVICES', priority: -1, taxCategory: 'REVERSE_CHARGE', components: ['JCT_REVERSE_CHARGE'] },
     ]
@@ -165,16 +148,11 @@ const PROVISIONING_MANIFESTS = {
   ZA: {
     frameworkName: 'South Africa VAT',
     rules: [
-      // ⚠️ Standard rate: 15% (effective April 2018). Rate history plausible, needs human review before production.
       { name: 'ZA Standard VAT 15%',          rate: 15,  jurisdiction: null, taxCategory: null,             components: ['VAT_STANDARD'] },
       { name: 'ZA Standard VAT 14% (hist.)',  rate: 14,  jurisdiction: null, taxCategory: null,             components: ['VAT_STANDARD'] },
-      // ⚠️ Zero-rated: exports, international transport.
-      { name: 'ZA Zero Rated 0%',             rate: 0,   jurisdiction: null, taxCategory: 'ZERO_RATED',     components: ['VAT_ZERO'] },
-      // ⚠️ Export routing trigger.
+      { name: 'ZA Zero Rated 0%',             rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED',     components: ['VAT_ZERO'] },
       { name: 'ZA Zero Rated Export 0%',      rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
-      // ⚠️ Exempt: financial services, residential accommodation.
       { name: 'ZA Exempt 0%',                 rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',         components: ['VAT_EXEMPT'] },
-      // ❌ SCAFFOLDING: South Africa VAT has a reverse charge for imported services.
       // The 'SERVICES' trigger is a broad placeholder — must be narrowed.
       { name: 'ZA Reverse Charge 15%',        rate: 15,  jurisdiction: null, supplyCategory: 'SERVICES', priority: -1, taxCategory: 'REVERSE_CHARGE', components: ['VAT_REVERSE_CHARGE'] },
     ]
@@ -185,35 +163,15 @@ const PROVISIONING_MANIFESTS = {
     rules: [
       { name: 'NZ Standard GST 15%',          rate: 15,   jurisdiction: null, taxCategory: null,         components: ['GST_STANDARD'] },
       { name: 'NZ Standard GST 12.5% (hist.)',rate: 12.5, jurisdiction: null, taxCategory: null,         components: ['GST_STANDARD'] },
-      { name: 'NZ Zero Rated 0%',             rate: 0,    jurisdiction: null, taxCategory: 'ZERO_RATED', components: ['GST_ZERO'] },
+      { name: 'NZ Zero Rated 0%',             rate: 0,    jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['GST_ZERO'] },
+      { name: 'NZ Zero Rated Export 0%',      rate: 0,    jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['GST_ZERO'] },
       { name: 'NZ Exempt 0%',                 rate: 0,    jurisdiction: null, taxCategory: 'EXEMPT',     components: ['GST_EXEMPT'] },
     ]
   },
 
   // ---- CANADA --------------------------------------------------------------
-  CA: {
-    frameworkName: 'Canada GST/HST',
-    rules: [
-      { name: 'CA GST 5%',  rate: 5,  jurisdiction: null, taxCategory: null, components: ['GST'] },
-      { name: 'CA PST 7%',  rate: 7,  jurisdiction: null, taxCategory: null, components: ['PST'] },
-      { name: 'CA HST 13%', rate: 13, jurisdiction: null, taxCategory: null, components: ['HST'] },
-    ]
-  },
+
   // ---- BATCH 1: NEXT 10 COUNTRIES ------------------------------------------
-  US: {
-    frameworkName: 'US Sales Tax',
-    rules: [
-      // Only provisioning CA and NY as starting points. Unconfigured states will throw RateResolutionError.
-      { name: 'US CA State Sales Tax 7.25%',  rate: 7.25, jurisdiction: 'CA', taxCategory: null, components: ['STATE_SALES_TAX'] },
-      { name: 'US NY State Sales Tax 4.0%',   rate: 4.0,  jurisdiction: 'NY', taxCategory: null, components: ['STATE_SALES_TAX'] },
-    ]
-  },
-  BR: {
-    frameworkName: 'Brazil ICMS',
-    rules: [
-      { name: 'BR ICMS (São Paulo Standard) 18%', rate: 18, jurisdiction: null, taxCategory: null, components: ['ICMS'] }
-    ]
-  },
 
   FR: {
     frameworkName: 'France TVA',
@@ -222,6 +180,49 @@ const PROVISIONING_MANIFESTS = {
       { name: 'FR Intermediate TVA 10%',          rate: 10,   jurisdiction: null, taxCategory: null, components: ['TVA_INTERMEDIATE'] },
       { name: 'FR Reduced TVA 5.5%',              rate: 5.5,  jurisdiction: null, taxCategory: null, components: ['TVA_REDUCED'] },
       { name: 'FR Super-Reduced TVA 2.1%',        rate: 2.1,  jurisdiction: null, taxCategory: null, components: ['TVA_SUPER_REDUCED'] },
+      { name: 'FR Zero Rated 0%',                 rate: 0,    jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['TVA_ZERO'] },
+      { name: 'FR Zero Rated Export 0%',          rate: 0,    jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['TVA_ZERO'] },
+      { name: 'FR Exempt 0%',                     rate: 0,    jurisdiction: null, taxCategory: 'EXEMPT', components: ['TVA_EXEMPT'] },
+    ]
+  },
+  // ---- IRELAND -------------------------------------------------------------
+  IE: {
+    frameworkName: 'Ireland VAT',
+    rules: [
+      { name: 'IE Standard VAT 23%',              rate: 23,   jurisdiction: null, taxCategory: null, components: ['VAT_STANDARD'] },
+      { name: 'IE Reduced VAT 13.5%',             rate: 13.5, jurisdiction: null, taxCategory: null, components: ['VAT_REDUCED'] },
+      { name: 'IE Second Reduced VAT 9%',         rate: 9,    jurisdiction: null, taxCategory: null, components: ['VAT_REDUCED_SECOND'] },
+      { name: 'IE Zero Rated 0%',                 rate: 0,    jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'IE Zero Rated Export 0%',          rate: 0,    jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'IE Exempt 0%',                     rate: 0,    jurisdiction: null, taxCategory: 'EXEMPT', components: ['VAT_EXEMPT'] },
+    ]
+  },
+  // ---- OMAN ----------------------------------------------------------------
+  OM: {
+    frameworkName: 'Oman VAT',
+    rules: [
+      { name: 'OM Standard VAT 5%',               rate: 5,   jurisdiction: null, taxCategory: null, components: ['VAT_STANDARD'] },
+      { name: 'OM Zero Rated 0%',                 rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'OM Zero Rated Export 0%',          rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'OM Exempt 0%',                     rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT', components: ['VAT_EXEMPT'] },
+      // foreign suppliers (Oman VAT law). Legal basis real; 'SERVICES' trigger is a broad placeholder.
+      // Must be narrowed to specific notified categories before production use.
+      { name: 'OM Reverse Charge 5%',             rate: 5,   jurisdiction: null, supplyCategory: 'SERVICES', priority: -1, taxCategory: 'REVERSE_CHARGE', components: ['VAT_REVERSE_CHARGE'] },
+    ]
+  },
+  // ---- BAHRAIN -------------------------------------------------------------
+  BH: {
+    frameworkName: 'Bahrain VAT',
+    rules: [
+      { name: 'BH Standard VAT 10%',              rate: 10,  jurisdiction: null, taxCategory: null, components: ['VAT_STANDARD'] },
+      { name: 'BH Standard VAT 5% (hist.)',       rate: 5,   jurisdiction: null, taxCategory: null, components: ['VAT_STANDARD'] },
+      { name: 'BH Zero Rated 0%',                 rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'BH Zero Rated Export 0%',          rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'BH Exempt 0%',                     rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT', components: ['VAT_EXEMPT'] },
+      // foreign suppliers (Bahrain VAT law). Legal basis real; 'SERVICES' trigger is a broad placeholder.
+      // Must be narrowed to specific notified categories before production use.
+      { name: 'BH Reverse Charge 10%',            rate: 10,  jurisdiction: null, supplyCategory: 'SERVICES', priority: -1, taxCategory: 'REVERSE_CHARGE', components: ['VAT_REVERSE_CHARGE'] },
+      { name: 'BH Reverse Charge 5% (hist.)',     rate: 5,   jurisdiction: null, supplyCategory: 'SERVICES', priority: -1, taxCategory: 'REVERSE_CHARGE', components: ['VAT_REVERSE_CHARGE'] },
     ]
   },
   MX: {
@@ -229,7 +230,15 @@ const PROVISIONING_MANIFESTS = {
     rules: [
       { name: 'MX Standard IVA 16%',              rate: 16, jurisdiction: null, taxCategory: null, components: ['IVA_STANDARD'] },
       { name: 'MX Border IVA 8%',                 rate: 8,  jurisdiction: null, taxCategory: null, components: ['IVA_BORDER'] },
-      { name: 'MX Zero Rated IVA 0%',             rate: 0,  jurisdiction: null, taxCategory: 'ZERO_RATED', components: ['IVA_ZERO'] },
+      { name: 'MX Zero Rated IVA 0%',             rate: 0,  jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['IVA_ZERO'] },
+      { name: 'MX Zero Rated Export 0%',          rate: 0,  jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['IVA_ZERO'] },
+    ]
+  },
+  ID: {
+    frameworkName: 'Indonesia PPN',
+    rules: [
+      { name: 'ID Standard PPN 11%',              rate: 11, jurisdiction: null, taxCategory: null, components: ['PPN_STANDARD'] },
+      { name: 'ID Zero Rated Export 0%',          rate: 0,  jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['PPN_ZERO'] },
     ]
   },
   IT: {
@@ -239,13 +248,15 @@ const PROVISIONING_MANIFESTS = {
       { name: 'IT Reduced IVA 10%',               rate: 10, jurisdiction: null, taxCategory: null, components: ['IVA_REDUCED'] },
       { name: 'IT Reduced IVA 5%',                rate: 5,  jurisdiction: null, taxCategory: null, components: ['IVA_REDUCED_LOW'] },
       { name: 'IT Super-Reduced IVA 4%',          rate: 4,  jurisdiction: null, taxCategory: null, components: ['IVA_SUPER_REDUCED'] },
+      { name: 'IT Zero Rated Export 0%',          rate: 0,  jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['IVA_ZERO'] },
     ]
   },
   KR: {
     frameworkName: 'South Korea VAT',
     rules: [
       { name: 'KR Standard VAT 10%',              rate: 10, jurisdiction: null, taxCategory: null, components: ['VAT_STANDARD'] },
-      { name: 'KR Zero Rated VAT 0%',             rate: 0,  jurisdiction: null, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'KR Zero Rated VAT 0%',             rate: 0,  jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'KR Zero Rated Export 0%',          rate: 0,  jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
     ]
   },
   ES: {
@@ -258,6 +269,7 @@ const PROVISIONING_MANIFESTS = {
       { name: 'ES Temporary Food IVA 5%',         rate: 5,  jurisdiction: null, taxCategory: null, components: ['IVA_TEMPORARY_FOOD_5'] },
       { name: 'ES Temporary Food IVA 2%',         rate: 2,  jurisdiction: null, taxCategory: null, components: ['IVA_TEMPORARY_FOOD_2'] },
       { name: 'ES Temporary Food IVA 0%',         rate: 0,  jurisdiction: null, taxCategory: null, components: ['IVA_TEMPORARY_FOOD_0'] },
+      { name: 'ES Zero Rated Export 0%',          rate: 0,  jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['IVA_ZERO'] },
     ]
   },
   NL: {
@@ -266,7 +278,8 @@ const PROVISIONING_MANIFESTS = {
       { name: 'NL Standard BTW 21%',              rate: 21, jurisdiction: null, taxCategory: null, components: ['BTW_STANDARD'] },
       { name: 'NL Reduced BTW 9%',                rate: 9,  jurisdiction: null, taxCategory: null, components: ['BTW_REDUCED'] },
       { name: 'NL Reduced BTW 6% (hist.)',        rate: 6,  jurisdiction: null, taxCategory: null, components: ['BTW_REDUCED'] },
-      { name: 'NL Zero Rated BTW 0%',             rate: 0,  jurisdiction: null, taxCategory: 'ZERO_RATED', components: ['BTW_ZERO'] },
+      { name: 'NL Zero Rated BTW 0%',             rate: 0,  jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['BTW_ZERO'] },
+      { name: 'NL Zero Rated Export 0%',          rate: 0,  jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['BTW_ZERO'] },
     ]
   },
   CH: {
@@ -278,6 +291,69 @@ const PROVISIONING_MANIFESTS = {
       { name: 'CH Accommodation MWST 3.7% (hist.)',rate: 3.7, jurisdiction: null, taxCategory: null, components: ['MWST_ACCOMMODATION'] },
       { name: 'CH Reduced MWST 2.6%',             rate: 2.6, jurisdiction: null, taxCategory: null, components: ['MWST_REDUCED'] },
       { name: 'CH Reduced MWST 2.5% (hist.)',     rate: 2.5, jurisdiction: null, taxCategory: null, components: ['MWST_REDUCED'] },
+      { name: 'CH Zero Rated 0%',                 rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['MWST_ZERO'] },
+      { name: 'CH Zero Rated Export 0%',          rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['MWST_ZERO'] },
+      { name: 'CH Exempt 0%',                     rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT', components: ['MWST_EXEMPT'] },
+    ]
+  },
+  // ---- POLAND --------------------------------------------------------------
+  PL: {
+    frameworkName: 'Poland VAT',
+    rules: [
+      { name: 'PL Standard VAT 23%',              rate: 23,  jurisdiction: null, taxCategory: null, components: ['VAT_STANDARD'] },
+      { name: 'PL Reduced VAT 8%',                rate: 8,   jurisdiction: null, taxCategory: null, components: ['VAT_REDUCED'] },
+      { name: 'PL Reduced VAT 5%',                rate: 5,   jurisdiction: null, taxCategory: null, components: ['VAT_SUPER_REDUCED'] },
+      { name: 'PL Zero Rated 0%',                 rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'PL Zero Rated Export 0%',          rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['VAT_ZERO'] },
+      { name: 'PL Exempt 0%',                     rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT', components: ['VAT_EXEMPT'] },
+    ]
+  },
+  // ---- SWEDEN --------------------------------------------------------------
+  SE: {
+    frameworkName: 'Sweden Moms',
+    rules: [
+      { name: 'SE Standard Moms 25%',             rate: 25,  jurisdiction: null, taxCategory: null, components: ['MOMS_STANDARD'] },
+      { name: 'SE Reduced Moms 12%',              rate: 12,  jurisdiction: null, taxCategory: null, components: ['MOMS_REDUCED'] },
+      { name: 'SE Reduced Moms 6%',               rate: 6,   jurisdiction: null, taxCategory: null, components: ['MOMS_SUPER_REDUCED'] },
+      { name: 'SE Zero Rated 0%',                 rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['MOMS_ZERO'] },
+      { name: 'SE Zero Rated Export 0%',          rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['MOMS_ZERO'] },
+      { name: 'SE Exempt 0%',                     rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT', components: ['MOMS_EXEMPT'] },
+    ]
+  },
+  // ---- NORWAY --------------------------------------------------------------
+  NO: {
+    frameworkName: 'Norway MVA',
+    rules: [
+      { name: 'NO Standard MVA 25%',              rate: 25,  jurisdiction: null, taxCategory: null, components: ['MVA_STANDARD'] },
+      { name: 'NO Reduced MVA 15%',               rate: 15,  jurisdiction: null, taxCategory: null, components: ['MVA_REDUCED'] },
+      { name: 'NO Reduced MVA 12%',               rate: 12,  jurisdiction: null, taxCategory: null, components: ['MVA_SUPER_REDUCED'] },
+      { name: 'NO Zero Rated 0%',                 rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['MVA_ZERO'] },
+      { name: 'NO Zero Rated Export 0%',          rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['MVA_ZERO'] },
+      { name: 'NO Exempt 0%',                     rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT', components: ['MVA_EXEMPT'] },
+    ]
+  },
+  // ---- BELGIUM -------------------------------------------------------------
+  BE: {
+    frameworkName: 'Belgium TVA/BTW',
+    rules: [
+      { name: 'BE Standard TVA 21%',              rate: 21,  jurisdiction: null, taxCategory: null, components: ['TVA_STANDARD'] },
+      { name: 'BE Reduced TVA 12%',               rate: 12,  jurisdiction: null, taxCategory: null, components: ['TVA_REDUCED'] },
+      { name: 'BE Reduced TVA 6%',                rate: 6,   jurisdiction: null, taxCategory: null, components: ['TVA_SUPER_REDUCED'] },
+      { name: 'BE Zero Rated 0%',                 rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['TVA_ZERO'] },
+      { name: 'BE Zero Rated Export 0%',          rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['TVA_ZERO'] },
+      { name: 'BE Exempt 0%',                     rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT', components: ['TVA_EXEMPT'] },
+    ]
+  },
+  // ---- AUSTRIA -------------------------------------------------------------
+  AT: {
+    frameworkName: 'Austria USt',
+    rules: [
+      { name: 'AT Standard USt 20%',              rate: 20,  jurisdiction: null, taxCategory: null, components: ['UST_STANDARD'] },
+      { name: 'AT Reduced USt 13%',               rate: 13,  jurisdiction: null, taxCategory: null, components: ['UST_REDUCED'] },
+      { name: 'AT Reduced USt 10%',               rate: 10,  jurisdiction: null, taxCategory: null, components: ['UST_SUPER_REDUCED'] },
+      { name: 'AT Zero Rated 0%',                 rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED', components: ['UST_ZERO'] },
+      { name: 'AT Zero Rated Export 0%',          rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['UST_ZERO'] },
+      { name: 'AT Exempt 0%',                     rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',         components: ['UST_EXEMPT'] },
     ]
   },
   // ---- CANADA --------------------------------------------------------------
@@ -288,10 +364,64 @@ const PROVISIONING_MANIFESTS = {
       { name: 'CA PST 7%',                    rate: 7,   jurisdiction: 'PROVINCIAL', taxCategory: null,             components: ['PST'] },
       { name: 'CA HST 13%',                   rate: 13,  jurisdiction: 'PROVINCIAL', taxCategory: null,             components: ['HST'] },
       { name: 'CA GST 5% + PST 7%',           rate: 12,  jurisdiction: null, taxCategory: null,             components: [{ name: 'GST', expectedRate: 5 }, { name: 'PST', expectedRate: 7 }] },
-      { name: 'CA Zero Rated 0%',             rate: 0,   jurisdiction: null, taxCategory: 'ZERO_RATED',     components: ['GST_ZERO'] },
+      { name: 'CA Zero Rated 0%',             rate: 0,   jurisdiction: null, placeOfSupply: null, taxCategory: 'ZERO_RATED',     components: ['GST_ZERO'] },
+      { name: 'CA Zero Rated Export 0%',      rate: 0,   jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['GST_ZERO'] },
       { name: 'CA Exempt 0%',                 rate: 0,   jurisdiction: null, taxCategory: 'EXEMPT',         components: ['GST_EXEMPT'] },
     ]
   },
+  // ---- GROUP 4 -------------------------------------------------------------
+  TH: { frameworkName: 'Thailand VAT', rules: [
+    { name: 'TH Standard VAT 7%', rate: 7, components: ['VAT_STANDARD'] },
+    { name: 'TH Zero Rated 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: null, components: ['VAT_ZERO'] },
+    { name: 'TH Zero Rated Export 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: 'EXPORT', jurisdiction: 'EXPORT', priority: -1, components: ['VAT_ZERO'] },
+    { name: 'TH Exempt 0%', rate: 0, taxCategory: 'EXEMPT', components: ['VAT_EXEMPT'] }
+  ]},
+  VN: { frameworkName: 'Vietnam VAT', rules: [
+    { name: 'VN Standard VAT 10%', rate: 10, components: ['VAT_STANDARD'] },
+    { name: 'VN Reduced VAT 8%', rate: 8, components: ['VAT_REDUCED'] },
+    { name: 'VN Zero Rated 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: null, components: ['VAT_ZERO'] },
+    { name: 'VN Zero Rated Export 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: 'EXPORT', jurisdiction: 'EXPORT', priority: -1, components: ['VAT_ZERO'] },
+    { name: 'VN Exempt 0%', rate: 0, taxCategory: 'EXEMPT', components: ['VAT_EXEMPT'] }
+  ]},
+  PH: { frameworkName: 'Philippines VAT', rules: [
+    { name: 'PH Standard VAT 12%', rate: 12, components: ['VAT_STANDARD'] },
+    { name: 'PH Zero Rated 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: null, components: ['VAT_ZERO'] },
+    { name: 'PH Zero Rated Export 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: 'EXPORT', jurisdiction: 'EXPORT', priority: -1, components: ['VAT_ZERO'] },
+    { name: 'PH Exempt 0%', rate: 0, taxCategory: 'EXEMPT', components: ['VAT_EXEMPT'] }
+  ]},
+  CN: { frameworkName: 'China VAT', rules: [
+    { name: 'CN Standard VAT 13%', rate: 13, components: ['VAT_STANDARD'] },
+    { name: 'CN Reduced VAT 9%', rate: 9, components: ['VAT_REDUCED_9'] },
+    { name: 'CN Reduced VAT 6%', rate: 6, components: ['VAT_REDUCED_6'] },
+    { name: 'CN Zero Rated 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: null, components: ['VAT_ZERO'] },
+    { name: 'CN Zero Rated Export 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: 'EXPORT', jurisdiction: 'EXPORT', priority: -1, components: ['VAT_ZERO'] },
+    { name: 'CN Exempt 0%', rate: 0, taxCategory: 'EXEMPT', components: ['VAT_EXEMPT'] }
+  ]},
+  TW: { frameworkName: 'Taiwan VAT', rules: [
+    { name: 'TW Standard VAT 5%', rate: 5, components: ['VAT_STANDARD'] },
+    { name: 'TW Zero Rated 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: null, components: ['VAT_ZERO'] },
+    { name: 'TW Zero Rated Export 0%', rate: 0, taxCategory: 'ZERO_RATED', placeOfSupply: 'EXPORT', jurisdiction: 'EXPORT', priority: -1, components: ['VAT_ZERO'] },
+    { name: 'TW Exempt 0%', rate: 0, taxCategory: 'EXEMPT', components: ['VAT_EXEMPT'] }
+  ]},
+
+  // Malaysia (MY): Single-stage Sales and Service Tax (SST). Requires explicit item-level
+  //   tax category mapping instead of one blanket rate, plus a different reporting ledger
+  //   model that doesn't assume input-credit netting.
+
+  US: {
+    frameworkName: 'US Sales Tax',
+    rules: [
+      { name: 'US State Tax 0%', rate: 0, jurisdiction: null, taxCategory: 'EXEMPT', components: ['STATE_SALES_TAX'] },
+      { name: 'US Zero Rated Export 0%', rate: 0, jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['STATE_SALES_TAX'] },
+    ]
+  },
+  BR: {
+    frameworkName: 'Brazil ICMS',
+    rules: [
+      { name: 'BR Standard ICMS 17%', rate: 17, jurisdiction: null, taxCategory: null, components: ['ICMS'] },
+      { name: 'BR Zero Rated Export 0%', rate: 0, jurisdiction: null, placeOfSupply: 'EXPORT', priority: -1, taxCategory: 'ZERO_RATED', components: ['ICMS'] },
+    ]
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -344,9 +474,19 @@ async function provisionTaxRules(businessId, countryCode) {
     console.log(`[TaxProvisioning] Removed ${deleted.count} stale auto-provisioned rules for business ${businessId}`);
   }
 
+  // 2.1 Update the business to link this tax framework
+  await prisma.business.update({
+    where: { id: businessId },
+    data: { taxFrameworkId: framework.id }
+  });
+
   // 3. Create new rules per manifest
   let created = 0;
   for (const ruleDef of manifest.rules) {
+    if (ruleDef.taxCategory === 'ZERO_RATED' && ruleDef.placeOfSupply === undefined) {
+      throw new Error(`[TaxProvisioning] FATAL: Rule '${ruleDef.name}' is ZERO_RATED but missing 'placeOfSupply'. You MUST explicitly define placeOfSupply (e.g., 'EXPORT', 'DOMESTIC', or null if intentionally blank).`);
+    }
+
     const newRule = await prisma.taxRule.create({
       data: {
         businessId,

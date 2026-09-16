@@ -34,9 +34,12 @@ const getCurrencySymbol = (currencyCode) => {
   }
 };
 
-const getCountryData = (countryCode) => {
-  // Try exact match for cca2
-  const country = countriesData.find(c => c.cca2 === countryCode);
+const getCountryData = (countryInput) => {
+  // Try exact match for cca2 or country name
+  const country = countriesData.find(c => 
+    c.cca2 === countryInput || 
+    c.name.common.toLowerCase() === countryInput.toLowerCase()
+  );
   if (!country) return null;
 
   const currencyKey = country.currencies ? Object.keys(country.currencies)[0] : 'USD';

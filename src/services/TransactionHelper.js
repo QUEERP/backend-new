@@ -6,7 +6,10 @@ class TransactionHelper {
   /**
    * Centralized helper to process cross-currency and multi-tax logic for any transaction type.
    */
-   static async processTransactionFinancials({ businessId, transactionDate, currencyCode, items, customerId, vendorId, transactionType = 'INVOICE', userId, globalDiscount = 0, overrideCurrencyData, txClient }) {
+   static async processTransactionFinancials({ businessId, transactionDate, currencyCode, items, customerId, vendorId, transactionType = 'INVOICE', userId, globalDiscount = 0, overrideCurrencyData, txClient, counterpartyCountryCode, counterpartyRegionCode }) {
+     if (counterpartyCountryCode !== undefined || counterpartyRegionCode !== undefined) {
+       throw new Error("processTransactionFinancials no longer accepts counterpartyCountryCode or counterpartyRegionCode directly. You must provide a valid customerId or vendorId to resolve counterparty tax jurisdiction.");
+     }
      const tx = txClient || prisma;
      
      // 1. Resolve Exchange Rates (Use override if provided, else resolve)
@@ -14,22 +17,22 @@ class TransactionHelper {
      
      // 2. Fetch jurisdiction states
      const business = await tx.business.findUnique({ where: { id: businessId } });
-     let counterpartyCountryCode = null;
-     let counterpartyRegionCode = null;
+     let resolvedCounterpartyCountryCode = null;
+     let resolvedCounterpartyRegionCode = null;
      let counterpartyTaxRegistrationStatus = null;
      
      if (customerId) {
        const customer = await tx.customer.findUnique({ where: { id: customerId } });
        if (customer) {
-         counterpartyCountryCode = customer.country || business.countryCode || 'AE';
-         counterpartyRegionCode = customer.state || customer.city || null;
+         resolvedCounterpartyCountryCode = customer.country || business.countryCode || 'AE';
+         resolvedCounterpartyRegionCode = customer.state || customer.city || null;
          counterpartyTaxRegistrationStatus = customer.vatNumber ? 'REGISTERED' : 'UNREGISTERED';
        }
      } else if (vendorId) {
        const vendor = await tx.vendor.findUnique({ where: { id: vendorId } });
        if (vendor) {
-         counterpartyCountryCode = vendor.country || business.countryCode || 'AE';
-         counterpartyRegionCode = vendor.state || vendor.city || null;
+         resolvedCounterpartyCountryCode = vendor.country || business.countryCode || 'AE';
+         resolvedCounterpartyRegionCode = vendor.state || vendor.city || null;
          counterpartyTaxRegistrationStatus = vendor.vatNumber ? 'REGISTERED' : 'UNREGISTERED';
        }
      }
@@ -91,26 +94,29 @@ class TransactionHelper {
        const overrideTaxTypeId = isManualOverride ? item.overrideTaxTypeId : null;
        const manualOverrideReason = isManualOverride ? (item.manualOverrideReason || 'Manual adjustment') : null;
        
-       if (isManualOverride && userId) {
-         const userWithRoles = await tx.user.findUnique({
-            where: { id: userId },
-            include: { memberships: { include: { role: { include: { rolePermissions: { include: { permission: true } } } } } } }
-         });
-         
-         let hasOverridePerm = false;
-         if (userWithRoles && userWithRoles.memberships) {
-            for (const userRole of userWithRoles.memberships) {
-               const perms = userRole.role?.rolePermissions || [];
-               if (perms.some(p => p.permission.action === 'TAX_OVERRIDE')) {
-                  hasOverridePerm = true;
-                  break;
-               }
-            }
-         }
-         
-         if (!hasOverridePerm) {
-            throw new Error(`Permission Denied: User ${userId} does not have TAX_OVERRIDE permission to apply manual tax overrides.`);
-         }
+       if (isManualOverride) {
+        if (!userId) {
+          throw new Error("Permission Denied: userId is required to process manual tax overrides.");
+        }
+        const userWithRoles = await tx.user.findUnique({
+           where: { id: userId },
+           include: { memberships: { include: { role: { include: { rolePermissions: { include: { permission: true } } } } } } }
+        });
+        
+        let hasOverridePerm = false;
+        if (userWithRoles && userWithRoles.memberships) {
+           for (const userRole of userWithRoles.memberships) {
+              const perms = userRole.role?.rolePermissions || [];
+              if (perms.some(p => p.permission.action === 'TAX_OVERRIDE')) {
+                 hasOverridePerm = true;
+                 break;
+              }
+           }
+        }
+        
+        if (!hasOverridePerm) {
+           throw new Error(`Permission Denied: User ${userId} does not have TAX_OVERRIDE permission to apply manual tax overrides.`);
+        }
        }
        
        let supplyCategory = 'GOODS';
@@ -122,16 +128,16 @@ class TransactionHelper {
 
        try {
          const calcContext = {
-           businessId,
-           businessCountryCode: business.countryCode || 'AE',
-           businessRegionCode: business.state || business.city || null,
-           counterpartyCountryCode,
-           counterpartyRegionCode,
-           supplyCategory,
-           counterpartyTaxRegistrationStatus,
-           transactionType,
-           transactionDate,
-           txClient: tx
+             businessId,
+             businessCountryCode: business.countryCode || 'AE',
+             businessRegionCode: business.state || business.city || null,
+             counterpartyCountryCode: resolvedCounterpartyCountryCode,
+             counterpartyRegionCode: resolvedCounterpartyRegionCode,
+             supplyCategory,
+             counterpartyTaxRegistrationStatus,
+             transactionType,
+             transactionDate,
+             txClient: tx
          };
          const TaxResolver = require('./TaxResolver');
          const rA = await TaxResolver.resolveTaxRule(calcContext);

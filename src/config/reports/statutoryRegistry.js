@@ -22,7 +22,7 @@ const registry = {
         });
 
         const taxRateIds = [...new Set(transactions.map(t => t.taxRateId).filter(Boolean))];
-        const taxRates = taxRateIds.length > 0 
+        const taxRates = taxRateIds.length > 0
           ? await prisma.taxRate.findMany({ where: { id: { in: taxRateIds } }, include: { taxType: true, taxRule: true } })
           : [];
         const taxRateMap = Object.fromEntries(taxRates.map(r => [r.id, r]));
@@ -58,7 +58,7 @@ const registry = {
         });
 
         const taxRateIds = [...new Set(transactions.map(t => t.taxRateId).filter(Boolean))];
-        const taxRates = taxRateIds.length > 0 
+        const taxRates = taxRateIds.length > 0
           ? await prisma.taxRate.findMany({ where: { id: { in: taxRateIds } }, include: { taxType: true, taxRule: true } })
           : [];
         const taxRateMap = Object.fromEntries(taxRates.map(r => [r.id, r]));
@@ -195,7 +195,7 @@ const registry = {
 
         transactions.forEach(t => {
           const resolvedRate = t.taxRateId ? taxRateMap[t.taxRateId] : null;
-          
+
           // Map rule type to box category if available; else fallback to taxType.name or overrideTaxType
           let typeName = 'UNKNOWN';
           if (resolvedRate?.taxRule?.type) {
@@ -207,7 +207,7 @@ const registry = {
           } else {
             typeName = resolvedRate?.taxType?.name ?? t.overrideTaxType?.name ?? 'UNKNOWN';
           }
-          
+
           const isOutward = ['INVOICE', 'CREDIT_NOTE'].includes(t.transactionType);
           const isInward = ['BILL', 'PURCHASE_RETURN'].includes(t.transactionType);
 
@@ -249,7 +249,7 @@ const registry = {
       },
       "UAE_VAT_OUTPUT": async (businessId, filters) => {
         const transactions = await prisma.taxTransaction.findMany({
-          where: { 
+          where: {
             businessId,
             transactionType: { in: ['INVOICE', 'CREDIT_NOTE'] }
           },
@@ -265,7 +265,7 @@ const registry = {
 
         const data = transactions.map(t => {
           const resolvedRate = t.taxRateId ? taxRateMap[t.taxRateId] : null;
-          
+
           let typeName = 'UNKNOWN';
           if (resolvedRate?.taxRule?.type) {
             const rt = resolvedRate.taxRule.type;
@@ -426,7 +426,7 @@ const buildGenericReturn = async (businessId, filters, reportName) => {
   });
 
   const taxRateIds = [...new Set(transactions.map(t => t.taxRateId).filter(Boolean))];
-  const taxRates = taxRateIds.length > 0 
+  const taxRates = taxRateIds.length > 0
     ? await prisma.taxRate.findMany({ where: { id: { in: taxRateIds } }, include: { taxType: true, taxRule: true } })
     : [];
   const taxRateMap = Object.fromEntries(taxRates.map(r => [r.id, r]));
@@ -463,36 +463,29 @@ const buildGenericReturn = async (businessId, filters, reportName) => {
   };
 };
 
-const BATCH_1_FRAMEWORKS = [
-  { fw: "Canada GST/HST", name: "GST/HST Return" },
-  { fw: "US Sales Tax", name: "State Sales Tax Return" },
-  { fw: "Brazil ICMS", name: "ICMS Return", warningBanner: "Warning: This report currently only calculates ICMS. Your actual tax liability will be higher due to uncalculated IPI, PIS, and COFINS obligations." },
-  { fw: "Japan Consumption Tax", name: "Consumption Tax Return" },
-  { fw: "France TVA", name: "TVA Return" },
-  { fw: "Mexico IVA", name: "IVA Return" },
-  { fw: "Italy IVA", name: "IVA Return" },
-  { fw: "South Korea VAT", name: "VAT Return" },
-  { fw: "Spain IVA", name: "IVA Return" },
-  { fw: "Netherlands BTW", name: "BTW Return" },
-  { fw: "Switzerland MWST", name: "MWST Return" },
-  { fw: "Saudi Arabia VAT", name: "VAT Return" },
-];
+const { PROVISIONING_MANIFESTS } = require('../../services/taxProvisioning.service');
 
-for (const f of BATCH_1_FRAMEWORKS) {
-  registry[f.fw] = {
-    reports: [
-      { code: `${f.fw.toUpperCase().replace(/[\s/]+/g, '_')}_GENERIC_RETURN`, name: f.name, type: "SUMMARY" }
-    ],
-    builders: {
-      [`${f.fw.toUpperCase().replace(/[\s/]+/g, '_')}_GENERIC_RETURN`]: async (businessId, filters) => {
-        const ret = await buildGenericReturn(businessId, filters, f.name);
-        if (f.warningBanner) {
-          ret.warningBanner = f.warningBanner;
-        }
-        return ret;
-      }
-    }
-  };
+// Dynamically register a generic return for EVERY framework in PROVISIONING_MANIFESTS
+for (const countryCode of Object.keys(PROVISIONING_MANIFESTS)) {
+  const fwName = PROVISIONING_MANIFESTS[countryCode].frameworkName;
+  const reportCode = `${fwName.toUpperCase().replace(/[\s/]+/g, '_')}_GENERIC_RETURN`;
+  // e.g. "Austria USt" -> "USt Return"
+  const reportDisplayName = `${fwName.split(' ').pop()} Return`;
+
+  if (!registry[fwName]) {
+    registry[fwName] = { reports: [], builders: {} };
+  }
+
+  if (!registry[fwName].reports.find(r => r.code === reportCode)) {
+    registry[fwName].reports.push({
+      code: reportCode,
+      name: reportDisplayName,
+      type: "SUMMARY"
+    });
+    registry[fwName].builders[reportCode] = async (businessId, filters) => {
+      return await buildGenericReturn(businessId, filters, reportDisplayName);
+    };
+  }
 }
 
 

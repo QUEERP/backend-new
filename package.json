@@ -14,7 +14,10 @@
     "dev": "nodemon --trace-warnings server.js",
     "start": "node --trace-warnings server.js",
     "prisma:generate": "prisma generate",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test:security": "node test-security-override.js",
+    "test:all": "node test-security-override.js && node test-canada-override.js",
+    "test": "npm run test:all"
   },
   "keywords": [],
   "author": "",

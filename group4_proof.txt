@@ -1,0 +1,105 @@
+
+TESTING COUNTRY: TH
+
+--- Scenario: Standard Domestic Sale (Goods) ---
+[TransactionHelper] Item b9ac8db9-8ed5-4b2b-8ca9-a837d61ec13d resolved to rule: TH Standard VAT 7%
+Γ£à Invoice INV-1788503245775 created successfully.
+
+--- Scenario: Standard Domestic Sale (Services) ---
+[TransactionHelper] Item 14907c52-71a3-422f-bb33-31e7a771f745 resolved to rule: TH Standard VAT 7%
+Γ£à Invoice INV-1788503255191 created successfully.
+
+--- Scenario: Cross-border (Zero Rated) ---
+[TransactionHelper] Item b9ac8db9-8ed5-4b2b-8ca9-a837d61ec13d resolved to rule: TH Zero Rated Export 0%
+Γ£à Invoice INV-1788503261391 created successfully.
+
+--- Scenario: Debit Note ---
+[TransactionHelper] Item b9ac8db9-8ed5-4b2b-8ca9-a837d61ec13d resolved to rule: TH Standard VAT 7%
+Γ£à Debit Note INV-1788503267619 created successfully.
+
+--- Scenario: Manual Override (Permission Denied) ---
+Γ£à Caught expected error: Permission Denied: User aa4d755a-caf4-439b-abc8-1e28d15615df does not have TAX_OVERRIDE permission to apply manual tax overrides.
+
+TESTING COUNTRY: VN
+
+--- Scenario: Standard Domestic Sale (Goods) ---
+[TransactionHelper] Item f0ca9e6e-bfb8-41ad-9067-d3a392d147b3 resolved to rule: VN Standard VAT 10%
+Γ£à Invoice INV-1788503292895 created successfully.
+
+--- Scenario: Standard Domestic Sale (Services) ---
+[TransactionHelper] Item 5a23e042-ba6b-49c1-b164-0cc0d54d453a resolved to rule: VN Standard VAT 10%
+Γ£à Invoice INV-1788503304210 created successfully.
+
+--- Scenario: Cross-border (Zero Rated) ---
+[TransactionHelper] Item f0ca9e6e-bfb8-41ad-9067-d3a392d147b3 resolved to rule: VN Zero Rated Export 0%
+Γ£à Invoice INV-1788503310389 created successfully.
+
+--- Scenario: Debit Note ---
+[TransactionHelper] Item f0ca9e6e-bfb8-41ad-9067-d3a392d147b3 resolved to rule: VN Standard VAT 10%
+Γ£à Debit Note INV-1788503316599 created successfully.
+
+--- Scenario: Manual Override (Permission Denied) ---
+Γ£à Caught expected error: Permission Denied: User aa4d755a-caf4-439b-abc8-1e28d15615df does not have TAX_OVERRIDE permission to apply manual tax overrides.
+
+TESTING COUNTRY: PH
+
+--- Scenario: Standard Domestic Sale (Goods) ---
+[TransactionHelper] Item 58382589-918b-4f47-8550-686cf7ec661b resolved to rule: PH Standard VAT 12%
+Γ£à Invoice INV-1788503339826 created successfully.
+
+--- Scenario: Standard Domestic Sale (Services) ---
+[TransactionHelper] Item 4bcf5c98-4497-465e-a7cc-b65c66c6c5ca resolved to rule: PH Standard VAT 12%
+Γ£à Invoice INV-1788503349329 created successfully.
+
+--- Scenario: Cross-border (Zero Rated) ---
+[TransactionHelper] Item 58382589-918b-4f47-8550-686cf7ec661b resolved to rule: PH Zero Rated Export 0%
+Γ£à Invoice INV-1788503355577 created successfully.
+
+--- Scenario: Debit Note ---
+[TransactionHelper] Item 58382589-918b-4f47-8550-686cf7ec661b resolved to rule: PH Standard VAT 12%
+Γ£à Debit Note INV-1788503361854 created successfully.
+
+--- Scenario: Manual Override (Permission Denied) ---
+Γ£à Caught expected error: Permission Denied: User aa4d755a-caf4-439b-abc8-1e28d15615df does not have TAX_OVERRIDE permission to apply manual tax overrides.
+
+TESTING COUNTRY: MY
+
+--- Scenario: Standard Domestic Sale (Goods) ---
+[TransactionHelper] Item a73de33b-85b9-4ddf-a873-87440bba4477 resolved to rule: MY Sales Tax 10%
+Γ£à Invoice INV-1788503386766 created successfully.
+
+--- Scenario: Standard Domestic Sale (Services) ---
+[TransactionHelper] Item 64f96c8b-cd38-4462-846e-2652ef4c0f16 resolved to rule: MY Sales Tax 10%
+Γ£à Invoice INV-1788503396239 created successfully.
+
+--- Scenario: Cross-border (Zero Rated) ---
+[TransactionHelper] Item a73de33b-85b9-4ddf-a873-87440bba4477 resolved to rule: MY Zero Rated Export 0%
+Γ£à Invoice INV-1788503402524 created successfully.
+
+--- Scenario: Debit Note ---
+[TransactionHelper] Item a73de33b-85b9-4ddf-a873-87440bba4477 resolved to rule: MY Sales Tax 10%
+Γ£à Debit Note INV-1788503408715 created successfully.
+
+--- Scenario: Manual Override (Permission Denied) ---
+Γ£à Caught expected error: Permission Denied: User aa4d755a-caf4-439b-abc8-1e28d15615df does not have TAX_OVERRIDE permission to apply manual tax overrides.
+
+TESTING COUNTRY: CN
+
+--- Scenario: Standard Domestic Sale (Goods) ---
+[TransactionHelper] Item 84234ebb-b4c9-47fd-9fe5-dcc809d65faa resolved to rule: CN Standard VAT 13%
+Γ£à Invoice INV-1788503434371 created successfully.
+
+--- Scenario: Standard Domestic Sale (Services) ---
+[TransactionHelper] Item 93b57abe-f092-4f6b-a87e-66df0ec62bbe resolved to rule: CN Standard VAT 13%
+Γ£à Invoice INV-1788503443818 created successfully.
+
+--- Scenario: Cross-border (Zero Rated) ---
+[TransactionHelper] Item 84234ebb-b4c9-47fd-9fe5-dcc809d65faa resolved to rule: CN Zero Rated Export 0%
+Γ£à Invoice INV-1788503450633 created successfully.
+
+--- Scenario: Debit Note ---
+[TransactionHelper] Item 84234ebb-b4c9-47fd-9fe5-dcc809d65faa resolved to rule: CN Standard VAT 13%
+Γ£à Debit Note INV-1788503456850 created successfully.
+
+--- Scenario: Manual Override (Permission Denied) ---
+Γ£à Caught expected error: Permission Denied: User aa4d755a-caf4-439b-abc8-1e28d15615df does not have TAX_OVERRIDE permission to apply manual tax overrides.

@@ -143,7 +143,7 @@ class BusinessSetupService {
     // Note: in a real implementation, we would register country-specific rules here
     
     // Setup Country Specific Tax Configuration
-    await this.setupCountryCompliance(business.id, country);
+    await this.setupCountryCompliance(business.id, countryCode);
 
     return business;
   }

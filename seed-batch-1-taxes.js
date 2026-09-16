@@ -205,6 +205,18 @@ const data = [
           { name: 'CH Reduced MWST 2.6%', rate: 2.6, effectiveFrom: new Date('2024-01-01') },
           { name: 'CH Reduced MWST 2.5% (hist.)', rate: 2.5, effectiveFrom: new Date('2018-01-01'), effectiveTo: new Date('2023-12-31') },
         ]
+      },
+      {
+        name: 'MWST_ZERO',
+        rates: [
+          { name: 'CH Zero Rated 0%', rate: 0.0, effectiveFrom: new Date('2000-01-01') }
+        ]
+      },
+      {
+        name: 'MWST_EXEMPT',
+        rates: [
+          { name: 'CH Exempt 0%', rate: 0.0, effectiveFrom: new Date('2000-01-01') }
+        ]
       }
     ]
   },

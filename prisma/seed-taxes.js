@@ -207,7 +207,72 @@ async function seedGlobalTaxes() {
       { name: 'ZA Reverse Charge 15%', rate: 15.0, effectiveFrom: '2018-04-01T00:00:00Z', effectiveTo: null }
     ]);
 
-    console.log('Successfully seeded global taxes for UK, AU, SG, DE, NZ, and ZA.');
+    // ==========================================
+    // 9. SEED GROUP 1 NEW COUNTRIES: OM, BH, IE, FR
+    // ==========================================
+    console.log('Seeding Group 1 (OM, BH, IE, FR)...');
+    
+    // Oman (OM) - VAT
+    const omCountry = await prisma.country.upsert({ where: { code: 'OM' }, update: {}, create: { code: 'OM', name: 'Oman' } });
+    const omFw = await prisma.taxFramework.upsert({ where: { countryId: omCountry.id }, update: {}, create: { name: 'Oman VAT', countryId: omCountry.id } });
+    const omStandard = await upsertTaxType(omFw.id, 'VAT_STANDARD');
+    const omZero = await upsertTaxType(omFw.id, 'VAT_ZERO');
+    const omExempt = await upsertTaxType(omFw.id, 'VAT_EXEMPT');
+    const omRc = await upsertTaxType(omFw.id, 'VAT_REVERSE_CHARGE');
+    await seedTaxRates(omStandard.id, [{ name: 'OM Standard VAT 5%', rate: 5.0, effectiveFrom: '2021-04-16T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(omZero.id, [{ name: 'OM Zero-Rated 0%', rate: 0.0, effectiveFrom: '2021-04-16T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(omExempt.id, [{ name: 'OM Exempt 0%', rate: 0.0, effectiveFrom: '2021-04-16T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(omRc.id, [{ name: 'OM Reverse Charge 5%', rate: 5.0, effectiveFrom: '2021-04-16T00:00:00Z', effectiveTo: null }]);
+
+    // Bahrain (BH) - VAT
+    const bhCountry = await prisma.country.upsert({ where: { code: 'BH' }, update: {}, create: { code: 'BH', name: 'Bahrain' } });
+    const bhFw = await prisma.taxFramework.upsert({ where: { countryId: bhCountry.id }, update: {}, create: { name: 'Bahrain VAT', countryId: bhCountry.id } });
+    const bhStandard = await upsertTaxType(bhFw.id, 'VAT_STANDARD');
+    const bhZero = await upsertTaxType(bhFw.id, 'VAT_ZERO');
+    const bhExempt = await upsertTaxType(bhFw.id, 'VAT_EXEMPT');
+    const bhRc = await upsertTaxType(bhFw.id, 'VAT_REVERSE_CHARGE');
+    await seedTaxRates(bhStandard.id, [
+      { name: 'BH Standard VAT 5%', rate: 5.0, effectiveFrom: '2019-01-01T00:00:00Z', effectiveTo: '2021-12-31T23:59:59Z' },
+      { name: 'BH Standard VAT 10%', rate: 10.0, effectiveFrom: '2022-01-01T00:00:00Z', effectiveTo: null }
+    ]);
+    await seedTaxRates(bhZero.id, [{ name: 'BH Zero-Rated 0%', rate: 0.0, effectiveFrom: '2019-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(bhExempt.id, [{ name: 'BH Exempt 0%', rate: 0.0, effectiveFrom: '2019-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(bhRc.id, [
+      { name: 'BH Reverse Charge 5%', rate: 5.0, effectiveFrom: '2019-01-01T00:00:00Z', effectiveTo: '2021-12-31T23:59:59Z' },
+      { name: 'BH Reverse Charge 10%', rate: 10.0, effectiveFrom: '2022-01-01T00:00:00Z', effectiveTo: null }
+    ]);
+
+    // Ireland (IE) - VAT
+    const ieCountry = await prisma.country.upsert({ where: { code: 'IE' }, update: {}, create: { code: 'IE', name: 'Ireland' } });
+    const ieFw = await prisma.taxFramework.upsert({ where: { countryId: ieCountry.id }, update: {}, create: { name: 'Ireland VAT', countryId: ieCountry.id } });
+    const ieStandard = await upsertTaxType(ieFw.id, 'VAT_STANDARD');
+    const ieReduced = await upsertTaxType(ieFw.id, 'VAT_REDUCED');
+    const ieReducedSecond = await upsertTaxType(ieFw.id, 'VAT_REDUCED_SECOND');
+    const ieZero = await upsertTaxType(ieFw.id, 'VAT_ZERO');
+    const ieExempt = await upsertTaxType(ieFw.id, 'VAT_EXEMPT');
+    await seedTaxRates(ieStandard.id, [{ name: 'IE Standard VAT 23%', rate: 23.0, effectiveFrom: '2012-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(ieReduced.id, [{ name: 'IE Reduced VAT 13.5%', rate: 13.5, effectiveFrom: '2012-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(ieReducedSecond.id, [{ name: 'IE Second Reduced VAT 9%', rate: 9.0, effectiveFrom: '2012-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(ieZero.id, [{ name: 'IE Zero-Rated 0%', rate: 0.0, effectiveFrom: '2012-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(ieExempt.id, [{ name: 'IE Exempt 0%', rate: 0.0, effectiveFrom: '2012-01-01T00:00:00Z', effectiveTo: null }]);
+
+    // France (FR) - TVA
+    const frCountry = await prisma.country.upsert({ where: { code: 'FR' }, update: {}, create: { code: 'FR', name: 'France' } });
+    const frFw = await prisma.taxFramework.upsert({ where: { countryId: frCountry.id }, update: {}, create: { name: 'France TVA', countryId: frCountry.id } });
+    const frStandard = await upsertTaxType(frFw.id, 'TVA_STANDARD');
+    const frIntermediate = await upsertTaxType(frFw.id, 'TVA_INTERMEDIATE');
+    const frReduced = await upsertTaxType(frFw.id, 'TVA_REDUCED');
+    const frSuperReduced = await upsertTaxType(frFw.id, 'TVA_SUPER_REDUCED');
+    const frZero = await upsertTaxType(frFw.id, 'TVA_ZERO');
+    const frExempt = await upsertTaxType(frFw.id, 'TVA_EXEMPT');
+    await seedTaxRates(frStandard.id, [{ name: 'FR Standard TVA 20%', rate: 20.0, effectiveFrom: '2014-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(frIntermediate.id, [{ name: 'FR Intermediate TVA 10%', rate: 10.0, effectiveFrom: '2014-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(frReduced.id, [{ name: 'FR Reduced TVA 5.5%', rate: 5.5, effectiveFrom: '2014-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(frSuperReduced.id, [{ name: 'FR Super-Reduced TVA 2.1%', rate: 2.1, effectiveFrom: '2014-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(frZero.id, [{ name: 'FR Zero-Rated 0%', rate: 0.0, effectiveFrom: '2014-01-01T00:00:00Z', effectiveTo: null }]);
+    await seedTaxRates(frExempt.id, [{ name: 'FR Exempt 0%', rate: 0.0, effectiveFrom: '2014-01-01T00:00:00Z', effectiveTo: null }]);
+
+    console.log('Successfully seeded global taxes for UK, AU, SG, DE, NZ, ZA, OM, BH, IE, and FR.');
   } catch (e) {
     console.error('Failed to seed taxes:', e);
   } finally {

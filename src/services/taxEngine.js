@@ -15,6 +15,7 @@ class TaxEngine {
       counterpartyCountryCode,
       counterpartyRegionCode,
       supplyCategory = 'GOODS',
+      taxCategory,
       counterpartyTaxRegistrationStatus,
       transactionType,
       lineSubtotal, 
@@ -40,7 +41,7 @@ class TaxEngine {
     });
 
     if (!business || !business.taxFrameworkId) {
-      return [];
+      throw new RateResolutionError(`Tax Engine cannot calculate tax: Business ${businessId} has no assigned taxFrameworkId. Ensure the business is properly configured with a tax framework.`);
     }
 
     let taxRuleId;
@@ -94,6 +95,7 @@ class TaxEngine {
          counterpartyCountryCode,
          counterpartyRegionCode,
          supplyCategory,
+         taxCategory,
          counterpartyTaxRegistrationStatus,
          transactionType,
          transactionDate,

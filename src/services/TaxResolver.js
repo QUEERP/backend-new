@@ -58,6 +58,7 @@ class TaxResolver {
       businessCountryCode,
       businessRegionCode,
       supplyCategory = 'GOODS',
+      taxCategory,
       counterpartyTaxRegistrationStatus,
       transactionDate = new Date(),
       txClient = prisma
@@ -103,11 +104,21 @@ class TaxResolver {
 
       if (rule.countryCode && rule.countryCode !== filingCountry) return false;
       if (rule.regionCode && rule.regionCode !== filingRegion) return false;
-      if (rule.supplyCategory && rule.supplyCategory !== supplyCategory) return false;
+      
+      if (rule.taxCategory) {
+        if (rule.taxCategory !== taxCategory) return false;
+      } else if (rule.supplyCategory) {
+        if (rule.supplyCategory !== supplyCategory) return false;
+      }
+      
       if (rule.placeOfSupply && rule.placeOfSupply !== placeOfSupply) return false;
       if (rule.counterpartyTaxRegistrationStatus && rule.counterpartyTaxRegistrationStatus !== counterpartyTaxRegistrationStatus) return false;
       return true;
     });
+
+    console.log(`[TaxResolver debug] B-CC: ${businessCountryCode} C-CC: ${targetCountry} PoS: ${placeOfSupply}`);
+    console.log(`[TaxResolver debug] All active rules:`, activeRules.map(r => r.name));
+    console.log(`[TaxResolver debug] Matching rules before sort:`, matchingRules.map(r => r.name));
 
     matchingRules.sort((a, b) => a.priority - b.priority);
 
