@@ -42,7 +42,10 @@ const createBill = async (businessId, userId, userEmail, data) => {
       currencyCode: data.currency || "AED",
       items: data.items || [],
       customerId: null, // Bill doesn't use customer state
+      vendorId: vendor.id,
+      transactionType: 'BILL',
       globalDiscount: discount,
+      userId,
       txClient: tx
     });
 

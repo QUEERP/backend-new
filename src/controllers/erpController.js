@@ -27,7 +27,7 @@ class ErpController {
         price: Number(price),
         costPrice: Number(costPrice),
         hsnCode: hsnCode || null,
-        taxPercent: taxPercent ? Number(taxPercent) : 0,
+        
         unit: unit || "pcs",
         initialQty: initialQty ? Number(initialQty) : 0,
         warehouseId: warehouseId || null,

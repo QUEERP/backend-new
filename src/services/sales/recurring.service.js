@@ -30,7 +30,7 @@ const createRecurringInvoice = async (businessId, userId, userEmail, data) => {
       itemType: item.itemType,
       quantity: item.quantity,
       price: item.price,
-      taxPercent: item.taxPercent,
+      
       taxDetails: item.taxDetails || [],
       total: item.total
     }));
@@ -117,7 +117,7 @@ const processRecurringInvoices = async () => {
           itemType: item.itemType,
           quantity: item.quantity,
           price: item.price,
-          taxPercent: item.taxPercent,
+          
           taxDetails: item.taxDetails || [],
           discount: 0,
           hours: 0,

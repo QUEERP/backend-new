@@ -53,7 +53,8 @@ const createPurchaseReturn = async (businessId, userId, userEmail, data) => {
       customerId: null,
       globalDiscount: discount,
       txClient: tx,
-      overrideCurrencyData
+      overrideCurrencyData,
+      userId
     });
 
     const grandTotal = financials.subtotal + financials.totalTax - discount;
@@ -69,7 +70,7 @@ const createPurchaseReturn = async (businessId, userId, userEmail, data) => {
         description: item.description || "",
         quantity: qty,
         price,
-        taxPercent: item.taxPercent ? parseFloat(item.taxPercent) : 0,
+        
         total: itemSubtotal + taxAmt,
         warehouseId: item.warehouseId || data.warehouseId || null,
         isStockReturned: item.isStockReturned !== undefined ? item.isStockReturned : true

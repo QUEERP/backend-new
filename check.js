@@ -1,11 +1,18 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
-async function main() {
-  const b = await prisma.business.findMany({ where: { name: { contains: 'India' } } });
-  console.log("Businesses:", b.map(x=>x.name));
-  if (b.length > 0) {
-     const t = await prisma.taxTransaction.findMany({ where: { businessId: b[0].id } });
-     console.log('Taxes in', b[0].name, ':', t.length);
-  }
+const prisma = require('./src/config/prisma');
+async function run() {
+    for (const code of ['JP', 'ZA']) {
+        const c = await prisma.country.findFirst({ where: { code }});
+        if(c) {
+            const fws = await prisma.taxFramework.findMany({ where: { countryId: c.id }});
+            for (const fw of fws) {
+                console.log(`Deleting ${fw.name}...`);
+                await prisma.taxRule.deleteMany({ where: { business: { taxFrameworkId: fw.id } } });
+                await prisma.taxRate.deleteMany({ where: { taxType: { taxFrameworkId: fw.id } } });
+                await prisma.taxType.deleteMany({ where: { taxFrameworkId: fw.id } });
+                await prisma.taxFramework.delete({ where: { id: fw.id } });
+            }
+        }
+    }
+    await prisma.$disconnect();
 }
-main();
+run();

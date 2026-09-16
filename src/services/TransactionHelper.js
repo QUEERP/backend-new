@@ -6,7 +6,10 @@ class TransactionHelper {
   /**
    * Centralized helper to process cross-currency and multi-tax logic for any transaction type.
    */
-  static async processTransactionFinancials({ businessId, transactionDate, currencyCode, items, customerId, globalDiscount = 0, overrideCurrencyData, txClient }) {
+   static async processTransactionFinancials({ businessId, transactionDate, currencyCode, items, customerId, vendorId, transactionType = 'INVOICE', userId, globalDiscount = 0, overrideCurrencyData, txClient, counterpartyCountryCode, counterpartyRegionCode }) {
+     if (counterpartyCountryCode !== undefined || counterpartyRegionCode !== undefined) {
+       throw new Error("processTransactionFinancials no longer accepts counterpartyCountryCode or counterpartyRegionCode directly. You must provide a valid customerId or vendorId to resolve counterparty tax jurisdiction.");
+     }
      const tx = txClient || prisma;
      
      // 1. Resolve Exchange Rates (Use override if provided, else resolve)
@@ -14,10 +17,24 @@ class TransactionHelper {
      
      // 2. Fetch jurisdiction states
      const business = await tx.business.findUnique({ where: { id: businessId } });
-     let customerState = null;
+     let resolvedCounterpartyCountryCode = null;
+     let resolvedCounterpartyRegionCode = null;
+     let counterpartyTaxRegistrationStatus = null;
+     
      if (customerId) {
        const customer = await tx.customer.findUnique({ where: { id: customerId } });
-       customerState = customer?.region || customer?.city || null; // fallback if state isn't explicitly defined
+       if (customer) {
+         resolvedCounterpartyCountryCode = customer.country || business.countryCode || 'AE';
+         resolvedCounterpartyRegionCode = customer.state || customer.city || null;
+         counterpartyTaxRegistrationStatus = customer.vatNumber ? 'REGISTERED' : 'UNREGISTERED';
+       }
+     } else if (vendorId) {
+       const vendor = await tx.vendor.findUnique({ where: { id: vendorId } });
+       if (vendor) {
+         resolvedCounterpartyCountryCode = vendor.country || business.countryCode || 'AE';
+         resolvedCounterpartyRegionCode = vendor.state || vendor.city || null;
+         counterpartyTaxRegistrationStatus = vendor.vatNumber ? 'REGISTERED' : 'UNREGISTERED';
+       }
      }
 
      // 3. Fetch tax rates map for legacy projection
@@ -69,22 +86,81 @@ class TransactionHelper {
      for (let i = 0; i < processedItems.length; i++) {
        const item = processedItems[i];
        const proportionalDiscount = itemDiscounts[i];
-       
        const netLineSubtotal = Math.max(item.itemSubtotal - proportionalDiscount, 0);
        
-       if (item.taxPercent) {
+       // Handle explicit overrides
+       const isManualOverride = !!(item.isManualOverride || item.overrideTaxRate !== undefined);
+       const manualOverrideRate = isManualOverride ? Number(item.overrideTaxRate || 0) : null;
+       const overrideTaxTypeId = isManualOverride ? item.overrideTaxTypeId : null;
+       const manualOverrideReason = isManualOverride ? (item.manualOverrideReason || 'Manual adjustment') : null;
+       
+       if (isManualOverride) {
+        if (!userId) {
+          throw new Error("Permission Denied: userId is required to process manual tax overrides.");
+        }
+        const userWithRoles = await tx.user.findUnique({
+           where: { id: userId },
+           include: { memberships: { include: { role: { include: { rolePermissions: { include: { permission: true } } } } } } }
+        });
+        
+        let hasOverridePerm = false;
+        if (userWithRoles && userWithRoles.memberships) {
+           for (const userRole of userWithRoles.memberships) {
+              const perms = userRole.role?.rolePermissions || [];
+              if (perms.some(p => p.permission.action === 'TAX_OVERRIDE')) {
+                 hasOverridePerm = true;
+                 break;
+              }
+           }
+        }
+        
+        if (!hasOverridePerm) {
+           throw new Error(`Permission Denied: User ${userId} does not have TAX_OVERRIDE permission to apply manual tax overrides.`);
+        }
+       }
+       
+       let supplyCategory = 'GOODS';
+       if (item.productId) {
+           const product = await tx.product.findUnique({ where: { id: item.productId } });
+           const TaxResolver = require('./TaxResolver');
+           supplyCategory = TaxResolver.mapItemTypeToSupplyCategory ? TaxResolver.mapItemTypeToSupplyCategory(product?.type) : 'GOODS';
+       }
+
+       try {
+         const calcContext = {
+             businessId,
+             businessCountryCode: business.countryCode || 'AE',
+             businessRegionCode: business.state || business.city || null,
+             counterpartyCountryCode: resolvedCounterpartyCountryCode,
+             counterpartyRegionCode: resolvedCounterpartyRegionCode,
+             supplyCategory,
+             counterpartyTaxRegistrationStatus,
+             transactionType,
+             transactionDate,
+             txClient: tx
+         };
+         const TaxResolver = require('./TaxResolver');
+         const rA = await TaxResolver.resolveTaxRule(calcContext);
+         console.log(`[TransactionHelper] Item ${item.productId} resolved to rule: ${rA.name}`);
+
          const itemTaxes = await TaxEngine.calculateTax({
-           businessId,
-           businessState: business.state,
-           customerState,
+           ...calcContext,
            lineSubtotal: netLineSubtotal,
-           taxPercent: Number(item.taxPercent),
            exchangeRate: currencyData.exchangeRate,
            statutoryRate: currencyData.statutoryRate,
            decimals: currencyData.decimals,
-           transactionDate
+           transactionDate,
+           isManualOverride,
+           manualOverrideRate,
+           manualOverrideReason,
+           overrideTaxTypeId,
+           userId,
+           txClient: tx
          });
+         
          allTaxTransactions = allTaxTransactions.concat(itemTaxes);
+       } catch (err) {
+         throw new Error(`Failed to calculate tax for item ${item.productId || 'UNKNOWN'}: ${err.message}`);
        }
      }
      

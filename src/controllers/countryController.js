@@ -2,8 +2,11 @@ const { countriesData, getTaxType, getCurrencySymbol } = require('../utils/count
 
 exports.getCountries = (req, res) => {
   try {
+    const UNREVIEWED_COUNTRIES = ['CN', 'MY', 'PL', 'SE', 'NO', 'BE', 'AT', 'TH', 'VN', 'PH', 'TW', 'OM', 'BH', 'IE', 'ID'];
+
     const formattedCountries = countriesData
       .filter(c => c.cca2 && c.name && c.currencies && Object.keys(c.currencies).length > 0)
+      .filter(c => !UNREVIEWED_COUNTRIES.includes(c.cca2))
       .map(c => {
         const currencyKey = Object.keys(c.currencies)[0];
         const currencyData = c.currencies[currencyKey];

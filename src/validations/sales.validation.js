@@ -9,10 +9,10 @@ const lineItemSchema = z.object({
   hsnSacCode: z.string().optional().nullable(),
   quantity: z.number().optional().default(0),
   price: z.number().nonnegative("Price cannot be negative").optional().default(0),
-  taxPercent: z.number().nonnegative("Tax percent cannot be negative").default(0),
-  cgstPercent: z.number().nonnegative().optional().default(0),
-  sgstPercent: z.number().nonnegative().optional().default(0),
-  igstPercent: z.number().nonnegative().optional().default(0),
+  
+  
+  
+  
   taxDetails: z.array(
     z.object({
       name: z.string(),
@@ -192,7 +192,7 @@ const createSalesReturnSchema = z.object({
       description: z.string().min(1),
       quantity: z.number().positive(),
       price: z.number().nonnegative(),
-      taxPercent: z.number().nonnegative().default(0),
+      
       warehouseId: z.string().uuid().optional().nullable(),
       isStockReturned: z.boolean().default(false)
     })

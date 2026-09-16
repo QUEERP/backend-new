@@ -15,9 +15,14 @@ async function seedCountries() {
     const sgd = await prisma.currency.upsert({ where: { code: 'SGD' }, update: {}, create: { code: 'SGD', name: 'Singapore Dollar', symbol: '$', decimalPrecision: 2 } });
 
     // 3. Frameworks
-    const ukFw = await prisma.taxFramework.create({ data: { name: 'UK VAT', countryId: uk.id } });
-    const auFw = await prisma.taxFramework.create({ data: { name: 'AU GST', countryId: au.id } });
-    const sgFw = await prisma.taxFramework.create({ data: { name: 'SG GST', countryId: sg.id } });
+    const getFw = async (name, cid) => {
+      let fw = await prisma.taxFramework.findFirst({ where: { name } });
+      if (!fw) fw = await prisma.taxFramework.create({ data: { name, countryId: cid } });
+      return fw;
+    };
+    const ukFw = await getFw('UK VAT', uk.id);
+    const auFw = await getFw('AU GST', au.id);
+    const sgFw = await getFw('SG GST', sg.id);
 
     // --- UK SEEDING ---
     const ukStandard = await prisma.taxType.create({ data: { name: 'VAT_STANDARD', taxFrameworkId: ukFw.id } });

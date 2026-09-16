@@ -136,14 +136,14 @@ class BusinessSetupService {
       });
 
       return newBusiness;
-    });
+    }, { timeout: 20000 });
 
     // 7. Initialize Compliance Rules (outside transaction to avoid deadlocks with existing engine)
     const complianceEngine = require('./compliance/ComplianceEngine');
     // Note: in a real implementation, we would register country-specific rules here
     
     // Setup Country Specific Tax Configuration
-    await this.setupCountryCompliance(business.id, country);
+    await this.setupCountryCompliance(business.id, countryCode);
 
     return business;
   }

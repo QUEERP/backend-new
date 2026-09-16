@@ -17,8 +17,8 @@ exports.getDashboardSummary = async (req, res) => {
         const taxPayableAcc = accounts.find(a => a.code === 'SYSTEM_TAX_PAYABLE');
         const taxReceivableAcc = accounts.find(a => a.code === 'SYSTEM_TAX_RECEIVABLE');
 
-        let outputVat = 0;
-        let inputVat = 0;
+        let outputTax = 0;
+        let inputTax = 0;
         let taxableSales = 0;
         let zeroRatedSales = 0;
         let exemptSales = 0;
@@ -28,7 +28,7 @@ exports.getDashboardSummary = async (req, res) => {
                 where: { businessId, accountId: taxPayableAcc.id },
                 _sum: { credit: true, debit: true }
             });
-            outputVat = (payableEntries._sum.credit || 0) - (payableEntries._sum.debit || 0);
+            outputTax = (payableEntries._sum.credit || 0) - (payableEntries._sum.debit || 0);
         }
 
         if (taxReceivableAcc) {
@@ -36,7 +36,7 @@ exports.getDashboardSummary = async (req, res) => {
                 where: { businessId, accountId: taxReceivableAcc.id },
                 _sum: { credit: true, debit: true }
             });
-            inputVat = (receivableEntries._sum.debit || 0) - (receivableEntries._sum.credit || 0);
+            inputTax = (receivableEntries._sum.debit || 0) - (receivableEntries._sum.credit || 0);
         }
 
         // 2. Fetch Sales Breakdowns from Invoices
@@ -49,9 +49,9 @@ exports.getDashboardSummary = async (req, res) => {
             for (const inv of invoices) {
                 totalSales += (inv.grandTotal || 0);
 
-                // For pre-cutover compatibility, if ledger has no output VAT, we fallback to invoice tax
+                // For pre-cutover compatibility, if ledger has no output tax, we fallback to invoice tax
                 if (!taxPayableAcc) {
-                    outputVat += (inv.totalTax || 0);
+                    outputTax += (inv.totalTax || 0);
                 }
 
                 const type = (inv.vatType || "").toLowerCase();
@@ -80,15 +80,15 @@ exports.getDashboardSummary = async (req, res) => {
                 totalPurchases += (bill.totalAmount || 0);
                 // For pre-cutover compatibility
                 if (!taxReceivableAcc) {
-                    inputVat += (bill.tax || 0);
+                    inputTax += (bill.tax || 0);
                 }
             }
         } catch (e) {
             console.error("Error fetching bills for statutory stats:", e);
         }
 
-        const vatPayable = outputVat > inputVat ? outputVat - inputVat : 0;
-        const vatRefund = inputVat > outputVat ? inputVat - outputVat : 0;
+        const netPayable = outputTax > inputTax ? outputTax - inputTax : 0;
+        const netRefund = inputTax > outputTax ? inputTax - outputTax : 0;
 
         let recentReports = [];
         try {
@@ -107,10 +107,10 @@ exports.getDashboardSummary = async (req, res) => {
         const stats = {
             totalSales,
             totalPurchases,
-            outputVat,
-            inputVat,
-            vatPayable,
-            vatRefund,
+            outputTax,
+            inputTax,
+            netPayable,
+            netRefund,
             taxableSales,
             zeroRatedSales,
             exemptSales,

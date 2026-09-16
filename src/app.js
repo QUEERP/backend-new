@@ -59,6 +59,7 @@ const emailLogRoutes = require("./routes/emailLogRoutes");
 const legacyCrmTaskRoutes = require("./routes/crmTaskRoutes");
 const noteRoutes = require("./routes/noteRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const taxRoutes = require("./routes/taxRoutes");
 
 // ── origin/main sales module routes
 const salesReturnRoutes = require("./routes/salesReturnRoutes");
@@ -170,6 +171,7 @@ app.use("/api/email-logs", emailLogRoutes);
 app.use("/api/crm-tasks", legacyCrmTaskRoutes);
 app.use("/api/crm-notes", noteRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/taxes", taxRoutes);
 
 // ── Sales Module (origin/main) ────────────────────────────────────────────────
 app.use("/api/sales-returns", salesReturnRoutes);

@@ -35,7 +35,7 @@ const calculatePOPricing = (items) => {
       hsnSacCode: item.hsnSacCode || null,
       quantity: qty,
       price: price,
-      taxPercent: taxPercent,
+      
       total: itemTotal
     };
   });
@@ -66,6 +66,7 @@ const createPurchaseOrder = async (businessId, userId, userEmail, data) => {
       items: data.items || [],
       customerId: null, // PO doesn't use customer state
       globalDiscount: discount,
+      userId,
       txClient: tx
     });
 
@@ -84,7 +85,7 @@ const createPurchaseOrder = async (businessId, userId, userEmail, data) => {
         hsnSacCode: item.hsnSacCode || null,
         quantity: origQty,
         price: origPrice,
-        taxPercent: item.taxPercent ? parseFloat(item.taxPercent) : 0,
+        
         total: sub + taxAmt
       };
     });
@@ -252,6 +253,7 @@ const updatePurchaseOrder = async (businessId, userId, userEmail, id, data) => {
         items: itemsToProcess,
         customerId: null,
         globalDiscount: discount,
+        userId,
         txClient: tx
       });
       
@@ -270,7 +272,7 @@ const updatePurchaseOrder = async (businessId, userId, userEmail, id, data) => {
           hsnSacCode: item.hsnSacCode || null,
           quantity: origQty,
           price: origPrice,
-          taxPercent: item.taxPercent ? parseFloat(item.taxPercent) : 0,
+          
           total: sub + taxAmt
         };
       });

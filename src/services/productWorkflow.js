@@ -16,7 +16,7 @@ class ProductWorkflow {
           price: Number(price),
           costPrice: Number(costPrice),
           taxCode: hsnCode || null,
-          taxPercent: Number(taxPercent || 0),
+          
           unit: unit || 'pcs',
           type: type || 'GOODS'
         }

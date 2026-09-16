@@ -42,6 +42,7 @@ const createCreditNote = async (businessId, userId, userEmail, data) => {
       customerId: data.customerId || (originalInvoice ? originalInvoice.customerId : null),
       globalDiscount: discount,
       overrideCurrencyData,
+      userId,
       txClient: tx
     });
 

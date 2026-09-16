@@ -58,7 +58,7 @@ exports.createPurchaseOrder = async (req, res) => {
         hsnSacCode: item.hsnSacCode || item.hsn,
         quantity: Number(item.quantity),
         price: Number(item.price),
-        taxPercent: Number(item.taxPercent || 0),
+        
         total: lineAmount + lineTax
       };
     });
