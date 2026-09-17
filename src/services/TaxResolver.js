@@ -44,7 +44,8 @@ class TaxResolver {
       // Domestic
       if (businessRegionCode && targetRegion && businessRegionCode !== targetRegion) {
         placeOfSupply = 'INTERSTATE';
-      } else if (businessRegionCode && targetRegion && businessRegionCode === targetRegion) {
+      } else {
+        // If regions match, or if either region is missing (e.g. walk-in customer), default to INTRASTATE
         placeOfSupply = 'INTRASTATE';
       }
     }
@@ -112,6 +113,7 @@ class TaxResolver {
       }
       
       if (rule.placeOfSupply && rule.placeOfSupply !== placeOfSupply) return false;
+      if (rule.jurisdiction && rule.jurisdiction !== placeOfSupply) return false;
       if (rule.counterpartyTaxRegistrationStatus && rule.counterpartyTaxRegistrationStatus !== counterpartyTaxRegistrationStatus) return false;
       return true;
     });
