@@ -222,6 +222,7 @@ const createUnit = async (businessId, userId, userEmail, data) => {
     data: {
       businessId,
       name: data.name,
+      abbreviation: data.abbreviation || null,
       description: data.description || null,
       isActive: data.isActive !== undefined ? data.isActive : true
     }
@@ -264,6 +265,7 @@ const updateUnit = async (businessId, userId, userEmail, id, data) => {
     where: { id },
     data: {
       name: data.name !== undefined ? data.name : unit.name,
+      abbreviation: data.abbreviation !== undefined ? data.abbreviation : unit.abbreviation,
       description: data.description !== undefined ? data.description : unit.description,
       isActive: data.isActive !== undefined ? data.isActive : unit.isActive
     }
@@ -481,9 +483,9 @@ const updateProduct = async (businessId, userId, userEmail, id, data) => {
         
         unit: data.unit !== undefined ? data.unit : product.unit,
         isActive: data.isActive !== undefined ? data.isActive : product.isActive,
-        categoryId: data.categoryId !== undefined ? data.categoryId : product.categoryId,
-        brandId: data.brandId !== undefined ? data.brandId : product.brandId,
-        unitId: data.unitId !== undefined ? data.unitId : product.unitId,
+        categoryId: data.categoryId !== undefined ? (data.categoryId || null) : product.categoryId,
+        brandId: data.brandId !== undefined ? (data.brandId || null) : product.brandId,
+        unitId: data.unitId !== undefined ? (data.unitId || null) : product.unitId,
         reorderLevel: finalType === 'SERVICE' ? 0 : (data.reorderLevel !== undefined ? parseFloat(data.reorderLevel) : product.reorderLevel),
         minimumStock: finalType === 'SERVICE' ? 0 : (data.minimumStock !== undefined ? parseFloat(data.minimumStock) : product.minimumStock),
         isBatchTracking: data.isBatchTracking !== undefined ? data.isBatchTracking : product.isBatchTracking,
