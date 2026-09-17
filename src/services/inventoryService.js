@@ -113,7 +113,10 @@ class InventoryService {
       where: {
         productId,
         warehouseId,
-        locationId: resolvedLocationId
+        ...(resolvedLocationId ? { locationId: resolvedLocationId } : {})
+      },
+      orderBy: {
+        quantity: 'desc'
       }
     });
 
@@ -163,7 +166,10 @@ class InventoryService {
       where: {
         productId,
         warehouseId,
-        locationId: resolvedLocationId
+        ...(resolvedLocationId ? { locationId: resolvedLocationId } : {})
+      },
+      orderBy: {
+        quantity: 'desc'
       }
     });
 
@@ -203,7 +209,14 @@ class InventoryService {
     const resolvedLocationId = isTrading ? (locationId || null) : null;
 
     const currentStock = await client.stock.findFirst({
-      where: { productId, warehouseId, locationId: resolvedLocationId }
+      where: {
+        productId,
+        warehouseId,
+        ...(resolvedLocationId ? { locationId: resolvedLocationId } : {})
+      },
+      orderBy: {
+        quantity: 'desc'
+      }
     });
 
     if (!currentStock) return null;

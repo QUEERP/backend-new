@@ -108,6 +108,7 @@ exports.createSalesOrder = async (req, res) => {
           }
           if (item.productId) {
             await InventoryService.reserveStock({
+              businessId: req.business.id,
               productId: item.productId,
               warehouseId: item.warehouseId,
               quantity: Number(item.quantity),
