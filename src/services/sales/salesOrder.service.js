@@ -133,6 +133,7 @@ const createSalesOrder = async (businessId, userId, userEmail, data) => {
           create: data.items.map(item => {
             const { warehouseId, productId, itemName, ...rest } = item;
             const payload = { ...rest };
+            payload.total = (Number(payload.quantity || 0) * Number(payload.price || 0)) - Number(payload.discount || 0);
             if (productId) payload.product = { connect: { id: productId } };
             if (warehouseId) payload.warehouse = { connect: { id: warehouseId } };
             return payload;
@@ -393,6 +394,7 @@ const updateSalesOrder = async (businessId, userId, userEmail, orderId, data) =>
           create: data.items.map(item => {
             const { warehouseId, productId, itemName, ...rest } = item;
             const payload = { ...rest };
+            payload.total = (Number(payload.quantity || 0) * Number(payload.price || 0)) - Number(payload.discount || 0);
             if (productId) payload.product = { connect: { id: productId } };
             if (warehouseId) payload.warehouse = { connect: { id: warehouseId } };
             return payload;
