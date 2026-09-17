@@ -2065,6 +2065,7 @@ model Unit {
   id          String    @id @default(uuid())
   businessId  String
   name        String
+  abbreviation String?
   description String?
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
