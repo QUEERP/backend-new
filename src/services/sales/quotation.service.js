@@ -165,6 +165,7 @@ const createQuotation = async (businessId, userId, userEmail, data) => {
               create: data.items.map(item => {
                 const { warehouseId, productId, ...rest } = item;
                 const payload = { ...rest };
+                payload.total = (Number(payload.quantity || 0) * Number(payload.price || 0)) - Number(payload.discount || 0);
                 if (productId) payload.product = { connect: { id: productId } };
                 return payload;
               })
@@ -187,13 +188,13 @@ const createQuotation = async (businessId, userId, userEmail, data) => {
           action: "QUOTATION_CREATED",
           entityType: "Quotation",
           entityId: quotation.id,
-          details: { quoteNumber, totalAmount: pricing.totalAmount }
+          details: { quoteNumber, totalAmount: grandTotal }
         });
 
         await triggerNotification(tx, {
           businessId,
           title: "New Quotation Created",
-          message: `Quotation ${quoteNumber} of amount ${pricing.totalAmount} ${quotation.currency} has been drafted.`,
+          message: `Quotation ${quoteNumber} of amount ${grandTotal} ${quotation.currency} has been drafted.`,
           type: "SUCCESS",
           entityType: "Quotation",
           entityId: quotation.id
@@ -303,6 +304,7 @@ const updateQuotation = async (businessId, userId, userEmail, quotationId, data)
           create: data.items.map(item => {
             const { warehouseId, productId, ...rest } = item;
             const payload = { ...rest };
+            payload.total = (Number(payload.quantity || 0) * Number(payload.price || 0)) - Number(payload.discount || 0);
             if (productId) payload.product = { connect: { id: productId } };
             return payload;
           })
