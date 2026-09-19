@@ -237,7 +237,9 @@ exports.createPayment = async (req, res) => {
   } catch (error) {
     console.error("createPayment controller error:", error);
     if (error.name === "ZodError") {
-      return errorResponse(res, error.errors[0].message, 400, error.errors);
+      const errList = error.errors || error.issues || [];
+      const msg = errList.length > 0 ? errList[0].message : "Validation error";
+      return errorResponse(res, msg, 400, errList);
     }
     return errorResponse(res, error.message, 500);
   }
@@ -369,7 +371,9 @@ exports.updatePayment = async (req, res) => {
   } catch (error) {
     console.error("updatePayment controller error:", error);
     if (error.name === "ZodError") {
-      return errorResponse(res, error.errors[0].message, 400, error.errors);
+      const errList = error.errors || error.issues || [];
+      const msg = errList.length > 0 ? errList[0].message : "Validation error";
+      return errorResponse(res, msg, 400, errList);
     }
     return errorResponse(res, error.message, 500);
   }
