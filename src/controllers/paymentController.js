@@ -376,6 +376,47 @@ exports.updatePayment = async (req, res) => {
 };
 
 //////////////////////////////////////////////////////
+// GET PAYMENTS BY MULTIPLE INVOICE IDS (BATCHED)
+//////////////////////////////////////////////////////
+exports.getPaymentsByInvoiceIds = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const { invoiceIds } = req.body;
+
+    if (!Array.isArray(invoiceIds)) {
+      return errorResponse(res, "invoiceIds must be an array", 400);
+    }
+
+    if (invoiceIds.length === 0) {
+      return successResponse(res, [], "Payments retrieved successfully");
+    }
+
+    const payments = await prisma.payment.findMany({
+      where: {
+        businessId,
+        invoiceId: { in: invoiceIds },
+      },
+      include: {
+        invoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            customer: {
+              select: { company: true }
+            }
+          }
+        }
+      }
+    });
+
+    return successResponse(res, payments, "Payments retrieved successfully");
+  } catch (err) {
+    console.error("getPaymentsByInvoiceIds controller error:", err);
+    return errorResponse(res, err.message, 500);
+  }
+};
+
+//////////////////////////////////////////////////////
 // GET PAYMENTS BY INVOICE
 //////////////////////////////////////////////////////
 exports.getInvoicePayments = async (req, res) => {
