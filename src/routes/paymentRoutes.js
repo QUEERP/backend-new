@@ -5,6 +5,17 @@ const checkPermission = require("../middlewares/checkPermission");
 const controller = require("../controllers/paymentController");
 
 //////////////////////////////////////////////////
+// READ PAYMENTS BY MULTIPLE INVOICES (BATCH)
+//////////////////////////////////////////////////
+router.post(
+  "/by-invoices",
+  auth,
+  business,
+  checkPermission("payment", "read"),
+  controller.getPaymentsByInvoiceIds
+);
+
+//////////////////////////////////////////////////
 // CREATE PAYMENT (INVOICE - OLD)
 //////////////////////////////////////////////////
 router.post(
@@ -59,16 +70,7 @@ router.post(
   controller.createPayment
 );
 
-//////////////////////////////////////////////////
-// READ PAYMENTS BY MULTIPLE INVOICES (BATCH)
-//////////////////////////////////////////////////
-router.post(
-  "/by-invoices",
-  auth,
-  business,
-  checkPermission("payment", "read"),
-  controller.getPaymentsByInvoiceIds
-);
+
 
 //////////////////////////////////////////////////
 // GET ALL PAYMENTS
