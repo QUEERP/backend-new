@@ -4,6 +4,8 @@ const { buildPrismaQuery, getPaginationMeta, logAudit } = require("../utils/crmH
 const VALID_TYPES = ["CALL", "MEETING", "TASK", "EMAIL", "NOTE"];
 const VALID_STATUS = ["Scheduled", "Completed", "Cancelled", "Deferred", "In Progress"];
 
+
+
 //////////////////////////////////////////////////////
 // CREATE ACTIVITY
 //////////////////////////////////////////////////////
@@ -21,7 +23,7 @@ exports.createActivity = async (req, res) => {
       activityDate,
       duration,
       status = "Scheduled",
-      
+
       // CRM upgrades
       priority,
       dueDate,
