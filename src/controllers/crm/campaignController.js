@@ -34,8 +34,8 @@ exports.createCampaign = async (req, res) => {
         budget: budget ? Number(budget) : null,
         actualCost: actualCost ? Number(actualCost) : null,
         expectedRevenue: expectedRevenue ? Number(expectedRevenue) : null,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
+        startDate: startDate && String(startDate).trim() !== "" ? new Date(startDate) : null,
+        endDate: endDate && String(endDate).trim() !== "" ? new Date(endDate) : null,
         description,
       },
     });

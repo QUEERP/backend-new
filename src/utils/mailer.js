@@ -53,6 +53,26 @@ const sendResetEmail = async (toEmail, userName, resetToken) => {
   }
 };
 
+const sendEmail = async (toEmail, subject, textBody, htmlBody) => {
+  const transporter = createTransporter();
+  const mailOptions = {
+    from: `"QueErp" <${process.env.SMTP_USER}>`,
+    to: toEmail,
+    subject: subject,
+    text: textBody,
+    html: htmlBody,
+  };
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Email sent: " + info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error("Error sending email:", error);
+    throw error;
+  }
+};
+
 module.exports = {
-  sendResetEmail
+  sendResetEmail,
+  sendEmail
 };

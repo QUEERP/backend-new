@@ -59,9 +59,8 @@ module.exports = (expense, settings = {}) => {
       <p><strong>Payment Method:</strong> ${expense.paymentMethod || '-'}</p>
     </div>
     <div class="box">
-      <h3>Vendor / Customer</h3>
+      <h3>Vendor</h3>
       <p><strong>Vendor:</strong> ${expense.vendor?.name || 'N/A'}</p>
-      <p><strong>Customer:</strong> ${expense.customer?.name || expense.customer?.company || 'N/A'}</p>
     </div>
   </div>
 

@@ -16,7 +16,8 @@ exports.createSalesReturn = async (req, res) => {
   } catch (error) {
     console.error("createSalesReturn controller error:", error);
     if (error.name === "ZodError") {
-      return errorResponse(res, error.errors[0].message, 400, error.errors);
+      const msg = error.errors?.[0]?.message || error.issues?.[0]?.message || "Validation Error";
+      return errorResponse(res, msg, 400, error.errors || error.issues);
     }
     return errorResponse(res, error.message, 400);
   }
