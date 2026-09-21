@@ -2030,6 +2030,7 @@ model Category {
   id         String     @id @default(uuid())
   businessId String
   name       String
+  description String?
   parentId   String?
   isActive   Boolean    @default(true)
   createdAt  DateTime   @default(now())

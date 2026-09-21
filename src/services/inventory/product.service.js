@@ -19,6 +19,7 @@ const createCategory = async (businessId, userId, userEmail, data) => {
     data: {
       businessId,
       name: data.name,
+      description: data.description || null,
       parentId: data.parentId || null,
       isActive: data.isActive !== undefined ? data.isActive : true
     }
@@ -82,6 +83,7 @@ const updateCategory = async (businessId, userId, userEmail, id, data) => {
     where: { id },
     data: {
       name: data.name !== undefined ? data.name : category.name,
+      description: data.description !== undefined ? data.description : category.description,
       parentId: data.parentId !== undefined ? data.parentId : category.parentId,
       isActive: data.isActive !== undefined ? data.isActive : category.isActive
     }
@@ -516,7 +518,14 @@ const deleteProduct = async (businessId, userId, userEmail, id) => {
   });
   if (!product) throw new Error("Product not found");
 
-  await prisma.product.delete({ where: { id } });
+  try {
+    await prisma.product.delete({ where: { id } });
+  } catch (err) {
+    if (err.code === 'P2003') {
+      throw new Error("Cannot delete product because it has associated stock or transaction records. Please deactivate it instead.");
+    }
+    throw err;
+  }
 
   await logAction(null, {
     businessId,

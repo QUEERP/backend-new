@@ -31,14 +31,18 @@ class CurrencyService {
 
     const baseCurrencyId = business.baseCurrencyId;
 
-    // 2. Fetch Transaction Currency by Code
-    const transactionCurrency = await prisma.currency.findUnique({
-      where: { code: transactionCurrencyCode }
+    // 2. Fetch or Create Transaction Currency by Code
+    const transactionCurrency = await prisma.currency.upsert({
+      where: { code: transactionCurrencyCode },
+      update: {},
+      create: {
+        code: transactionCurrencyCode,
+        name: transactionCurrencyCode,
+        symbol: transactionCurrencyCode,
+        decimals: 2,
+        decimalPrecision: 2
+      }
     });
-
-    if (!transactionCurrency) {
-      throw new RateResolutionError(`Unmappable transaction currency code: ${transactionCurrencyCode}`);
-    }
 
     const transactionCurrencyId = transactionCurrency.id;
     const decimals = transactionCurrency.decimals || 2;
