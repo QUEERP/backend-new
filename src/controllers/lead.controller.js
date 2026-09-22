@@ -146,7 +146,7 @@ exports.createLead = async (req, res) => {
         state,
         country,
         zipCode,
-        status,
+        status: status === "PROPOSAL" ? "PROPOSAL_PENDING" : status,
         source,
         assignedToId,
         tags: formattedTags,
@@ -373,6 +373,10 @@ exports.updateLead = async (req, res) => {
       ...(score !== undefined && { score: parseInt(score) || 0 }),
       ...(campaignId !== undefined && { campaignId }),
     };
+
+    if (updatedData.status === "PROPOSAL") {
+      updatedData.status = "PROPOSAL_PENDING";
+    }
 
     const lead = await prisma.lead.update({
       where: { id },

@@ -71,6 +71,17 @@ exports.createLeave = async (req, res) => {
     }
 
     //////////////////////////////////////////////////////
+    // GET LEAVE TYPES FROM SETTINGS
+    //////////////////////////////////////////////////////
+    const settings = await prisma.settings.findUnique({ where: { businessId } })
+    let leaveTypes = []
+    if (settings && settings.leaveTypes) {
+      leaveTypes = typeof settings.leaveTypes === 'string' 
+        ? JSON.parse(settings.leaveTypes) 
+        : settings.leaveTypes
+    }
+
+    //////////////////////////////////////////////////////
     // LEAVE BALANCE CHECK
     //////////////////////////////////////////////////////
     let leaveBalance = { ...(employee.leaveBalance || {}) };
@@ -78,12 +89,17 @@ exports.createLeave = async (req, res) => {
     const deduction = duration === "HALF" ? 0.5 : 1;
 
     if (leaveCode !== "LWP") {
-
-      if (leaveBalance[leaveCode] === undefined) {
+      const lType = leaveTypes.find(l => l.code === leaveCode)
+      if (!lType) {
         return res.status(400).json({
           success: false,
           message: "Invalid leave type"
         });
+      }
+
+      if (leaveBalance[leaveCode] === undefined) {
+        // Initialize balance if this is a newly created leave type
+        leaveBalance[leaveCode] = lType.yearlyLimit || 0
       }
 
       if (leaveBalance[leaveCode] < deduction) {
@@ -93,8 +109,11 @@ exports.createLeave = async (req, res) => {
         });
       }
 
+      // We only deduct if we are directly approving or automatically deducting on creation.
+      // But we will move the deduction to updateLeaveStatus (approval phase) for pending leaves, 
+      // or we can keep it here if creation implicitly means 'applied and deducted'.
+      // Wait, let's keep the existing logic so we don't break existing flows, but maybe add a comment.
       leaveBalance[leaveCode] -= deduction;
-
     }
 
     //////////////////////////////////////////////////////
