@@ -45,6 +45,7 @@ const journalEntryRoutes = require("./routes/journalRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const projectOperationsRoutes = require("./routes/projectOperationsRoutes");
 const taskRoutes = require("./routes/taskRoutes");
+const documentRoutes = require("./routes/documentRoutes");
 
 const timesRoutes = require("./routes/timesRoutes");
 const invoiceMetaRoutes = require("./routes/invoiceMeta.routes");
@@ -166,6 +167,8 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/projects", projectOperationsRoutes);
 app.use("/api/project-operations", projectOperationsRoutes);
 app.use("/api/tasks", taskRoutes);
+app.use("/api/documents", documentRoutes);
+app.use("/api/employee-documents", documentRoutes);
 app.use("/api/time-entries", timesRoutes);
 app.use("/api/invoice-meta", invoiceMetaRoutes);
 app.use("/api/statutory", statutoryRoutes);
