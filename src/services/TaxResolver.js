@@ -125,7 +125,17 @@ class TaxResolver {
     matchingRules.sort((a, b) => a.priority - b.priority);
 
     if (matchingRules.length === 0) {
-      throw new Error(`Tax Resolution Failed: No applicable tax rule found for SupplyCategory=${supplyCategory}, PlaceOfSupply=${placeOfSupply}, RegistrationStatus=${counterpartyTaxRegistrationStatus || 'ANY'}.`);
+      console.warn(`Tax Resolution Failed: No applicable tax rule found for SupplyCategory=${supplyCategory}, PlaceOfSupply=${placeOfSupply}, RegistrationStatus=${counterpartyTaxRegistrationStatus || 'ANY'}. Defaulting to 0% Tax.`);
+      return {
+        taxRuleId: null,
+        name: "Zero Tax (Default fallback)",
+        rate: 0,
+        type: "STANDARD",
+        isRecoverable: false,
+        taxRateId: null,
+        candidateCount: 0,
+        evaluatedCount: activeRules.length
+      };
     }
 
     const selectedRule = matchingRules[0];

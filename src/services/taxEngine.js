@@ -41,7 +41,8 @@ class TaxEngine {
     });
 
     if (!business || !business.taxFrameworkId) {
-      throw new RateResolutionError(`Tax Engine cannot calculate tax: Business ${businessId} has no assigned taxFrameworkId. Ensure the business is properly configured with a tax framework.`);
+      console.warn(`Tax Engine bypassed: Business ${businessId} has no assigned taxFrameworkId.`);
+      return [];
     }
 
     let taxRuleId;
