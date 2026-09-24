@@ -1321,8 +1321,10 @@ model QuotationItem {
   unit        String?
   updatedAt   DateTime  @updatedAt
   itemName    String?
-  product     Product?  @relation(fields: [productId], references: [id])
-  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product     Product?   @relation(fields: [productId], references: [id])
+  quotation   Quotation  @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id])
 }
 
 model SalesOrder {
@@ -1642,6 +1644,7 @@ model Warehouse {
   fromTransfers       StockTransfer[]      @relation("FromWarehouse")
   toTransfers         StockTransfer[]      @relation("ToWarehouse")
   locations           WarehouseLocation[]
+  quotationItems      QuotationItem[]
 }
 
 model Stock {

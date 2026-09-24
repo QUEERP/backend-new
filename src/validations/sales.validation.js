@@ -10,8 +10,8 @@ const lineItemSchema = z.object({
   quantity: z.number().optional().default(0),
   price: z.number().nonnegative("Price cannot be negative").optional().default(0),
   
-  
-  
+  warehouseId: z.union([z.string().uuid(), z.literal(""), z.null()]).optional().transform(v => v === "" ? null : v),
+  unit: z.string().optional().nullable(),
   
   taxDetails: z.array(
     z.object({
