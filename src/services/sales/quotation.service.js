@@ -162,6 +162,7 @@ const createQuotation = async (businessId, userId, userEmail, data) => {
             expiryDate: data.expiryDate ? new Date(data.expiryDate) : null,
             notes: data.notes || null,
             items: {
+              create: data.items.map(item => {
                 const { warehouseId, productId, ...rest } = item;
                 const payload = { ...rest };
                 payload.total = (Number(payload.quantity || 0) * Number(payload.price || 0)) - Number(payload.discount || 0);
