@@ -35,11 +35,12 @@ exports.convertLead = async (businessId, userId, leadId, options = {}) => {
 
     // 2. Duplicate Account Detection & Resolution
     let accountId = existingAccountId;
-    if (!accountId && lead.company) {
+    const targetCompany = customerData.company || lead.company || lead.name;
+    if (!accountId && targetCompany) {
       const duplicateAccount = await tx.customer.findFirst({
         where: {
           businessId,
-          company: { equals: lead.company, mode: "insensitive" },
+          company: { equals: targetCompany, mode: "insensitive" },
           isDeleted: false,
         },
       });
@@ -55,7 +56,7 @@ exports.convertLead = async (businessId, userId, leadId, options = {}) => {
       customer = await tx.customer.create({
         data: {
           businessId,
-          company: customerData.company || lead.company || lead.name,
+          company: targetCompany,
           phone: customerData.phone || lead.phone,
           website: customerData.website || lead.website,
           address: customerData.address || lead.city,
