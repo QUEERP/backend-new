@@ -224,7 +224,7 @@ const updateQuotation = async (businessId, userId, userEmail, quotationId, data)
       throw new Error("Quotation not found");
     }
 
-    if (["APPROVED", "ACCEPTED", "CANCELLED", "LOCKED", "INVOICED"].includes(existing.status)) {
+    if (["ACCEPTED", "CANCELLED", "LOCKED", "INVOICED"].includes(existing.status)) {
       throw new Error(`Cannot modify a finalized transaction (Status: ${existing.status}).`);
     }
 
