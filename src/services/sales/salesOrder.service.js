@@ -358,9 +358,10 @@ const updateSalesOrder = async (businessId, userId, userEmail, orderId, data) =>
       where: { id: orderId },
       data: {
         customerId: data.customerId || existing.customerId,
-        contactId: data.contactId !== undefined ? data.contactId : existing.contactId,
-        dealId: data.dealId !== undefined ? data.dealId : existing.dealId,
-        assignedToId: data.assignedToId !== undefined ? data.assignedToId : existing.assignedToId,
+        contactId: data.contactId !== undefined ? (data.contactId || null) : existing.contactId,
+        quotationId: data.quotationId !== undefined ? (data.quotationId || null) : existing.quotationId,
+        dealId: data.dealId !== undefined ? (data.dealId || null) : existing.dealId,
+        assignedToId: data.assignedToId !== undefined ? (data.assignedToId || null) : existing.assignedToId,
         status: data.status ? data.status.toUpperCase() : existing.status,
         subtotal: financials ? financials.subtotal : existing.subtotal,
         tax: financials ? financials.totalTax : existing.tax,
