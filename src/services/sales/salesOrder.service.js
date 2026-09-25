@@ -3,6 +3,7 @@ const { logAction, triggerNotification } = require("./audit.service");
 const { reserveStock: reserveStockHelper, releaseReservedStock } = require("../inventory/movement.service");
 const TransactionHelper = require("../TransactionHelper");
 const { CurrencyService } = require("../currencyService");
+const { generateDocNumber } = require("./quotation.service");
 
 /**
  * Enterprise Stock Reservation logic
@@ -172,7 +173,7 @@ const createSalesOrder = async (businessId, userId, userEmail, data) => {
     });
 
     return salesOrder;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
 };
 
 const convertQuotationToSalesOrder = async (businessId, userId, userEmail, quotationId) => {
@@ -327,8 +328,10 @@ const updateSalesOrder = async (businessId, userId, userEmail, orderId, data) =>
       const transactionDate = data.orderDate ? new Date(data.orderDate) : existing.orderDate;
       const itemsToProcess = data.items || await tx.salesOrderItem.findMany({ where: { salesOrderId: orderId } });
 
-      // 1. Release previous stock reservation
-      await releaseStock(tx, businessId, existing.items);
+      // 1. Release previous stock reservation (only if not invoiced/fulfilled)
+      if (existing.status !== "INVOICED" && existing.status !== "FULFILLED" && existing.status !== "CANCELLED") {
+        await releaseStock(tx, businessId, existing.items);
+      }
 
       // 2. Re-calculate pricing via Engine
       financials = await TransactionHelper.processTransactionFinancials({
@@ -409,7 +412,9 @@ const updateSalesOrder = async (businessId, userId, userEmail, orderId, data) =>
     });
 
     if (financials) {
-      await reserveStock(tx, businessId, updated.items);
+      if (existing.status !== "INVOICED" && existing.status !== "FULFILLED" && existing.status !== "CANCELLED") {
+        await reserveStock(tx, businessId, updated.items);
+      }
       await TransactionHelper.saveTaxLedger(tx, businessId, "SALES_ORDER", updated.id, financials.taxTransactions);
     }
 
@@ -424,7 +429,7 @@ const updateSalesOrder = async (businessId, userId, userEmail, orderId, data) =>
     });
 
     return updated;
-  });
+  }, { maxWait: 10000, timeout: 20000 });
 };
 
 const getSalesOrderById = async (businessId, orderId) => {

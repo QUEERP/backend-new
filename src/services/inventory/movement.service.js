@@ -77,12 +77,16 @@ const createStockMovement = async (tx, {
   }
 
   // 2. Validate outbound stock limits
+  let settings;
   if (quantity < 0) {
-    const qtyToDeduct = Math.abs(quantity);
-    const available = stockRecord.quantity - stockRecord.reservedQty;
-    // We only prevent negative stock if it exceeds available quantity
-    if (available < qtyToDeduct) {
-      throw new Error(`Insufficient available stock in warehouse. Product ID: ${productId}. Available: ${available}, Requested: ${qtyToDeduct}`);
+    settings = await tx.settings.findUnique({ where: { businessId } });
+    if (!settings?.negativeStock) {
+      const qtyToDeduct = Math.abs(quantity);
+      const available = stockRecord.quantity - stockRecord.reservedQty;
+      // We only prevent negative stock if it exceeds available quantity
+      if (available < qtyToDeduct) {
+        throw new Error(`Insufficient available stock in warehouse. Product ID: ${productId}. Available: ${available}, Requested: ${qtyToDeduct}`);
+      }
     }
   }
 
@@ -92,7 +96,9 @@ const createStockMovement = async (tx, {
   });
 
   // Fetch valuation method from Settings
-  const settings = await tx.settings.findUnique({ where: { businessId } });
+  if (!settings) {
+    settings = await tx.settings.findUnique({ where: { businessId } });
+  }
   const valMethod = settings?.valuationMethod || "FIFO";
 
   let cogsAmount = 0;
@@ -327,9 +333,12 @@ const reserveStock = async (tx, { businessId, productId, warehouseId, locationId
     });
   }
 
-  const available = stockRecord.quantity - stockRecord.reservedQty;
-  if (available < quantity) {
-    throw new Error(`Insufficient stock to reserve. Product: ${productId}, Available: ${available}, Requested: ${quantity}`);
+  const settings = await tx.settings.findUnique({ where: { businessId } });
+  if (!settings?.negativeStock) {
+    const available = stockRecord.quantity - stockRecord.reservedQty;
+    if (available < quantity) {
+      throw new Error(`Insufficient stock to reserve. Product: ${productId}, Available: ${available}, Requested: ${quantity}`);
+    }
   }
 
   await tx.stock.update({
