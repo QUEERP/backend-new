@@ -9,7 +9,7 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
     // 1. Fetch Invoice
     const invoice = await tx.invoice.findFirst({
       where: { id: invoiceId, businessId, isDeleted: false },
-      include: { payments: true }
+      include: { payments: true, paymentAllocations: true }
     });
 
     if (!invoice) {
@@ -21,7 +21,9 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
     }
 
     // 2. Calculate remaining dues
-    const previousPaid = invoice.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const directPaid = invoice.payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const allocatedPaid = invoice.paymentAllocations.reduce((sum, p) => sum + Number(p.allocatedAmount || 0), 0);
+    const previousPaid = directPaid + allocatedPaid;
     const remaining = Math.max(Number(invoice.grandTotal || 0) - previousPaid, 0);
 
     const paymentAmount = Number(data.amount || 0);
@@ -111,7 +113,10 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
 
     await tx.invoice.update({
       where: { id: invoiceId },
-      data: { status }
+      data: { 
+        status,
+        amountPaid: Math.min(totalPaid, Number(invoice.grandTotal || 0))
+      }
     });
 
     if (invoice.projectId) {
