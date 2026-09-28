@@ -1,18 +1,9 @@
-const prisma = require('./src/config/prisma');
+const { Client } = require('pg');
+const client = new Client({ connectionString: process.env.DATABASE_URL });
 async function run() {
-    for (const code of ['JP', 'ZA']) {
-        const c = await prisma.country.findFirst({ where: { code }});
-        if(c) {
-            const fws = await prisma.taxFramework.findMany({ where: { countryId: c.id }});
-            for (const fw of fws) {
-                console.log(`Deleting ${fw.name}...`);
-                await prisma.taxRule.deleteMany({ where: { business: { taxFrameworkId: fw.id } } });
-                await prisma.taxRate.deleteMany({ where: { taxType: { taxFrameworkId: fw.id } } });
-                await prisma.taxType.deleteMany({ where: { taxFrameworkId: fw.id } });
-                await prisma.taxFramework.delete({ where: { id: fw.id } });
-            }
-        }
-    }
-    await prisma.$disconnect();
+  await client.connect();
+  const res = await client.query('SELECT "vendorType" FROM "Vendor" WHERE id=$1', ['6c691feb-b2e9-49c1-be13-8893b2605594']);
+  console.log('RESULT:', res.rows);
+  await client.end();
 }
 run();
