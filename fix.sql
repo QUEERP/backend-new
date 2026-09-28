@@ -1,2 +1,1 @@
-ALTER TABLE "SalesOrderItem" RENAME COLUMN "name" TO "description"; 
-ALTER TABLE "QuotationItem" RENAME COLUMN "name" TO "description"; 
+UPDATE "Vendor" SET phone='6353000671', "countryCode"='+91' WHERE id='6c691feb-b2e9-49c1-be13-8893b2605594';
