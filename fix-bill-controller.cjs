@@ -1,21 +1,11 @@
-const prisma = require("../config/prisma");
+const fs = require('fs');
 
+const p = 'c:/Users/DELL/Downloads/new-queerp/backend/src/controllers/BillController.js';
+let c = fs.readFileSync(p, 'utf8');
 
-//////////////////////////////////////////////////////
-// GENERATE BILL NUMBER
-//////////////////////////////////////////////////////
-const generateBillNumber = async (businessId) => {
-  const count = await prisma.bill.count({
-    where: { businessId },
-  });
-
-  return `BILL-${(count + 1).toString().padStart(3, "0")}`;
-};
-
-//////////////////////////////////////////////////////
-// CREATE BILL
-//////////////////////////////////////////////////////
-exports.createBill = async (req, res) => {
+// Replace createBill
+const createRegex = /exports\.createBill = async \(req, res\) => \{[\s\S]*?res\.status\(500\)\.json\(\{[\s\S]*?\}\);\s*\n\s*\};\s*\n/m;
+const newCreate = `exports.createBill = async (req, res) => {
   try {
     const {
       vendorId,
@@ -99,104 +89,55 @@ exports.createBill = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-//////////////////////////////////////////////////////
-// GET SINGLE BILL
-//////////////////////////////////////////////////////
-exports.getBills = async (req, res) => {
-  try {
-    const bills = await prisma.bill.findMany({
-      where: { businessId: req.business.id },
-      include: { vendor: true, items: true, purchaseOrder: true },
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json({ success: true, bills });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
+`;
 
-exports.getBillById = async (req, res) => {
-  const bill = await prisma.bill.findFirst({
-    where: {
-      id: req.params.id,
-      businessId: req.business.id,
-    },
-    include: {
-      vendor: true,
-      items: true,
-      purchaseOrder: true,
-    },
-  });
+c = c.replace(createRegex, newCreate);
 
-  if (!bill) {
-    return res.status(404).json({
-      success: false,
-      message: "Bill not found",
-    });
-  }
-
-  res.json({ success: true, bill });
-};
-
-//////////////////////////////////////////////////////
-// UPDATE BILL
-//////////////////////////////////////////////////////
-exports.updateBill = async (req, res) => {
+const updateRegex = /exports\.updateBill = async \(req, res\) => \{[\s\S]*?res\.status\(500\)\.json\(\{[\s\S]*?\}\);\s*\n\s*\};\s*\n/m;
+const newUpdate = `exports.updateBill = async (req, res) => {
   try {
     const { id } = req.params;
     const {
       items = [],
-      tax = 0,
       discount = 0,
       billDate,
       dueDate,
       notes,
     } = req.body;
+    
+    const taxValue = req.body.tax !== undefined ? Number(req.body.tax) : (req.body.taxAmount !== undefined ? Number(req.body.taxAmount) : 0);
+    const currency = req.body.currency || 'AED';
 
     const bill = await prisma.bill.findFirst({
       where: { id, businessId: req.business.id },
     });
 
-    if (!bill) {
-      return res.status(404).json({
-        success: false,
-        message: "Bill not found",
-      });
-    }
+    if (!bill) return res.status(404).json({ success: false, message: "Bill not found" });
 
-    //////////////////////////////////////////////////////
-    // RECALCULATE
-    //////////////////////////////////////////////////////
-    const subtotal = items.reduce(
-      (sum, i) => sum + i.quantity * i.price,
-      0
-    );
+    const finalItems = items.map(i => ({
+      name: i.name || i.description || 'Item',
+      quantity: Number(i.quantity || 0),
+      price: Number(i.price !== undefined ? i.price : (i.unitPrice || 0))
+    }));
 
-    const totalAmount = subtotal + tax - discount;
+    const subtotal = req.body.subtotal !== undefined ? Number(req.body.subtotal) : finalItems.reduce((sum, i) => sum + i.quantity * i.price, 0);
+    const totalAmount = req.body.totalAmount !== undefined ? Number(req.body.totalAmount) : (subtotal + taxValue - discount);
 
-    //////////////////////////////////////////////////////
-    // DELETE OLD ITEMS
-    //////////////////////////////////////////////////////
-    await prisma.billItem.deleteMany({
-      where: { billId: id },
-    });
+    await prisma.billItem.deleteMany({ where: { billId: id } });
 
-    //////////////////////////////////////////////////////
-    // UPDATE
-    //////////////////////////////////////////////////////
     const updated = await prisma.bill.update({
       where: { id },
       data: {
         subtotal,
-        tax,
+        tax: taxValue,
         discount,
         totalAmount,
-        billDate: billDate ? new Date(billDate) : bill.billDate,
-        dueDate: dueDate ? new Date(dueDate) : bill.dueDate,
+        currency,
+        billDate: billDate ? new Date(billDate) : undefined,
+        dueDate: dueDate ? new Date(dueDate) : null,
         notes,
-
         items: {
-          create: items.map((i) => ({
+          create: finalItems.map((i) => ({
             name: i.name,
             quantity: i.quantity,
             price: i.price,
@@ -204,39 +145,18 @@ exports.updateBill = async (req, res) => {
           })),
         },
       },
-      include: {
-        items: true,
-        vendor: true,
-      },
+      include: { vendor: true, items: true },
     });
 
     res.json({ success: true, bill: updated });
-
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+  } catch (error) {
+    console.error("updateBill error:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
+`;
 
-//////////////////////////////////////////////////////
-// DELETE BILL
-//////////////////////////////////////////////////////
-exports.deleteBill = async (req, res) => {
-  const { id } = req.params;
+c = c.replace(updateRegex, newUpdate);
 
-  const bill = await prisma.bill.findFirst({
-    where: { id, businessId: req.business.id },
-  });
-
-  if (!bill) {
-    return res.status(404).json({
-      success: false,
-      message: "Bill not found",
-    });
-  }
-
-  await prisma.bill.delete({
-    where: { id },
-  });
-
-  res.json({ success: true, message: "Bill deleted" });
-};
+fs.writeFileSync(p, c);
+console.log('Fixed BillController.js');

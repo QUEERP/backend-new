@@ -330,9 +330,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
     const [paymentsList, totalCount] = await Promise.all([
       prisma.payment.findMany({
         where: { businessId, customerId: { not: null }, ...paymentDateFilter },
-        select: {
-          id: true, paymentDate: true, amount: true, amountAllocated: true,
-          status: true, paymentMode: true,
+        select: { id: true, paymentDate: true, amount: true, amountAllocated: true, status: true, paymentMode: true, currency: true,
           customer: { select: { company: true } },
           project: { select: { projectName: true } }
         },
@@ -348,7 +346,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
 
   if (tab === 'customers') {
     const customersRaw = await prisma.customer.findMany({
-      where: { businessId, isDeleted: false, ...dateFilter },
+      where: { businessId, isDeleted: false },
       select: {
         id: true, company: true, phone: true, createdAt: true,
         customerContacts: { select: { email: true }, take: 1 }
@@ -392,7 +390,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
       };
     });
 
-    const totalCount = await prisma.customer.count({ where: { businessId, isDeleted: false, ...dateFilter } });
+    const totalCount = await prisma.customer.count({ where: { businessId, isDeleted: false } });
     response.customersList = customersList;
     response.customersTotalCount = totalCount;
   }
@@ -400,7 +398,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
   if (tab === 'credit-notes') {
     const [creditNotesList, totalCount] = await Promise.all([
       prisma.creditNote.findMany({
-        where: { businessId, isDeleted: false, customerId: { not: null }, ...dateFilter },
+        where: { businessId, isDeleted: false, customerId: { not: null } },
         select: {
           id: true, createdAt: true, amount: true, remainingAmount: true,
           status: true, reason: true,
@@ -411,7 +409,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
         skip,
         take
       }),
-      prisma.creditNote.count({ where: { businessId, isDeleted: false, customerId: { not: null }, ...dateFilter } })
+      prisma.creditNote.count({ where: { businessId, isDeleted: false, customerId: { not: null } } })
     ]);
     response.creditNotesList = creditNotesList;
     response.creditNotesTotalCount = totalCount;
@@ -419,7 +417,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
 
   if (tab === 'quotations') {
     const quotationsRaw = await prisma.quotation.findMany({
-      where: { businessId, ...dateFilter },
+      where: { businessId, isDeleted: false },
       select: {
         id: true, quoteNumber: true, createdAt: true, totalAmount: true,
         status: true, customer: { select: { company: true } }
@@ -441,7 +439,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
       convertedTo: soMap[q.id] || null
     }));
 
-    const totalCount = await prisma.quotation.count({ where: { businessId, ...dateFilter } });
+    const totalCount = await prisma.quotation.count({ where: { businessId, isDeleted: false } });
     response.quotationsList = quotationsList;
     response.quotationsTotalCount = totalCount;
   }
@@ -449,7 +447,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
   if (tab === 'sales-orders') {
     const [salesOrdersList, totalCount] = await Promise.all([
       prisma.salesOrder.findMany({
-        where: { businessId, ...dateFilter },
+        where: { businessId, isDeleted: false },
         select: {
           id: true, orderNumber: true, createdAt: true, totalAmount: true,
           status: true, quotationId: true,
@@ -459,7 +457,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
         orderBy: { createdAt: 'desc' },
         skip, take
       }),
-      prisma.salesOrder.count({ where: { businessId, ...dateFilter } })
+      prisma.salesOrder.count({ where: { businessId, isDeleted: false } })
     ]);
     response.salesOrdersList = salesOrdersList;
     response.salesOrdersTotalCount = totalCount;
@@ -468,7 +466,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
   if (tab === 'invoices') {
     const [invoicesRaw, totalCount] = await Promise.all([
       prisma.invoice.findMany({
-        where: { businessId, isDeleted: false, ...invoiceDateFilter },
+        where: { businessId, isDeleted: false },
         select: {
           id: true, invoiceNumber: true, invoiceDate: true, dueDate: true,
           grandTotal: true, status: true, customer: { select: { company: true } }
@@ -476,7 +474,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
         orderBy: { invoiceDate: 'desc' },
         skip, take
       }),
-      prisma.invoice.count({ where: { businessId, isDeleted: false, ...invoiceDateFilter } })
+      prisma.invoice.count({ where: { businessId, isDeleted: false } })
     ]);
 
     const invoicesList = invoicesRaw.map(inv => ({
@@ -491,7 +489,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
   if (tab === 'returns') {
     const [returnsList, totalCount] = await Promise.all([
       prisma.salesReturn.findMany({
-        where: { businessId, ...dateFilter },
+        where: { businessId },
         select: {
           id: true, returnNumber: true, createdAt: true, totalAmount: true,
           reason: true, status: true,
@@ -501,7 +499,7 @@ const getTradingSalesReport = async (businessId, dateRangeRaw, tab, page = 1, pa
         orderBy: { createdAt: 'desc' },
         skip, take
       }),
-      prisma.salesReturn.count({ where: { businessId, ...dateFilter } })
+      prisma.salesReturn.count({ where: { businessId } })
     ]);
     response.returnsList = returnsList;
     response.returnsTotalCount = totalCount;

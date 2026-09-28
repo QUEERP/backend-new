@@ -14,10 +14,14 @@ exports.getCampaigns = async (req, res) => {
 
 exports.createCampaign = async (req, res) => {
   try {
+    const data = { ...req.body };
+    if (data.startDate) data.startDate = new Date(data.startDate);
+    if (data.endDate) data.endDate = new Date(data.endDate);
+
     const campaign = await prisma.campaign.create({
       data: {
         id: crypto.randomUUID(),
-        ...req.body,
+        ...data,
         businessId: req.business.id,
       },
     });
@@ -29,9 +33,13 @@ exports.createCampaign = async (req, res) => {
 
 exports.updateCampaign = async (req, res) => {
   try {
+    const data = { ...req.body };
+    if (data.startDate) data.startDate = new Date(data.startDate);
+    if (data.endDate) data.endDate = new Date(data.endDate);
+
     const campaign = await prisma.campaign.updateMany({
       where: { id: req.params.id, businessId: req.business.id },
-      data: req.body,
+      data: data,
     });
     if (campaign.count === 0) {
       return res.status(404).json({ success: false, message: "Campaign not found" });

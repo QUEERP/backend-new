@@ -14,10 +14,13 @@ exports.getCrmTasks = async (req, res) => {
 
 exports.createCrmTask = async (req, res) => {
   try {
+    const data = { ...req.body };
+    if (data.dueDate) data.dueDate = new Date(data.dueDate);
+
     const task = await prisma.crmTask.create({
       data: {
         id: crypto.randomUUID(),
-        ...req.body,
+        ...data,
         businessId: req.business.id,
       },
     });
@@ -29,9 +32,12 @@ exports.createCrmTask = async (req, res) => {
 
 exports.updateCrmTask = async (req, res) => {
   try {
+    const data = { ...req.body };
+    if (data.dueDate) data.dueDate = new Date(data.dueDate);
+
     const updated = await prisma.crmTask.updateMany({
       where: { id: req.params.id, businessId: req.business.id },
-      data: req.body,
+      data: data,
     });
     if (updated.count === 0)
       return res.status(404).json({ success: false, message: "Task not found" });
