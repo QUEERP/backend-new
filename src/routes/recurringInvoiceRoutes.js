@@ -28,4 +28,36 @@ router.post(
   controller.triggerBillingJob
 );
 
+router.get(
+  "/:id",
+  auth,
+  businessMiddleware,
+  checkPermission("invoice", "read"),
+  controller.getProfile
+);
+
+router.put(
+  "/:id",
+  auth,
+  businessMiddleware,
+  checkPermission("invoice", "update"),
+  controller.updateProfile
+);
+
+router.delete(
+  "/:id",
+  auth,
+  businessMiddleware,
+  checkPermission("invoice", "delete"),
+  controller.deleteProfile
+);
+
+router.get(
+  "/:id/download-pdf",
+  auth,
+  businessMiddleware,
+  checkPermission("invoice", "read"),
+  controller.downloadProfilePdf
+);
+
 module.exports = router;

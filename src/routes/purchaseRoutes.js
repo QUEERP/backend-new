@@ -29,6 +29,7 @@ router.post("/orders", auth, business, checkPermission("purchase_order", "create
 router.get("/orders/:id", auth, business, poController.getPurchaseOrderById);
 router.put("/orders/:id", auth, business, checkPermission("purchase_order", "update"), poController.updatePurchaseOrder);
 router.delete("/orders/:id", auth, business, checkPermission("purchase_order", "delete"), poController.deletePurchaseOrder);
+router.post("/orders/:id/receive-all", auth, business, checkPermission("purchase_order", "update"), poController.markReceived);
 router.patch("/orders/:id/status", auth, business, checkPermission("purchase_order", "update"), poController.updatePurchaseOrder); // Simplified for changeStatus
 
 // GRN (Goods Receive Note)

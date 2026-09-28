@@ -226,7 +226,7 @@ exports.createProduct = async (req, res) => {
       costPrice: Number(costPrice || 0),
       type,
       hsnCode: taxCode,
-      
+      taxPercent: Number(taxPercent || 0),
       unit,
       initialQty: type === "SERVICE" ? 0 : Number(initialQty),
       warehouseId: type === "SERVICE" ? null : warehouseId,
