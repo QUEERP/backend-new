@@ -327,8 +327,32 @@ exports.updateActivity = async (req, res) => {
       }
     }
 
+    const {
+      title,
+      description,
+      leadId,
+      dealId,
+      customerId,
+      contactId,
+      duration,
+      attendees,
+      isAllDay,
+      meetingLink,
+      outcome
+    } = rest;
+
     const updatedData = {
-      ...rest,
+      ...(title !== undefined && { title }),
+      ...(description !== undefined && { description }),
+      ...(leadId !== undefined && { leadId }),
+      ...(dealId !== undefined && { dealId }),
+      ...(customerId !== undefined && { customerId }),
+      ...(contactId !== undefined && { contactId }),
+      ...(duration !== undefined && { duration: Number(duration) }),
+      ...(attendees !== undefined && { attendees }),
+      ...(isAllDay !== undefined && { isAllDay }),
+      ...(meetingLink !== undefined && { meetingLink }),
+      ...(outcome !== undefined && { outcome }),
       ...(typeUpper && { type: typeUpper }),
       ...(status && { status }),
       ...(assignedToId !== undefined && { assignedToId }),
