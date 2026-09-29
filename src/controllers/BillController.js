@@ -77,6 +77,7 @@ exports.createBill = async (req, res) => {
         tax: taxValue,
         discount,
         totalAmount,
+        outstandingAmount: totalAmount,
         currency,
         billDate: new Date(billDate),
         dueDate: dueDate ? new Date(dueDate) : null,
