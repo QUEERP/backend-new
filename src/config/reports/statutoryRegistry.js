@@ -14,37 +14,32 @@ const registry = {
     ],
     builders: {
       "GSTR1": async (businessId, filters) => {
-        const transactions = await prisma.taxTransaction.findMany({
+        const invoices = await prisma.invoice.findMany({
           where: {
             businessId,
-            transactionType: { in: ['INVOICE', 'CREDIT_NOTE'] }
-          }
+            status: { not: 'DRAFT' }
+          },
+          include: { items: true }
         });
 
-        const taxRateIds = [...new Set(transactions.map(t => t.taxRateId).filter(Boolean))];
-        const taxRates = taxRateIds.length > 0
-          ? await prisma.taxRate.findMany({ where: { id: { in: taxRateIds } }, include: { taxType: true, taxRule: true } })
-          : [];
-        const taxRateMap = Object.fromEntries(taxRates.map(r => [r.id, r]));
-
         const grouped = {};
-        transactions.forEach(t => {
-          const resolvedRate = t.taxRateId ? taxRateMap[t.taxRateId] : null;
-          const rate = resolvedRate?.rate ?? t.overrideRate ?? 0;
-          const taxTypeName = resolvedRate?.taxType?.name ?? 'UNKNOWN';
-          const key = rate.toString();
+        invoices.forEach(inv => {
+          inv.items.forEach(t => {
+            const rate = t.cgstPercent + t.igstPercent || 0; // Simple fallback
+            const key = rate.toString();
 
-          if (!grouped[key]) {
-            grouped[key] = { taxRate: rate, CGST: 0, SGST: 0, IGST: 0, totalTaxBaseCcy: 0 };
-          }
+            if (!grouped[key]) {
+              grouped[key] = { taxRate: rate, CGST: 0, SGST: 0, IGST: 0, totalTaxBaseCcy: 0 };
+            }
 
-          const sign = t.transactionType === 'CREDIT_NOTE' ? -1 : 1;
-          const amt = t.taxAmountBaseCcy * sign;
+            const amt = t.totalTax || 0;
 
-          if (grouped[key][taxTypeName] !== undefined) {
-            grouped[key][taxTypeName] += amt;
-          }
-          grouped[key].totalTaxBaseCcy += amt;
+            if (t.cgstPercent > 0) grouped[key].CGST += amt / 2;
+            if (t.sgstPercent > 0) grouped[key].SGST += amt / 2;
+            if (t.igstPercent > 0) grouped[key].IGST += amt;
+            
+            grouped[key].totalTaxBaseCcy += amt;
+          });
         });
 
         return {
@@ -53,15 +48,10 @@ const registry = {
         };
       },
       "GSTR3B": async (businessId, filters) => {
-        const transactions = await prisma.taxTransaction.findMany({
-          where: { businessId }
+        const invoices = await prisma.invoice.findMany({
+          where: { businessId, status: { not: 'DRAFT' } },
+          include: { items: true }
         });
-
-        const taxRateIds = [...new Set(transactions.map(t => t.taxRateId).filter(Boolean))];
-        const taxRates = taxRateIds.length > 0
-          ? await prisma.taxRate.findMany({ where: { id: { in: taxRateIds } }, include: { taxType: true, taxRule: true } })
-          : [];
-        const taxRateMap = Object.fromEntries(taxRates.map(r => [r.id, r]));
 
         // Initialize structures
         const table3_1 = {
@@ -81,27 +71,25 @@ const registry = {
         };
 
         // Helper to add values
-        const addValues = (target, t, sign, isTable4 = false) => {
-          const resolvedRate = t.taxRateId ? taxRateMap[t.taxRateId] : null;
-          const taxName = (resolvedRate?.taxType?.name ?? 'UNKNOWN').toUpperCase();
-          const taxCol = taxName.includes('CGST') ? 'CGST' :
-            taxName.includes('SGST') ? 'SGST' :
-              taxName.includes('IGST') ? 'IGST' :
-                taxName.includes('CESS') ? 'CESS' : null;
-
+        const addValues = (target, item, sign, isTable4 = false) => {
           if (!isTable4) {
-            target.taxableValue += t.taxableAmountBaseCcy * sign;
+            target.taxableValue += item.amount * sign;
           }
-          if (taxCol) {
-            target[taxCol] += t.taxAmountBaseCcy * sign;
+          const amt = item.totalTax * sign;
+          if (item.cgstPercent > 0) {
+            target.CGST += amt / 2;
+            target.SGST += amt / 2;
+          }
+          if (item.igstPercent > 0) {
+            target.IGST += amt;
           }
         };
 
-        transactions.forEach(t => {
-          const type = t.transactionType;
-          const resolvedRate = t.taxRateId ? taxRateMap[t.taxRateId] : null;
-          const rate = resolvedRate?.rate ?? t.overrideRate ?? 0;
-          const cat = resolvedRate?.taxRule?.taxCategory || null;
+        invoices.forEach(inv => {
+          inv.items.forEach(t => {
+            const type = 'INVOICE';
+            const rate = t.cgstPercent + t.igstPercent || 0;
+            const cat = null;
 
           // TABLE 3.1
           if (['INVOICE', 'CREDIT_NOTE'].includes(type)) {
@@ -113,23 +101,23 @@ const registry = {
             } else if (rate === 0) {
               addValues(table3_1["(c) Other outward supplies (Nil rated, exempted)"], t, sign);
             }
-          } else if (['BILL', 'PURCHASE_RETURN'].includes(type) && cat === 'REVERSE_CHARGE') {
-            // Note: Reverse charge inward supplies are technically an input transaction, but represent an output liability here
-            const sign = type === 'PURCHASE_RETURN' ? -1 : 1;
-            addValues(table3_1["(d) Inward supplies (liable to reverse charge)"], t, sign);
           }
+          });
+        });
 
-          // TABLE 4
-          if (type === 'BILL') {
-            if (cat === 'REVERSE_CHARGE') {
-              addValues(table4["(A)(3) Inward supplies liable to reverse charge"], t, 1, true);
-            } else if (rate > 0) {
+        const bills = await prisma.bill.findMany({
+          where: { businessId, status: { not: 'DRAFT' } },
+          include: { items: true }
+        });
+
+        bills.forEach(bill => {
+          bill.items.forEach(t => {
+            const rate = t.cgstPercent + t.igstPercent || 0;
+            
+            if (rate > 0) {
               addValues(table4["(A)(5) All other ITC"], t, 1, true);
             }
-          } else if (type === 'PURCHASE_RETURN' && rate > 0) {
-            // Reversals are recorded as positive absolute values in section B
-            addValues(table4["(B) ITC Reversed"], t, 1, true);
-          }
+          });
         });
 
         // Compute (C) Net ITC Available
@@ -421,31 +409,22 @@ const registry = {
 
 // Generic builder for simple net-tax returns
 const buildGenericReturn = async (businessId, filters, reportName) => {
-  const transactions = await prisma.taxTransaction.findMany({
-    where: { businessId }
+  const invoices = await prisma.invoice.findMany({
+    where: { businessId, status: { not: 'DRAFT' } }
   });
-
-  const taxRateIds = [...new Set(transactions.map(t => t.taxRateId).filter(Boolean))];
-  const taxRates = taxRateIds.length > 0
-    ? await prisma.taxRate.findMany({ where: { id: { in: taxRateIds } }, include: { taxType: true, taxRule: true } })
-    : [];
-  const taxRateMap = Object.fromEntries(taxRates.map(r => [r.id, r]));
+  const bills = await prisma.bill.findMany({
+    where: { businessId, status: { not: 'DRAFT' } }
+  });
 
   let totalCollected = 0;
   let totalPaid = 0;
 
-  transactions.forEach(t => {
-    const isOutward = ['INVOICE', 'CREDIT_NOTE'].includes(t.transactionType);
-    const isInward = ['BILL', 'PURCHASE_RETURN'].includes(t.transactionType);
+  invoices.forEach(t => {
+    totalCollected += t.totalTax || 0;
+  });
 
-    const sign = ['CREDIT_NOTE', 'PURCHASE_RETURN'].includes(t.transactionType) ? -1 : 1;
-    const taxAmt = t.taxAmountBaseCcy * sign;
-
-    if (isOutward) {
-      totalCollected += taxAmt;
-    } else if (isInward) {
-      totalPaid += taxAmt;
-    }
+  bills.forEach(t => {
+    totalPaid += t.totalTax || 0;
   });
 
   return {
