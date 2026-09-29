@@ -1,7 +1,7 @@
 const prisma = require("../config/prisma");
 const PurchaseWorkflow = require("../services/purchaseWorkflow");
 
-const VALID_STATUS = ["Draft", "Ordered", "Received", "Cancelled"];
+const VALID_STATUS = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "SENT", "PARTIAL_RECEIVED", "FULLY_RECEIVED", "CANCELLED"];
 
 //////////////////////////////////////////////////////
 // GENERATE PO NUMBER
@@ -286,13 +286,13 @@ exports.markReceived = async (req, res) => {
     });
 
     if (!po) return res.status(404).json({ success: false, message: "PO not found" });
-    if (po.status === "Received") return res.status(400).json({ success: false, message: "Already received" });
+    if (po.status === "FULLY_RECEIVED") return res.status(400).json({ success: false, message: "Already received" });
 
     await prisma.$transaction(async (tx) => {
       // Update PO
       await tx.purchaseOrder.update({
         where: { id },
-        data: { status: "Received" }
+        data: { status: "FULLY_RECEIVED" }
       });
 
       // Find warehouse (default to first available)
@@ -391,3 +391,4 @@ exports.markReceived = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
