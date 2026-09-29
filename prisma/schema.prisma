@@ -2235,6 +2235,10 @@ model PurchaseRequest {
   requesterId           String?
   status                PurchaseRequestStatus @default(DRAFT)
   notes                 String?
+  title                 String?
+  vendorId              String?
+  requiredDate          DateTime?
+  priority              String?
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
   projectId             String?
