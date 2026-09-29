@@ -127,7 +127,9 @@ exports.getPurchaseOrders = async (req, res) => {
       include: {
         vendor: true,
         items: true,
-        assignedTo: true,
+        assignedTo: {
+          include: { user: true }
+        },
         warehouse: true,
       },
       orderBy: {
@@ -163,7 +165,9 @@ exports.getPurchaseOrderById = async (req, res) => {
       include: {
         vendor: true,
         items: true,
-        assignedTo: true,
+        assignedTo: {
+          include: { user: true }
+        },
         warehouse: true,
       },
     });
