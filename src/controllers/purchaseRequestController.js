@@ -12,6 +12,10 @@ exports.createPurchaseRequest = async (req, res) => {
       department,
       status = "DRAFT",
       notes,
+      title,
+      vendorId,
+      requiredDate,
+      priority,
       items, // array of { productId, description, quantity, estimatedPrice, itemType, hsnSacCode }
     } = req.body;
 
@@ -29,6 +33,10 @@ exports.createPurchaseRequest = async (req, res) => {
         requesterId: req.membership?.id || null,
         status,
         notes,
+        title,
+        vendorId,
+        requiredDate: requiredDate ? new Date(requiredDate) : null,
+        priority,
         items: {
           create: items.map((item) => ({
             id: crypto.randomUUID(),
@@ -157,14 +165,53 @@ exports.updatePurchaseRequest = async (req, res) => {
       });
     }
 
-    const updated = await prisma.purchaseRequest.update({
+    const updatedData = { ...updateData };
+    if (updatedData.requiredDate) {
+      updatedData.requiredDate = new Date(updatedData.requiredDate).toISOString();
+    }
+    
+    if (updatedData.status === 'CONVERTED') {
+      updatedData.status = 'CONVERTED_TO_PO';
+    }
+    
+    // First update the base fields
+    let updated = await prisma.purchaseRequest.update({
       where: { id },
-      data: {
-        ...updateData,
-        // If items are provided, we should ideally delete old ones and create new,
-        // but for simplicity we only update base info if items aren't handled perfectly.
-      },
+      data: updatedData
     });
+
+    // Handle items if provided
+    if (items && Array.isArray(items)) {
+      // Delete old items
+      await prisma.purchaseRequestItem.deleteMany({
+        where: { purchaseRequestId: id }
+      });
+
+      // Create new items
+      const validItems = items.map((item) => ({
+        id: crypto.randomUUID(),
+        productId: item.productId || undefined,
+        description: item.description,
+        quantity: Number(item.quantity) || 1,
+        estimatedPrice: Number(item.estimatedPrice) || 0,
+      })).filter(i => i.productId || i.description);
+
+      if (validItems.length > 0) {
+        await prisma.purchaseRequest.update({
+          where: { id },
+          data: {
+            items: {
+              create: validItems
+            }
+          }
+        });
+      }
+      
+      updated = await prisma.purchaseRequest.findUnique({
+        where: { id },
+        include: { items: true }
+      });
+    }
 
     res.json({
       success: true,
