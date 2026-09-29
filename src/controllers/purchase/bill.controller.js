@@ -44,9 +44,9 @@ exports.getBillById = async (req, res) => {
 exports.recordPayment = async (req, res) => {
   try {
     const payment = await paymentService.recordVendorPayment(
-      req.business.id,
-      req.user.id,
-      req.user.email,
+      req.business?.id,
+      req.user?.userId || req.user?.id,
+      req.user?.email,
       req.params.billId,
       req.body
     );
