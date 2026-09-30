@@ -480,8 +480,8 @@ model Subscription {
   startDate  DateTime?
   expiresAt  DateTime?
   planName   String?
-  notes      String?
-  createdAt  DateTime           @default(now())
+  notes           String?
+  createdAt       DateTime           @default(now())
   business   Business           @relation(fields: [businessId], references: [id])
 
   @@map("subscriptions")
@@ -2163,6 +2163,7 @@ model StockTransfer {
   toWarehouseId   String
   transferDate    DateTime            @default(now())
   notes           String?
+  status          StockTransferStatus @default(PENDING)
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
   fromLocationId  String?
