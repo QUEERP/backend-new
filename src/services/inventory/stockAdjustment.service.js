@@ -153,8 +153,10 @@ const getStockAdjustments = async (businessId, query = {}) => {
   if (!isTrading) {
     finalAdjustments = adjustments.map(a => {
       const { locationId, ...rest } = a;
-      return rest;
+      return { ...rest, status: "APPROVED" };
     });
+  } else {
+    finalAdjustments = adjustments.map(a => ({ ...a, status: "APPROVED" }));
   }
 
   return {
@@ -192,10 +194,10 @@ const getStockAdjustmentById = async (businessId, id) => {
   
   if (!isTrading) {
     const { locationId, ...rest } = adjustment;
-    return rest;
+    return { ...rest, status: "APPROVED" };
   }
   
-  return adjustment;
+  return { ...adjustment, status: "APPROVED" };
 };
 
 module.exports = {
