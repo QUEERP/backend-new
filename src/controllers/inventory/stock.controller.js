@@ -216,3 +216,19 @@ exports.changeTransferStatus = async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 };
+
+
+exports.updateStockTransfer = async (req, res) => {
+  try {
+    const transfer = await transferService.updateStockTransfer(
+      req.business.id,
+      req.user.id,
+      req.user.email,
+      req.params.id,
+      req.body
+    );
+    res.json({ success: true, transfer });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
