@@ -19,6 +19,7 @@ router.get("/adjustments/:id", auth, business, Controller.getStockAdjustmentById
 router.post("/transfers", auth, business, checkPermission("stock", "create"), Controller.createStockTransfer);
 router.get("/transfers", auth, business, Controller.getStockTransfers);
 router.get("/transfers/:id", auth, business, Controller.getStockTransferById);
+router.put("/transfers/:id", auth, business, checkPermission("stock", "edit"), Controller.updateStockTransfer);
 router.patch("/transfers/:id/status", auth, business, checkPermission("stock", "edit"), Controller.changeTransferStatus);
 
 // Batches
