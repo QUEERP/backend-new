@@ -80,7 +80,7 @@ exports.createPurchaseOrder = async (req, res) => {
         currencySymbol: req.body.currencySymbol || 'AED',
         items: { create: mappedItems },
       },
-      include: { vendor: true, items: true },
+      include: { vendor: true, items: { include: { product: true } } },
     });
 
     res.status(201).json({ success: true, order });
@@ -126,7 +126,9 @@ exports.getPurchaseOrders = async (req, res) => {
       },
       include: {
         vendor: true,
-        items: true,
+        items: {
+          include: { product: true }
+        },
         assignedTo: {
           include: { user: true }
         },
@@ -164,7 +166,9 @@ exports.getPurchaseOrderById = async (req, res) => {
       },
       include: {
         vendor: true,
-        items: true,
+        items: {
+          include: { product: true }
+        },
         assignedTo: {
           include: { user: true }
         },
@@ -220,7 +224,9 @@ exports.updatePurchaseOrder = async (req, res) => {
       data: updateData,
       include: {
         vendor: true,
-        items: true,
+        items: {
+          include: { product: true }
+        },
       },
     });
 
