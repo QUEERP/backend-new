@@ -2458,6 +2458,7 @@ model ProjectRequirement {
   contactId                  String?
   businessType               String?
   department                 String?
+    categoryId                 String?
   priority                   String?
   expectedBudget             Float?
   assignedEmployeeId         String?
