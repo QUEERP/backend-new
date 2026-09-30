@@ -10,7 +10,13 @@ exports.createLeave = async (req, res) => {
     const businessId = req.business.id;
 
     // ⭐ EMPLOYEE ID FROM TOKEN
-    const employeeId = req.user?.employeeId;
+        let employeeId = req.user?.employeeId;
+    let isAdminAction = false;
+
+    if (req.body.employeeId && req.user?.role !== 'EMPLOYEE') {
+      employeeId = req.body.employeeId;
+      isAdminAction = true;
+    }
 
     if (!employeeId) {
       return res.status(401).json({
@@ -125,7 +131,8 @@ exports.createLeave = async (req, res) => {
         employeeId,
         leaveCode,
         duration,
-        date: leaveDate
+        date: leaveDate,
+        status: isAdminAction ? 'APPROVED' : 'PENDING'
       }
     });
 
