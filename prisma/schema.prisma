@@ -536,7 +536,10 @@ model Settings {
   reverseCharge       Boolean  @default(false)
   salesOrderPrefix    String?
   serialTracking      Boolean  @default(false)
-  busniess            Business @relation(fields: [businessId], references: [id])
+    overtimeTracking    String?
+    weekend             String?
+    taxConfiguration    String?
+    busniess            Business @relation(fields: [businessId], references: [id])
   users               User[]   @relation("SettingsToUser")
 }
 
