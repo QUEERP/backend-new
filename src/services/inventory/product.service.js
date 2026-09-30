@@ -499,6 +499,44 @@ const updateProduct = async (businessId, userId, userEmail, id, data) => {
       }
     });
 
+    if (data.warehouseId && finalType === 'GOODS') {
+      const existingStock = await tx.stock.findFirst({
+        where: { productId: id },
+        orderBy: { createdAt: 'asc' }
+      });
+      
+      if (existingStock) {
+         if (existingStock.warehouseId !== data.warehouseId || existingStock.locationId !== (data.locationId || null)) {
+            const conflict = await tx.stock.findFirst({
+               where: { productId: id, warehouseId: data.warehouseId, locationId: data.locationId || null }
+            });
+            if (!conflict) {
+               await tx.stock.update({
+                 where: { id: existingStock.id },
+                 data: {
+                   warehouseId: data.warehouseId,
+                   locationId: data.locationId || null
+                 }
+               });
+               
+               await tx.stockMovement.updateMany({
+                 where: { productId: id, warehouseId: existingStock.warehouseId, locationId: existingStock.locationId },
+                 data: { warehouseId: data.warehouseId, locationId: data.locationId || null }
+               });
+            }
+         }
+      } else {
+         await tx.stock.create({
+           data: {
+             productId: id,
+             warehouseId: data.warehouseId,
+             locationId: data.locationId || null,
+             quantity: 0
+           }
+         });
+      }
+    }
+
     await logAction(tx, {
       businessId,
       userId,

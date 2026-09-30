@@ -17,6 +17,9 @@ const createStockAdjustment = async (businessId, userId, userEmail, data) => {
     // Generate Adjustment Number
     const adjustmentNumber = await generateDocNumber(tx, businessId, "ADJ", "stockAdjustment", "adjustmentNumber");
 
+    const items = Array.isArray(data.items) ? data.items : (data.productId ? [{ productId: data.productId, quantity: data.quantity, type: data.adjustmentType || data.type || "ADD", batchNumber: data.batchNumber, serialNumbers: data.serialNumbers }] : []);
+    if (items.length === 0) throw new Error("Items array is required for stock adjustment");
+
     const adjustment = await tx.stockAdjustment.create({
       data: {
         businessId,
@@ -27,7 +30,7 @@ const createStockAdjustment = async (businessId, userId, userEmail, data) => {
         adjustmentDate: data.adjustmentDate ? new Date(data.adjustmentDate) : new Date(),
         notes: data.notes || null,
         items: {
-          create: data.items.map(item => ({
+          create: items.map(item => ({
             productId: item.productId,
             quantity: parseFloat(item.quantity),
             type: item.type, // ADD or SUBTRACT
@@ -44,7 +47,7 @@ const createStockAdjustment = async (businessId, userId, userEmail, data) => {
     });
 
     // Execute stock movements for each item
-    for (const item of data.items) {
+    for (const item of items) {
       const quantityVal = item.type === "ADD" ? parseFloat(item.quantity) : -parseFloat(item.quantity);
       const movementType = item.type === "ADD" ? "ADJUSTMENT_IN" : "ADJUSTMENT_OUT";
 
@@ -66,7 +69,7 @@ const createStockAdjustment = async (businessId, userId, userEmail, data) => {
 
     // Compute total adjustment value for ledger
     let totalAdjustmentValue = 0;
-    for (const item of data.items) {
+    for (const item of items) {
       const product = await tx.product.findUnique({ where: { id: item.productId } });
       const itemCost = product?.unitCost || product?.price || 0;
       const adjustmentValue = itemCost * parseFloat(item.quantity);
