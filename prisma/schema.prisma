@@ -188,7 +188,7 @@ model BusinessUser {
   timeEntries        TimeEntry[]
   business           Business            @relation(fields: [businessId], references: [id])
   role               Role                @relation(fields: [roleId], references: [id])
-  user               User                @relation(fields: [userId], references: [id])
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   customerOwner      Customer[]          @relation("CustomerOwner")
   purchaseRequests   PurchaseRequest[]
   userPermissions    UserPermission[]
