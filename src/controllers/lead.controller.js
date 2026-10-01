@@ -373,7 +373,7 @@ exports.updateLead = async (req, res) => {
     }
 
     // Extract relation scalars so we can convert them to `connect` / `disconnect`
-    const { assignedToId: reqAssignedToId, customerId, requirementId, ...actualRest } = rest;
+    const { assignedToId: reqAssignedToId, customerId, requirementId, type, ...actualRest } = rest;
 
     const updatedData = {
       ...actualRest,
