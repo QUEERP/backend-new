@@ -230,6 +230,24 @@ exports.getEstimations = async (req, res) => {
   }
 };
 
+exports.getEstimationById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const estimation = await prisma.projectEstimation.findUnique({
+      where: { id, businessId: req.business.id },
+      include: { requirement: { include: { customer: true } } }
+    });
+    
+    if (!estimation) {
+      return res.status(404).json({ success: false, message: 'Estimation not found' });
+    }
+    
+    res.json({ success: true, estimation });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.createMeeting = async (req, res) => {
   try {
     const data = req.body;
