@@ -23,6 +23,7 @@ router.put("/requirements/:id", Controller.updateRequirement);
 // Estimations
 router.post("/estimations", Controller.createEstimation);
 router.get("/estimations", Controller.getEstimations);
+router.get("/estimations/:id", Controller.getEstimationById);
 
 // Meetings
 router.post("/meetings", Controller.createMeeting);
