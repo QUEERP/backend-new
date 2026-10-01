@@ -237,9 +237,16 @@ exports.createMeeting = async (req, res) => {
     
     const meeting = await prisma.projectMeeting.create({
       data: {
-        ...data,
+        title: data.title || "Meeting",
+        meetingDate: data.date || new Date().toISOString(),
+        meetingTime: `${data.startTime || ''} - ${data.endTime || ''}`,
+        meetingType: data.type || "EXTERNAL",
+        status: data.status || "Scheduled",
+        notes: data.agenda || data.notes || "",
+        attendees: Array.isArray(data.participants) ? JSON.stringify(data.participants) : data.participants || "",
         businessId: req.business.id,
         createdBy: req.user?.id,
+        customerId: data.customerId,
       },
     });
 
