@@ -372,13 +372,35 @@ exports.updateLead = async (req, res) => {
       }
     }
 
+    // Extract relation scalars so we can convert them to `connect` / `disconnect`
+    const { assignedToId: reqAssignedToId, customerId, requirementId, ...actualRest } = rest;
+
     const updatedData = {
-      ...rest,
-      ...(assignedTo !== undefined && { assignedToId }),
+      ...actualRest,
       ...(formattedTags && { tags: formattedTags }),
       ...(score !== undefined && { score: parseInt(score) || 0 }),
-      ...(campaignId !== undefined && { campaignId }),
     };
+
+    // Safely map ID scalars to relation objects for Prisma
+    if (assignedToId !== undefined) {
+      updatedData.assignedTo = assignedToId ? { connect: { id: assignedToId } } : { disconnect: true };
+    }
+    // Handle assignedToId passed directly in body (e.g. from frontend)
+    else if (reqAssignedToId !== undefined) {
+      updatedData.assignedTo = reqAssignedToId ? { connect: { id: reqAssignedToId } } : { disconnect: true };
+    }
+
+    if (campaignId !== undefined) {
+      updatedData.campaign = campaignId ? { connect: { id: campaignId } } : { disconnect: true };
+    }
+    
+    if (customerId !== undefined) {
+      updatedData.customer = customerId ? { connect: { id: customerId } } : { disconnect: true };
+    }
+    
+    if (requirementId !== undefined) {
+      updatedData.requirement = requirementId ? { connect: { id: requirementId } } : { disconnect: true };
+    }
 
     if (updatedData.status === "PROPOSAL") {
       updatedData.status = "PROPOSAL_PENDING";
