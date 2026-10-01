@@ -248,6 +248,12 @@ exports.getAllLeads = async (req, res) => {
       },
     });
 
+    if (req.query.type === 'INQUIRY') {
+      queryOptions.where.inquiryNumber = { not: null };
+    } else if (req.query.type === 'LEAD') {
+      queryOptions.where.inquiryNumber = null;
+    }
+
     const totalCount = await prisma.lead.count({ where: queryOptions.where });
     const leads = await prisma.lead.findMany(queryOptions);
 
