@@ -30,7 +30,14 @@ module.exports = (payment, invoice, settings) => {
     0
   );
 
-  const remaining = Number(invoice.grandTotal) - totalPaid;
+  const isAdvance = invoice.invoiceNumber === 'ADVANCE';
+
+  let remaining;
+  if (isAdvance) {
+    remaining = Number(payment.amount) - Number(payment.amountAllocated || 0);
+  } else {
+    remaining = Number(invoice.grandTotal) - totalPaid;
+  }
   const roundedRemaining = Math.round(remaining * 100) / 100;
 
   let label = "Amount Remaining";
@@ -38,7 +45,14 @@ module.exports = (payment, invoice, settings) => {
   let cssClass = "danger";
   let showFifthColumn = true;
 
-  if (roundedRemaining < 0) {
+  if (isAdvance) {
+    label = "Amount Remaining";
+    if (roundedRemaining === 0) {
+      label = "Fully Allocated";
+      cssClass = "settled";
+      displayAmount = 0;
+    }
+  } else if (roundedRemaining < 0) {
     label = "Amount Credited";
     cssClass = "credit";
   } else if (roundedRemaining === 0) {
@@ -47,6 +61,11 @@ module.exports = (payment, invoice, settings) => {
     displayAmount = 0;
     showFifthColumn = false;
   }
+
+  const displayInvoiceNumber = isAdvance ? (payment.paymentNumber || "Advance Payment") : invoice.invoiceNumber;
+  const invoiceHeader = isAdvance ? "Advance Payment" : "Invoice Number";
+  const amountHeader = isAdvance ? "Total Amount" : "Amount";
+  const paidHeader = isAdvance ? "Allocated Amount" : "Amount Paid";
 
   //////////////////////////////////////////////////////
   // SAFE DATE FORMAT
@@ -317,19 +336,19 @@ module.exports = (payment, invoice, settings) => {
     <table>
       <thead>
         <tr>
-          <th>Invoice Number</th>
-          <th>Invoice Date</th>
-          <th>Invoice Amount (${symbol})</th>
-          <th>Amount Paid (${symbol})</th>
+          <th>${invoiceHeader}</th>
+          <th>Date</th>
+          <th>${amountHeader} (${symbol})</th>
+          <th>${paidHeader} (${symbol})</th>
           ${showFifthColumn ? `<th>${label}</th>` : ""}
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td>${invoice.invoiceNumber}</td>
+          <td>${displayInvoiceNumber}</td>
           <td>${invoiceDate}</td>
-          <td>${symbol} ${Number(invoice.grandTotal).toFixed(2)}</td>
-          <td>${symbol} ${Number(payment.amount).toFixed(2)}</td>
+          <td>${symbol} ${Number(invoice.totalAmount || invoice.grandTotal || 0).toFixed(2)}</td>
+          <td>${symbol} ${isAdvance ? Number(payment.amountAllocated || 0).toFixed(2) : Number(payment.amount).toFixed(2)}</td>
           ${showFifthColumn ? `
           <td class="${cssClass}">
             ${symbol} ${displayAmount.toFixed(2)}

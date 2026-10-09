@@ -121,7 +121,16 @@ class TaxEngine {
     });
 
     if (activeRates.length === 0) {
-      throw new RateResolutionError(`TaxRule ID '${taxRuleId}' has no active TaxRates on or before ${transactionDate.toISOString()}`);
+      const taxRule = await txClient.taxRule.findUnique({ where: { id: taxRuleId } });
+      if (taxRule) {
+        activeRates.push({
+          id: null,
+          rate: taxRule.rate,
+          name: taxRule.name
+        });
+      } else {
+        throw new RateResolutionError(`TaxRule ID '${taxRuleId}' has no active TaxRates on or before ${transactionDate.toISOString()}`);
+      }
     }
 
     // 4. Validation against requested taxPercent is removed because the rate is now resolved server-side.

@@ -251,6 +251,7 @@ exports.getBusinessById = async (req, res) => {
           orderBy: { date: "desc" },
         },
         bills: {
+          include: { vendor: true },
           orderBy: { billDate: "desc" },
         },
       },

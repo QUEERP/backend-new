@@ -697,7 +697,7 @@ exports.downloadPaymentPdf = async (req, res) => {
     const pdfBuffer = await generatePaymentPdfHelper(payment, invoice, settings);
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="Payment_Slip_${payment.paymentNumber || payment.id}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="Payment_Receipt_${payment.paymentNumber || payment.id}.pdf"`);
     res.setHeader('Content-Length', pdfBuffer.length);
     
     return res.end(pdfBuffer);
