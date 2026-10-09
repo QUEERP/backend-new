@@ -343,6 +343,11 @@ model Customer {
   payments            Payment[]
   recurringInvoices   RecurringInvoice[]
   salesReturns        SalesReturn[]
+  bankName            String?
+  accountName         String?
+  accountNumber       String?
+  swiftCode           String?
+  iban                String?
 
   @@index([businessId])
   @@index([accountOwnerId])
@@ -720,7 +725,7 @@ model Payslip {
   employeeName  String
   overtimePay   Float    @default(0)
   loanDeduction Float    @default(0)
-  employee      Employee @relation(fields: [employeeId], references: [id])
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   payroll       Payroll  @relation(fields: [payrollId], references: [id])
 }
 
@@ -743,7 +748,7 @@ model Leave {
   duration   String
   createdAt  DateTime @default(now())
   status     String   @default("PENDING")
-  employee   Employee @relation(fields: [employeeId], references: [id])
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model BankChangeRequest {
@@ -757,7 +762,7 @@ model BankChangeRequest {
   createdAt         DateTime      @default(now())
   Code              String
   country           String
-  employee          Employee      @relation(fields: [employeeId], references: [id])
+  employee          Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model Overtime {
@@ -768,7 +773,7 @@ model Overtime {
   date          DateTime
   createdAt     DateTime @default(now())
   business      Business @relation(fields: [businessId], references: [id])
-  employee      Employee @relation(fields: [employeeId], references: [id])
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([businessId, employeeId])
 }
@@ -783,7 +788,7 @@ model Loan {
   startDate       DateTime
   status          String   @default("active")
   createdAt       DateTime @default(now())
-  employee        Employee @relation(fields: [employeeId], references: [id])
+  employee        Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 model Expense {
@@ -814,7 +819,7 @@ model Expense {
   exchangeRate     Float?            @default(1.0)
   business         Business          @relation(fields: [businessId], references: [id])
   customer         Customer?         @relation(fields: [customerId], references: [id])
-  employee         Employee?         @relation(fields: [employeeId], references: [id])
+  employee         Employee?         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   finance          User?             @relation("ExpenseFinance", fields: [financeId], references: [id])
   manager          User?             @relation("ExpenseManager", fields: [managerId], references: [id])
   project          Project?          @relation(fields: [projectId], references: [id])
@@ -1740,7 +1745,7 @@ model TimeEntry {
   status         String        @default("DRAFT")
   business       Business      @relation(fields: [businessId], references: [id])
   businessUser   BusinessUser? @relation(fields: [businessUserId], references: [id])
-  employee       Employee?     @relation(fields: [employeeId], references: [id])
+  employee       Employee?     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   task           ProjectTask?  @relation(fields: [taskId], references: [id])
 }

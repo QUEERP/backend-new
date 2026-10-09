@@ -47,6 +47,13 @@ exports.createCustomer = async (req, res) => {
       tags,
       description,
       crmStatus = "ACTIVE",
+
+      // Bank Details
+      bankName,
+      accountName,
+      accountNumber,
+      swiftCode,
+      iban,
     } = req.body;
 
     //////////////////////////////////////////////////////
@@ -146,6 +153,13 @@ exports.createCustomer = async (req, res) => {
         tags: formattedTags,
         description,
         crmStatus,
+
+        // Bank Details
+        bankName,
+        accountName,
+        accountNumber,
+        swiftCode,
+        iban,
       },
       include: {
       },

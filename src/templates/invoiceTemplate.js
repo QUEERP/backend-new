@@ -34,7 +34,28 @@ module.exports = (invoice, settings = {}) => {
   const itemizedTaxes = [];
 
   (invoice.items || []).forEach((item, idx) => {
-    const taxes = item.taxDetails || [];
+    let taxes = [];
+    try {
+      taxes = typeof item.taxDetails === 'string' ? JSON.parse(item.taxDetails) : (item.taxDetails || []);
+    } catch(e) { taxes = []; }
+    if (!Array.isArray(taxes)) taxes = [];
+
+    if (taxes.length === 0) {
+      if (item.taxPercent > 0) {
+        taxes.push({ name: 'Tax', rate: item.taxPercent, amount: item.totalTax || ((item.quantity || item.hours || 0) * item.rate * item.taxPercent / 100) });
+      } else if (item.cgstPercent > 0 || item.sgstPercent > 0 || item.igstPercent > 0) {
+        let baseAmount = (item.quantity || item.hours || 0) * item.rate;
+        if (item.cgstPercent > 0) taxes.push({ name: 'CGST', rate: item.cgstPercent, amount: (baseAmount * item.cgstPercent / 100) });
+        if (item.sgstPercent > 0) taxes.push({ name: 'SGST', rate: item.sgstPercent, amount: (baseAmount * item.sgstPercent / 100) });
+        if (item.igstPercent > 0) taxes.push({ name: 'IGST', rate: item.igstPercent, amount: (baseAmount * item.igstPercent / 100) });
+      } else if (item.totalTax > 0) {
+        taxes.push({ name: 'Tax', rate: ((item.totalTax / ((item.quantity || item.hours || 0) * item.rate)) * 100).toFixed(2), amount: item.totalTax });
+      }
+    }
+
+    // Attach processed taxes back to item for later rendering in table
+    item.processedTaxes = taxes;
+
     const itemTaxes = [];
     
     taxes.forEach(t => {
@@ -79,12 +100,12 @@ module.exports = (invoice, settings = {}) => {
       <div style="color:#1f4e79; font-weight:bold; border-bottom:1px solid #ddd; padding-bottom:4px; margin-bottom:8px; text-transform:uppercase;">Bank Details</div>
       <div style="display:grid; grid-template-columns: 1.2fr 1fr; gap:10px;">
         <div>
-          <strong>Bank Name:</strong> ${settings.bankName || '-'}<br/>
-          <strong>Account Name:</strong> ${settings.accountName || '-'}
+          <strong>Bank Name:</strong> ${invoice.customer?.bankName || settings.bankName || '-'}<br/>
+          <strong>Account Name:</strong> ${invoice.customer?.accountName || settings.accountName || '-'}
         </div>
         <div>
-          <strong>IBAN:</strong> ${settings.accountNumber || settings.iban || '-'}<br/>
-          <strong>Swift:</strong> ${settings.swiftCode || '-'}
+          <strong>IBAN:</strong> ${invoice.customer?.iban || invoice.customer?.accountNumber || settings.accountNumber || settings.iban || '-'}<br/>
+          <strong>Swift:</strong> ${invoice.customer?.swiftCode || settings.swiftCode || '-'}
         </div>
       </div>
     </div>
@@ -205,7 +226,7 @@ module.exports = (invoice, settings = {}) => {
           <td>${i.description}</td>
           <td style="text-align:center;">${i.quantity || i.hours || 0}</td>
           <td style="text-align:right;">${fmt(i.rate)}</td>
-          <td style="text-align:right;">${fmt(i.totalAmount)}</td>
+          <td style="text-align:right;">${fmt(i.totalAmount || i.amount || ((i.quantity || i.hours || 0) * i.rate))}</td>
         </tr>
         ` : `
         <tr>
@@ -213,7 +234,7 @@ module.exports = (invoice, settings = {}) => {
           <td>${i.itemName ? '<b>' + i.itemName + '</b><br/>' : ''}${i.description}</td>
           <td style="text-align:center;">${i.quantity || i.hours || 0}</td>
           <td style="text-align:right;">${fmt(i.rate)}</td>
-          <td style="text-align:right;">${fmt(i.totalAmount)}</td>
+          <td style="text-align:right;">${fmt(i.totalAmount || i.amount || ((i.quantity || i.hours || 0) * i.rate))}</td>
         </tr>
         `).join('')}
       </tbody>
@@ -240,14 +261,14 @@ module.exports = (invoice, settings = {}) => {
           ${hasTax ? `<tr><td>Tax</td><td style="text-align:right;">${sym} ${fmt(invoice.totalTax)}</td></tr>` : ''}
           ${invoice.tds ? `<tr><td>TDS</td><td style="text-align:right;">- ${sym} ${fmt(invoice.tds)}</td></tr>` : ''}
           <tr class="total-row">
-            <td>Total Amount</td><td style="text-align:right;">${sym} ${fmt(invoice.grandTotal)}</td>
+            <td>Total Amount</td><td style="text-align:right;">${sym} ${fmt((invoice.totalAmount || invoice.grandTotal || 0))}</td>
           </tr>
           ${invoice.amountPaid ? `
           <tr>
             <td style="padding: 12px 0; font-weight: bold;">Amount Paid</td><td style="text-align:right; font-weight: bold; color: #16a34a;">- ${sym} ${fmt(invoice.amountPaid)}</td>
           </tr>
           <tr class="total-row">
-            <td>Balance Due</td><td style="text-align:right; color: #dc2626;">${sym} ${fmt(invoice.grandTotal - invoice.amountPaid)}</td>
+            <td>Balance Due</td><td style="text-align:right; color: #dc2626;">${sym} ${fmt((invoice.totalAmount || invoice.grandTotal || 0) - invoice.amountPaid)}</td>
           </tr>
           ` : ''}
         </table>
@@ -260,7 +281,7 @@ module.exports = (invoice, settings = {}) => {
        <div>
          <div><strong>Payment Method:</strong> Bank Transfer</div>
          <div><strong>Due Date:</strong> ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'}) : '-'}</div>
-         <div><strong>Bank Account:</strong> ${settings.accountNumber || settings.iban || '-'}</div>
+         <div><strong>Bank Account:</strong> ${invoice.customer?.accountNumber || invoice.customer?.iban || settings.accountNumber || settings.iban || '-'}</div>
        </div>
        <div style="text-align: right;">
          <div style="margin-bottom: 20px;">Date : ${new Date(invoice.invoiceDate).toLocaleDateString('en-US', {month:'long', day:'numeric', year:'numeric'})}</div>
@@ -383,14 +404,14 @@ module.exports = (invoice, settings = {}) => {
           <td>${i.description}</td>
           <td style="text-align:center;">${i.quantity || i.hours || 0}</td>
           <td style="text-align:center;">${fmt(i.rate)}</td>
-          <td style="text-align:right;">${fmt(i.totalAmount)}</td>
+          <td style="text-align:right;">${fmt(i.totalAmount || i.amount || ((i.quantity || i.hours || 0) * i.rate))}</td>
         </tr>
         ` : `
         <tr>
             <td style="font-weight:bold; color:#333;">${i.itemName ? i.itemName + ' - ' : ''}${i.description}</td>
           <td style="text-align:center;">${fmt(i.rate)}</td>
           <td style="text-align:center;">${i.quantity || i.hours || 0}</td>
-          <td style="text-align:right;">${fmt(i.totalAmount)}</td>
+          <td style="text-align:right;">${fmt(i.totalAmount || i.amount || ((i.quantity || i.hours || 0) * i.rate))}</td>
         </tr>
         `).join('')}
       </tbody>
@@ -400,9 +421,9 @@ module.exports = (invoice, settings = {}) => {
       <div>
         <div class="dark-label">Payment Method :</div>
         <div class="info-block">
-          <strong>Account No :</strong> <div>${settings.accountNumber || '-'}</div>
-          <strong>Account Name :</strong> <div>${settings.accountName || '-'}</div>
-          <strong>Bank :</strong> <div>${settings.bankName || '-'}</div>
+          <strong>Account No :</strong> <div>${invoice.customer?.accountNumber || settings.accountNumber || '-'}</div>
+          <strong>Account Name :</strong> <div>${invoice.customer?.accountName || settings.accountName || '-'}</div>
+          <strong>Bank :</strong> <div>${invoice.customer?.bankName || settings.bankName || '-'}</div>
         </div>
         
         <div style="margin-top: 30px;">
@@ -438,7 +459,7 @@ module.exports = (invoice, settings = {}) => {
              </table>
              <div class="total-box">
                <span>TOTAL</span>
-               <span>${sym} ${fmt(invoice.grandTotal)}</span>
+               <span>${sym} ${fmt((invoice.totalAmount || invoice.grandTotal || 0))}</span>
              </div>
              ${invoice.amountPaid ? `
              <div style="background: #f4f4f4; color: #333; font-weight: bold; padding: 10px 15px; display: flex; justify-content: space-between; font-size: 13px; margin-top: 2px;">
@@ -447,7 +468,7 @@ module.exports = (invoice, settings = {}) => {
              </div>
              <div class="total-box" style="background: #dc2626; margin-top: 2px;">
                <span>BALANCE DUE</span>
-               <span>${sym} ${fmt(invoice.grandTotal - invoice.amountPaid)}</span>
+               <span>${sym} ${fmt((invoice.totalAmount || invoice.grandTotal || 0) - invoice.amountPaid)}</span>
              </div>
              ` : ''}
           </div>
@@ -615,7 +636,7 @@ module.exports = (invoice, settings = {}) => {
           </td>
           <td class="text-center">${i.quantity || i.hours || 0}</td>
           <td class="text-center">${fmt(i.rate)}</td>
-          <td class="text-right">${fmt(i.totalAmount)}</td>
+          <td class="text-right">${fmt(i.totalAmount || i.amount || ((i.quantity || i.hours || 0) * i.rate))}</td>
         </tr>
         ` : `
         <tr>
@@ -627,9 +648,9 @@ module.exports = (invoice, settings = {}) => {
           <td class="text-center">${i.hsnSacCode || '-'}</td>
           <td class="text-center">${i.quantity || i.hours || 0}</td>
           <td class="text-center">${fmt(i.rate)}</td>
-          <td class="text-center" style="font-size:8px;">${(i.taxDetails || []).map(t => `${t.name} (${t.rate}%)`).join('<br/>')}</td>
+          <td class="text-center" style="font-size:8px;">${(i.processedTaxes || []).map(t => `${t.name} (${t.rate}%)`).join('<br/>')}</td>
           <td class="text-center">${fmt(i.totalTax)}</td>
-          <td class="text-right">${fmt(i.totalAmount)}</td>
+          <td class="text-right">${fmt(i.totalAmount || i.amount || ((i.quantity || i.hours || 0) * i.rate))}</td>
         </tr>
         `).join('')}
       </tbody>
@@ -656,7 +677,7 @@ module.exports = (invoice, settings = {}) => {
           ${invoice.tds ? `<tr><td>TDS</td><td class="text-right">- ${sym} ${fmt(invoice.tds)}</td></tr>` : ''}
           <tr class="total-row" style="background:#1f4e79; color:#fff; font-weight:bold;">
             <td style="padding:10px;">Total</td>
-            <td class="text-right" style="padding:10px;">${sym} ${fmt(invoice.grandTotal)}</td>
+            <td class="text-right" style="padding:10px;">${sym} ${fmt((invoice.totalAmount || invoice.grandTotal || 0))}</td>
           </tr>
           ${invoice.amountPaid ? `
           <tr style="background:#f4f4f4; color:#333; font-weight:bold;">
@@ -665,7 +686,7 @@ module.exports = (invoice, settings = {}) => {
           </tr>
           <tr class="total-row" style="background:#dc2626; color:#fff; font-weight:bold;">
             <td style="padding:10px;">Balance Due</td>
-            <td class="text-right" style="padding:10px;">${sym} ${fmt(invoice.grandTotal - invoice.amountPaid)}</td>
+            <td class="text-right" style="padding:10px;">${sym} ${fmt((invoice.totalAmount || invoice.grandTotal || 0) - invoice.amountPaid)}</td>
           </tr>
           ` : ''}
         </table>
