@@ -13,43 +13,294 @@ const registry = {
       { code: "GSTR3B", name: "GSTR-3B (Summary Return)", type: "SUMMARY" }
     ],
     builders: {
-      "GSTR1": async (businessId, filters) => {
+      "GSTR1": async (businessId, filters = {}) => {
+        const { isInterStateSupply } = require("../../services/gstTaxReportService");
+
+        const business = await prisma.business.findUnique({
+          where: { id: businessId },
+          include: { baseCurrency: true }
+        });
+
+        const invoiceWhere = {
+          businessId,
+          isDeleted: false,
+          status: { notIn: ['DRAFT', 'CANCELLED'] }
+        };
+
+        const from = filters.fromDate || filters.startDate;
+        const to = filters.toDate || filters.endDate;
+        if (from || to) {
+          invoiceWhere.invoiceDate = {};
+          if (from) invoiceWhere.invoiceDate.gte = new Date(from);
+          if (to) invoiceWhere.invoiceDate.lte = new Date(to);
+        }
+
         const invoices = await prisma.invoice.findMany({
-          where: {
-            businessId,
-            status: { not: 'DRAFT' }
+          where: invoiceWhere,
+          include: {
+            customer: true,
+            items: true,
+            transactionCurrency: true
           },
-          include: { items: true }
+          orderBy: { invoiceDate: 'asc' }
         });
 
         const grouped = {};
+        const rateInvoicesMap = {};
+
         invoices.forEach(inv => {
-          inv.items.forEach(t => {
-            const rate = t.cgstPercent + t.igstPercent || 0; // Simple fallback
+          const fx = Number(inv.exchangeRate || 1);
+          const isInter = isInterStateSupply(business, inv.customer) === true;
+
+          if (inv.items && inv.items.length > 0) {
+            inv.items.forEach(t => {
+              let rate = Number(t.taxPercent ?? ((Number(t.cgstPercent || 0) + Number(t.sgstPercent || 0) + Number(t.igstPercent || 0))));
+              if (rate === 0 && Number(inv.totalTax || 0) > 0 && Number(inv.subtotal || 0) > 0) {
+                rate = Number(((Number(inv.totalTax) / Number(inv.subtotal)) * 100).toFixed(2));
+              }
+
+              const key = rate.toString();
+              if (!grouped[key]) {
+                grouped[key] = {
+                  taxRate: rate,
+                  taxableAmount: 0,
+                  CGST: 0,
+                  SGST: 0,
+                  IGST: 0,
+                  totalTax: 0,
+                  totalTaxBaseCcy: 0,
+                  totalAmount: 0,
+                  invoiceCount: 0
+                };
+                rateInvoicesMap[key] = new Set();
+              }
+
+              const itemAmt = Number(t.amount || (Number(t.quantity || 1) * Number(t.rate || 0)) || 0);
+              const taxableBase = Number((itemAmt * fx).toFixed(2));
+              const taxBase = Number(((t.totalTax != null && t.totalTax > 0 ? t.totalTax : (itemAmt * rate / 100)) * fx).toFixed(2));
+
+              let cgst = 0;
+              let sgst = 0;
+              let igst = 0;
+
+              if (Number(t.igstPercent || 0) > 0) {
+                igst = taxBase;
+              } else if (Number(t.cgstPercent || 0) > 0 || Number(t.sgstPercent || 0) > 0) {
+                cgst = Number((taxBase / 2).toFixed(2));
+                sgst = Number((taxBase - cgst).toFixed(2));
+              } else {
+                if (isInter) {
+                  igst = taxBase;
+                } else {
+                  cgst = Number((taxBase / 2).toFixed(2));
+                  sgst = Number((taxBase - cgst).toFixed(2));
+                }
+              }
+
+              grouped[key].taxableAmount = Number((grouped[key].taxableAmount + taxableBase).toFixed(2));
+              grouped[key].CGST = Number((grouped[key].CGST + cgst).toFixed(2));
+              grouped[key].SGST = Number((grouped[key].SGST + sgst).toFixed(2));
+              grouped[key].IGST = Number((grouped[key].IGST + igst).toFixed(2));
+              grouped[key].totalTax = Number((grouped[key].totalTax + taxBase).toFixed(2));
+              grouped[key].totalTaxBaseCcy = Number((grouped[key].totalTaxBaseCcy + taxBase).toFixed(2));
+              grouped[key].totalAmount = Number((grouped[key].totalAmount + taxableBase + taxBase).toFixed(2));
+              rateInvoicesMap[key].add(inv.id);
+            });
+          } else {
+            // Header-only fallback
+            const subtotalBase = Number(((inv.subtotal || 0) * fx).toFixed(2));
+            const taxBase = Number(((inv.totalTax || 0) * fx).toFixed(2));
+            const rate = subtotalBase > 0 && taxBase > 0 ? Number(((taxBase / subtotalBase) * 100).toFixed(2)) : 0;
             const key = rate.toString();
 
             if (!grouped[key]) {
-              grouped[key] = { taxRate: rate, CGST: 0, SGST: 0, IGST: 0, totalTaxBaseCcy: 0 };
+              grouped[key] = {
+                taxRate: rate,
+                taxableAmount: 0,
+                CGST: 0,
+                SGST: 0,
+                IGST: 0,
+                totalTax: 0,
+                totalTaxBaseCcy: 0,
+                totalAmount: 0,
+                invoiceCount: 0
+              };
+              rateInvoicesMap[key] = new Set();
             }
 
-            const amt = t.totalTax || 0;
+            let cgst = 0;
+            let sgst = 0;
+            let igst = 0;
+            if (isInter) {
+              igst = taxBase;
+            } else {
+              cgst = Number((taxBase / 2).toFixed(2));
+              sgst = Number((taxBase - cgst).toFixed(2));
+            }
 
-            if (t.cgstPercent > 0) grouped[key].CGST += amt / 2;
-            if (t.sgstPercent > 0) grouped[key].SGST += amt / 2;
-            if (t.igstPercent > 0) grouped[key].IGST += amt;
-            
-            grouped[key].totalTaxBaseCcy += amt;
+            grouped[key].taxableAmount = Number((grouped[key].taxableAmount + subtotalBase).toFixed(2));
+            grouped[key].CGST = Number((grouped[key].CGST + cgst).toFixed(2));
+            grouped[key].SGST = Number((grouped[key].SGST + sgst).toFixed(2));
+            grouped[key].IGST = Number((grouped[key].IGST + igst).toFixed(2));
+            grouped[key].totalTax = Number((grouped[key].totalTax + taxBase).toFixed(2));
+            grouped[key].totalTaxBaseCcy = Number((grouped[key].totalTaxBaseCcy + taxBase).toFixed(2));
+            grouped[key].totalAmount = Number((grouped[key].totalAmount + subtotalBase + taxBase).toFixed(2));
+            rateInvoicesMap[key].add(inv.id);
+          }
+        });
+
+        // Set invoice counts per rate
+        Object.keys(grouped).forEach(k => {
+          grouped[k].invoiceCount = rateInvoicesMap[k] ? rateInvoicesMap[k].size : 0;
+        });
+
+        const rateRows = Object.values(grouped).sort((a, b) => a.taxRate - b.taxRate);
+
+        // Build invoice outward supply line items (B2B & B2C)
+        const invoiceRows = invoices.map(inv => {
+          const fx = Number(inv.exchangeRate || 1);
+          const isInter = isInterStateSupply(business, inv.customer) === true;
+          const subtotalBase = Number(((inv.subtotal || 0) * fx).toFixed(2));
+          const taxBase = Number(((inv.totalTax || 0) * fx).toFixed(2));
+          const totalBase = Number(((inv.grandTotal || (inv.subtotal + inv.totalTax) || 0) * fx).toFixed(2));
+
+          let invCgst = 0, invSgst = 0, invIgst = 0, maxRate = 0;
+          if (inv.items && inv.items.length > 0) {
+            inv.items.forEach(t => {
+              const itRate = Number(t.taxPercent ?? ((Number(t.cgstPercent || 0) + Number(t.sgstPercent || 0) + Number(t.igstPercent || 0))));
+              if (itRate > maxRate) maxRate = itRate;
+              const itAmt = Number(t.amount || 0);
+              const itTax = Number(((t.totalTax != null && t.totalTax > 0 ? t.totalTax : (itAmt * itRate / 100)) * fx).toFixed(2));
+              if (Number(t.igstPercent || 0) > 0 || isInter) {
+                invIgst += itTax;
+              } else {
+                const half = Number((itTax / 2).toFixed(2));
+                invCgst += half;
+                invSgst += (itTax - half);
+              }
+            });
+          } else {
+            maxRate = subtotalBase > 0 && taxBase > 0 ? Number(((taxBase / subtotalBase) * 100).toFixed(2)) : 0;
+            if (isInter) {
+              invIgst = taxBase;
+            } else {
+              invCgst = Number((taxBase / 2).toFixed(2));
+              invSgst = Number((taxBase - invCgst).toFixed(2));
+            }
+          }
+
+          const gstin = inv.customer?.gstin || inv.customer?.taxId || '';
+          const isB2B = Boolean(gstin && gstin.trim().length >= 10);
+
+          return {
+            id: inv.id,
+            invoiceNumber: inv.invoiceNumber,
+            invoiceDate: inv.invoiceDate || inv.createdAt,
+            customerName: inv.customer?.company || inv.customer?.name || 'Walk-in Customer',
+            gstin: gstin || 'URP (Unregistered)',
+            supplyType: isB2B ? 'B2B' : 'B2C',
+            placeOfSupply: isInter ? 'Inter-State' : 'Intra-State',
+            taxableAmount: subtotalBase,
+            taxRate: maxRate,
+            cgst: Number(invCgst.toFixed(2)),
+            sgst: Number(invSgst.toFixed(2)),
+            igst: Number(invIgst.toFixed(2)),
+            totalTax: taxBase,
+            totalAmount: totalBase,
+            status: inv.status
+          };
+        });
+
+        // Build HSN / SAC Summary
+        const hsnGrouped = {};
+        invoices.forEach(inv => {
+          const fx = Number(inv.exchangeRate || 1);
+          const isInter = isInterStateSupply(business, inv.customer) === true;
+          (inv.items || []).forEach(t => {
+            const hsn = t.hsnSacCode || 'N/A';
+            const itRate = Number(t.taxPercent ?? ((Number(t.cgstPercent || 0) + Number(t.sgstPercent || 0) + Number(t.igstPercent || 0))));
+            const itAmt = Number(t.amount || 0);
+            const taxableBase = Number((itAmt * fx).toFixed(2));
+            const itTax = Number(((t.totalTax != null && t.totalTax > 0 ? t.totalTax : (itAmt * itRate / 100)) * fx).toFixed(2));
+
+            if (!hsnGrouped[hsn]) {
+              hsnGrouped[hsn] = {
+                hsnCode: hsn,
+                description: t.description || t.itemName || 'Supplies',
+                uqc: t.unit || 'NOS',
+                totalQuantity: 0,
+                taxableAmount: 0,
+                taxRate: itRate,
+                cgst: 0,
+                sgst: 0,
+                igst: 0,
+                totalTax: 0
+              };
+            }
+
+            hsnGrouped[hsn].totalQuantity += Number(t.quantity || 1);
+            hsnGrouped[hsn].taxableAmount = Number((hsnGrouped[hsn].taxableAmount + taxableBase).toFixed(2));
+            hsnGrouped[hsn].totalTax = Number((hsnGrouped[hsn].totalTax + itTax).toFixed(2));
+            if (Number(t.igstPercent || 0) > 0 || isInter) {
+              hsnGrouped[hsn].igst = Number((hsnGrouped[hsn].igst + itTax).toFixed(2));
+            } else {
+              const half = Number((itTax / 2).toFixed(2));
+              hsnGrouped[hsn].cgst = Number((hsnGrouped[hsn].cgst + half).toFixed(2));
+              hsnGrouped[hsn].sgst = Number((hsnGrouped[hsn].sgst + (itTax - half)).toFixed(2));
+            }
           });
         });
 
+        const hsnRows = Object.values(hsnGrouped);
+
+        const summaryTotals = {
+          totalInvoices: invoices.length,
+          totalTaxableAmount: Number(rateRows.reduce((sum, r) => sum + r.taxableAmount, 0).toFixed(2)),
+          totalCgst: Number(rateRows.reduce((sum, r) => sum + r.CGST, 0).toFixed(2)),
+          totalSgst: Number(rateRows.reduce((sum, r) => sum + r.SGST, 0).toFixed(2)),
+          totalIgst: Number(rateRows.reduce((sum, r) => sum + r.IGST, 0).toFixed(2)),
+          totalTax: Number(rateRows.reduce((sum, r) => sum + r.totalTax, 0).toFixed(2)),
+          totalAmount: Number(rateRows.reduce((sum, r) => sum + r.totalAmount, 0).toFixed(2))
+        };
+
         return {
           reportName: "GSTR-1 (Outward Supplies)",
-          data: Object.values(grouped)
+          data: rateRows,
+          invoices: invoiceRows,
+          hsnSummary: hsnRows,
+          summary: summaryTotals,
+          sections: [
+            {
+              name: "Rate-wise Tax Summary (Table 8)",
+              data: rateRows
+            },
+            {
+              name: "Outward Taxable Supplies (B2B / B2C Invoices)",
+              data: invoiceRows
+            },
+            {
+              name: "HSN / SAC Summary (Table 12)",
+              data: hsnRows
+            }
+          ]
         };
       },
-      "GSTR3B": async (businessId, filters) => {
+      "GSTR3B": async (businessId, filters = {}) => {
+        const invoiceWhere = {
+          businessId,
+          isDeleted: false,
+          status: { notIn: ['DRAFT', 'CANCELLED'] }
+        };
+        const from = filters.fromDate || filters.startDate;
+        const to = filters.toDate || filters.endDate;
+        if (from || to) {
+          invoiceWhere.invoiceDate = {};
+          if (from) invoiceWhere.invoiceDate.gte = new Date(from);
+          if (to) invoiceWhere.invoiceDate.lte = new Date(to);
+        }
+
         const invoices = await prisma.invoice.findMany({
-          where: { businessId, status: { not: 'DRAFT' } },
+          where: invoiceWhere,
           include: { items: true }
         });
 
@@ -73,9 +324,9 @@ const registry = {
         // Helper to add values
         const addValues = (target, item, sign, isTable4 = false) => {
           if (!isTable4) {
-            target.taxableValue += item.amount * sign;
+            target.taxableValue += (item.amount || 0) * sign;
           }
-          const amt = item.totalTax * sign;
+          const amt = (item.totalTax || 0) * sign;
           if (item.cgstPercent > 0) {
             target.CGST += amt / 2;
             target.SGST += amt / 2;
@@ -86,34 +337,43 @@ const registry = {
         };
 
         invoices.forEach(inv => {
-          inv.items.forEach(t => {
+          (inv.items || []).forEach(t => {
             const type = 'INVOICE';
-            const rate = t.cgstPercent + t.igstPercent || 0;
+            const rate = Number(t.taxPercent ?? ((Number(t.cgstPercent || 0) + Number(t.sgstPercent || 0) + Number(t.igstPercent || 0))));
             const cat = null;
 
-          // TABLE 3.1
-          if (['INVOICE', 'CREDIT_NOTE'].includes(type)) {
-            const sign = type === 'CREDIT_NOTE' ? -1 : 1;
-            if (rate > 0 && cat !== 'ZERO_RATED' && cat !== 'REVERSE_CHARGE') {
-              addValues(table3_1["(a) Outward taxable supplies (other than zero rated, nil rated and exempted)"], t, sign);
-            } else if (cat === 'ZERO_RATED') {
-              addValues(table3_1["(b) Outward taxable supplies (zero rated)"], t, sign);
-            } else if (rate === 0) {
-              addValues(table3_1["(c) Other outward supplies (Nil rated, exempted)"], t, sign);
+            // TABLE 3.1
+            if (['INVOICE', 'CREDIT_NOTE'].includes(type)) {
+              const sign = type === 'CREDIT_NOTE' ? -1 : 1;
+              if (rate > 0 && cat !== 'ZERO_RATED' && cat !== 'REVERSE_CHARGE') {
+                addValues(table3_1["(a) Outward taxable supplies (other than zero rated, nil rated and exempted)"], t, sign);
+              } else if (cat === 'ZERO_RATED') {
+                addValues(table3_1["(b) Outward taxable supplies (zero rated)"], t, sign);
+              } else if (rate === 0) {
+                addValues(table3_1["(c) Other outward supplies (Nil rated, exempted)"], t, sign);
+              }
             }
-          }
           });
         });
 
+        const billWhere = {
+          businessId,
+          status: { in: ['UNPAID', 'PARTIALLY_PAID', 'PAID'] }
+        };
+        if (from || to) {
+          billWhere.billDate = {};
+          if (from) billWhere.billDate.gte = new Date(from);
+          if (to) billWhere.billDate.lte = new Date(to);
+        }
+
         const bills = await prisma.bill.findMany({
-          where: { businessId, status: { not: 'DRAFT' } },
+          where: billWhere,
           include: { items: true }
         });
 
         bills.forEach(bill => {
-          bill.items.forEach(t => {
-            const rate = t.cgstPercent + t.igstPercent || 0;
-            
+          (bill.items || []).forEach(t => {
+            const rate = Number(t.taxPercent ?? ((Number(t.cgstPercent || 0) + Number(t.sgstPercent || 0) + Number(t.igstPercent || 0))));
             if (rate > 0) {
               addValues(table4["(A)(5) All other ITC"], t, 1, true);
             }
@@ -136,16 +396,20 @@ const registry = {
           }));
         };
 
+        const sec31 = formatTable(table3_1);
+        const sec4 = formatTable(table4);
+
         return {
           reportName: "GSTR-3B (Summary Return)",
+          data: [...sec31, ...sec4],
           sections: [
             {
               name: "3.1 Details of Outward Supplies and inward supplies liable to reverse charge",
-              data: formatTable(table3_1)
+              data: sec31
             },
             {
               name: "4. Eligible ITC",
-              data: formatTable(table4)
+              data: sec4
             }
           ]
         };
@@ -409,11 +673,36 @@ const registry = {
 
 // Generic builder for simple net-tax returns
 const buildGenericReturn = async (businessId, filters, reportName) => {
+  const invoiceWhere = {
+    businessId,
+    isDeleted: false,
+    status: { notIn: ['DRAFT', 'CANCELLED'] }
+  };
+  const billWhere = {
+    businessId,
+    status: { in: ['UNPAID', 'PARTIALLY_PAID', 'PAID'] }
+  };
+
+  const from = filters?.fromDate || filters?.startDate;
+  const to = filters?.toDate || filters?.endDate;
+  if (from || to) {
+    invoiceWhere.invoiceDate = {};
+    billWhere.billDate = {};
+    if (from) {
+      invoiceWhere.invoiceDate.gte = new Date(from);
+      billWhere.billDate.gte = new Date(from);
+    }
+    if (to) {
+      invoiceWhere.invoiceDate.lte = new Date(to);
+      billWhere.billDate.lte = new Date(to);
+    }
+  }
+
   const invoices = await prisma.invoice.findMany({
-    where: { businessId, status: { not: 'DRAFT' } }
+    where: invoiceWhere
   });
   const bills = await prisma.bill.findMany({
-    where: { businessId, status: { not: 'DRAFT' } }
+    where: billWhere
   });
 
   let totalCollected = 0;
@@ -424,19 +713,22 @@ const buildGenericReturn = async (businessId, filters, reportName) => {
   });
 
   bills.forEach(t => {
-    totalPaid += t.totalTax || 0;
+    totalPaid += t.totalTax || t.tax || 0;
   });
+
+  const summaryData = [
+    { category: "Total Tax Collected (Sales)", amount: totalCollected },
+    { category: "Total Tax Paid (Purchases)", amount: totalPaid },
+    { category: "Net Tax (Collected - Paid)", amount: (totalCollected - totalPaid) }
+  ];
 
   return {
     reportName,
+    data: summaryData,
     sections: [
       {
         name: "Summary",
-        data: [
-          { category: "Total Tax Collected (Sales)", amount: totalCollected },
-          { category: "Total Tax Paid (Purchases)", amount: totalPaid },
-          { category: "Net Tax (Collected - Paid)", amount: (totalCollected - totalPaid) }
-        ]
+        data: summaryData
       }
     ]
   };

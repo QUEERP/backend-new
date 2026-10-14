@@ -32,15 +32,23 @@ const verifyToken = (token) => {
 //////////////////////////////////////////////////////
 const extractTokenFromHeader = (req) => {
   const header = req.headers.authorization;
-  if (!header) {
-    if (req.query && req.query.token) return req.query.token;
-    return null;
+  if (header) {
+    const parts = header.split(" ");
+    if (parts.length === 2 && parts[0] === "Bearer") return parts[1];
   }
 
-  const parts = header.split(" ");
-  if (parts.length !== 2 || parts[0] !== "Bearer") return null;
+  if (req.query && req.query.token) return req.query.token;
 
-  return parts[1];
+  if (req.cookies && (req.cookies.token || req.cookies.accessToken)) {
+    return req.cookies.token || req.cookies.accessToken;
+  }
+
+  if (req.headers && req.headers.cookie) {
+    const match = req.headers.cookie.match(/(?:^|;\s*)(?:token|accessToken)=([^;]+)/);
+    if (match) return decodeURIComponent(match[1]);
+  }
+
+  return null;
 };
 
 //////////////////////////////////////////////////////

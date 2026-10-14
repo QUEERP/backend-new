@@ -98,11 +98,40 @@ exports.exportCurrencyTransactions = async (req, res) => {
     }
 
     if (exportFormat === 'pdf') {
+      const settings = await prisma.settings.findUnique({ where: { businessId } }).catch(() => null);
+
+      let totalSalesBase = 0;
+      let totalPurchasesBase = 0;
+      let totalVolumeBase = 0;
+
+      allTransactions.forEach(t => {
+        const amt = Number(t['Base Currency Amount']) || 0;
+        const type = (t.Type || '').toLowerCase();
+        totalVolumeBase += amt;
+        if (['invoice', 'salesorder', 'quotation'].includes(type)) {
+          totalSalesBase += amt;
+        } else if (['bill', 'purchaseorder', 'purchaserequest'].includes(type)) {
+          totalPurchasesBase += amt;
+        }
+      });
+
+      const sym = business.baseCurrency?.symbol || '₹';
+      const periodLabel = fromDate && toDate
+        ? `${new Date(fromDate).toLocaleDateString()} — ${new Date(toDate).toLocaleDateString()}`
+        : (fromDate ? `From ${new Date(fromDate).toLocaleDateString()}` : (toDate ? `Up to ${new Date(toDate).toLocaleDateString()}` : 'All Historic Records'));
+
+      const kpis = [
+        { label: 'Total Sales (Tax-Incl)', value: `${sym} ${totalSalesBase.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, subtext: 'Invoices, orders & quotations' },
+        { label: 'Total Purchases (Tax-Incl)', value: `${sym} ${totalPurchasesBase.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, subtext: 'Vendor orders & bills' },
+        { label: 'Total Business Volume', value: `${sym} ${totalVolumeBase.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, subtext: `Converted to ${baseCcy}` },
+        { label: 'Total Records', value: `${allTransactions.length}`, subtext: 'Multi-currency ledger entries' },
+      ];
+
       const headers = [
         "Date", "Type", "Document Number", "Party Name", 
         "Txn Ccy", "Base Ccy", "Ex Rate", "Txn Amount", "Base Amount"
       ];
-      const colWidths = [60, 80, 100, 100, 40, 40, 50, 70, 70];
+      const colWidths = [70, 75, 95, 120, 50, 50, 55, 75, 80];
       const dataRows = allTransactions.map(t => [
         t.Date,
         t.Type,
@@ -114,7 +143,29 @@ exports.exportCurrencyTransactions = async (req, res) => {
         Number(t['Foreign Currency Amount']).toFixed(2),
         Number(t['Base Currency Amount']).toFixed(2)
       ]);
-      return buildPDF(res, "Currency Transactions Report", headers, colWidths, dataRows, business.name);
+
+      const totalsRow = {
+        'Date': 'Total Ledger Volume',
+        'Type': '',
+        'Document Number': '',
+        'Party Name': '',
+        'Txn Ccy': '',
+        'Base Ccy': baseCcy,
+        'Ex Rate': '',
+        'Txn Amount': '',
+        'Base Amount': `${sym} ${totalVolumeBase.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      };
+
+      return await buildPDF(res, "Currency Transactions Report", headers, colWidths, dataRows, business.name, {
+        subtitle: `Consolidated Multi-Currency Conversion & Base Valuation (${baseCcy})`,
+        business,
+        settings: settings || { companyName: business.name },
+        period: periodLabel,
+        kpis,
+        totals: totalsRow,
+        currencySymbol: sym,
+        baseCurrency: baseCcy
+      });
     }
 
     return res.status(400).json({ success: false, message: "Invalid format requested" });
