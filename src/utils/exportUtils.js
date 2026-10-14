@@ -73,8 +73,21 @@ const sendJSON = (res, filename, data) => {
   res.send(JSON.stringify(data, null, 2));
 };
 
+const sendCSV = (res, filename, data) => {
+  if (!data || data.length === 0) {
+    data = [{ Message: "No data available" }];
+  }
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const csv = XLSX.utils.sheet_to_csv(worksheet);
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename=${filename}_${new Date().toISOString().split('T')[0]}.csv`);
+  res.send(csv);
+};
+
 module.exports = {
   buildPDF,
   sendExcel,
-  sendJSON
+  sendJSON,
+  sendCSV
 };

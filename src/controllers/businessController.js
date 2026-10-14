@@ -42,7 +42,12 @@ exports.getMyData = async (req, res) => {
           customers: { take: 100 },
           invoices: {
             take: 100,
-            include: { customer: true },
+            include: { customer: true, items: true },
+            orderBy: { createdAt: "desc" },
+          },
+          bills: {
+            take: 100,
+            include: { vendor: true, items: true },
             orderBy: { createdAt: "desc" },
           },
           users: {
@@ -85,13 +90,19 @@ exports.getMyData = async (req, res) => {
       where: { ownerId: userId },
 
       include: {
+        baseCurrency: true,
         settings: true,
 
         customers: { take: 100 },
 
         invoices: {
           take: 100,
-          include: { customer: true },
+          include: { customer: true, items: true },
+          orderBy: { createdAt: "desc" },
+        },
+        bills: {
+          take: 100,
+          include: { vendor: true, items: true },
           orderBy: { createdAt: "desc" },
         },
         quotations: {
@@ -161,13 +172,19 @@ exports.getMyData = async (req, res) => {
 
         business: {
           include: {
+            baseCurrency: true,
             settings: true,
 
             customers: { take: 100 },
 
             invoices: {
               take: 100,
-              include: { customer: true },
+              include: { customer: true, items: true },
+              orderBy: { createdAt: "desc" },
+            },
+            bills: {
+              take: 100,
+              include: { vendor: true, items: true },
               orderBy: { createdAt: "desc" },
             },
             quotations: {
@@ -240,9 +257,10 @@ exports.getBusinessById = async (req, res) => {
         ],
       },
       include: {
-        users:true,
+        users: true,
         settings: true,
         customers: true,
+        baseCurrency: true,
         invoices: {
           include: { customer: true },
           orderBy: { createdAt: "desc" },

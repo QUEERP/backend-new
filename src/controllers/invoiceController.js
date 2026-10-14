@@ -8,6 +8,7 @@ const generateInvoiceNumber = require("../utils/generateInvoiceNumber");
 const InventoryService = require("../services/inventoryService");
 const TaxEngine = require("../services/taxEngine");
 const InvoiceWorkflow = require("../services/invoiceWorkflow");
+const { roundHalfUp, getCurrencyDecimals } = require("../services/currencyFxService");
 
 exports.createInvoice = async (req, res) => {
   console.log("=== CREATE INVOICE CALLED ===");
@@ -79,33 +80,68 @@ exports.createInvoice = async (req, res) => {
       return res.status(400).json({ success: false, message: "Customer not found" });
     }
 
+    // Verify Seller State for statutory Indian GST compliance
+    const sellerCountry = (settings?.country || req.business.country || req.business.countryCode || 'IN').trim().toUpperCase();
+    const sellerState = (settings?.state || req.business.state || '').trim();
+    const isIndia = (sellerCountry === 'INDIA' || sellerCountry === 'IN' || req.business.countryCode === 'IN');
+
+    if (isIndia && !sellerState) {
+      return res.status(400).json({
+        success: false,
+        message: "Seller state is not configured in Business Settings. Place of supply cannot be determined for statutory GST compliance. Please update your business state in Settings before creating invoices."
+      });
+    }
+
+    const customerCountry = (customer.country || customer.countryCode || 'IN').trim().toUpperCase();
+    const customerState = (customer.state || customer.billingState || customer.shippingState || '').trim();
+    const isCrossBorder = (sellerCountry !== customerCountry && !['IN','INDIA'].includes(sellerCountry) && !['IN','INDIA'].includes(customerCountry));
+    const isInterState = isCrossBorder || (sellerState.toLowerCase() !== customerState.toLowerCase());
+
     const invoice = await prisma.$transaction(async (tx) => {
       const invoiceNumber = await generateInvoiceNumber(req.business.id);
-      let subtotal = 0;
-      let totalTax = 0;
+      let serverSubtotal = 0;
+      let serverTotalTax = 0;
+      let serverCgst = 0;
+      let serverSgst = 0;
+      let serverIgst = 0;
 
       const invoiceItems = [];
       for (const item of items) {
-        const lineAmount = Number(item.quantity || item.hours || 0) * Number(item.rate || 0);
+        const qty = Number(item.quantity || item.hours || 0);
+        const rate = Number(item.rate || item.price || 0);
+        const lineAmount = qty * rate;
+        serverSubtotal += lineAmount;
 
-        const taxResult = TaxEngine.calculateTax({
-          companyCountry: settings?.country || 'UAE',
-          companyState: settings?.state || '',
-          customerCountry: customer.country || 'UAE',
-          customerState: customer.state || '',
-          
-          lineSubtotal: lineAmount,
-          vatType: vatType || 'exclusive',
-          manualTax: {
-            cgstRate: item.cgstPercent,
-            sgstRate: item.sgstPercent,
-            igstRate: item.igstPercent
+        const taxPct = Number(item.taxPercent ?? ((Number(item.cgstPercent || 0) + Number(item.sgstPercent || 0)) || Number(item.igstPercent || 0) || 0));
+
+        let lineCgstPct = 0;
+        let lineSgstPct = 0;
+        let lineIgstPct = 0;
+        let lineTax = 0;
+        let lineCgst = 0;
+        let lineSgst = 0;
+        let lineIgst = 0;
+
+        if (isIndia) {
+          if (isInterState) {
+            lineIgstPct = taxPct;
+            lineIgst = Number(((lineAmount * lineIgstPct) / 100).toFixed(2));
+            lineTax = lineIgst;
+          } else {
+            lineCgstPct = Number((taxPct / 2).toFixed(2));
+            lineSgstPct = Number((taxPct / 2).toFixed(2));
+            lineCgst = Number(((lineAmount * lineCgstPct) / 100).toFixed(2));
+            lineSgst = Number(((lineAmount * lineSgstPct) / 100).toFixed(2));
+            lineTax = lineCgst + lineSgst;
           }
-        });
+        } else {
+          lineTax = Number(((lineAmount * taxPct) / 100).toFixed(2));
+        }
 
-        const effectiveSubtotal = taxResult.effectiveSubtotal !== undefined ? taxResult.effectiveSubtotal : lineAmount;
-        subtotal += effectiveSubtotal;
-        totalTax += taxResult.totalTaxAmount;
+        serverTotalTax += lineTax;
+        serverCgst += lineCgst;
+        serverSgst += lineSgst;
+        serverIgst += lineIgst;
 
         invoiceItems.push({
           productId: item.productId,
@@ -116,16 +152,15 @@ exports.createInvoice = async (req, res) => {
           itemType: item.itemType || 'GOODS',
           unit: item.unit || null,
           hours: Number(item.hours || item.quantity),
-          quantity: Number(item.quantity || item.hours),
-          rate: Number(item.rate),
-          amount: effectiveSubtotal,
-          taxDetails: taxResult.breakdown,
-          
-          
-          
-          
-          totalTax: taxResult.totalTaxAmount,
-          totalAmount: effectiveSubtotal + taxResult.totalTaxAmount,
+          quantity: qty,
+          rate: rate,
+          amount: lineAmount,
+          taxPercent: taxPct,
+          cgstPercent: lineCgstPct,
+          sgstPercent: lineSgstPct,
+          igstPercent: lineIgstPct,
+          totalTax: lineTax,
+          totalAmount: lineAmount + lineTax,
           discount: Number(item.discount || 0)
         });
 
@@ -139,7 +174,7 @@ exports.createInvoice = async (req, res) => {
               businessId: req.business.id,
               productId: item.productId,
               warehouseId: item.warehouseId,
-              quantity: Number(item.quantity || item.hours),
+              quantity: qty,
               type: "SALE_OUT",
               reference: { referenceNo: invoiceNumber },
               performedBy: req.user.userId,
@@ -149,7 +184,13 @@ exports.createInvoice = async (req, res) => {
         }
       }
 
-      const grandTotal = subtotal + totalTax + Number(shippingCharges) - Number(discount) - Number(tds || 0);
+      // Data-quality check: header tax must equal the sum of line taxes
+      const clientTotalTax = Number(req.body.totalTax ?? ((Number(cgst || 0) + Number(sgst || 0) + Number(igst || 0))));
+      if (req.body.totalTax !== undefined && Math.abs(clientTotalTax - serverTotalTax) > 0.05) {
+        console.warn(`[Tax Reconciled] Client header totalTax (₹${clientTotalTax}) differed from server line tax sum (₹${serverTotalTax}). Overriding header to computed line tax total.`);
+      }
+
+      const grandTotal = serverSubtotal + serverTotalTax + Number(shippingCharges) - Number(discount) - Number(tds || 0);
 
       return tx.invoice.create({
         data: {
@@ -166,14 +207,14 @@ exports.createInvoice = async (req, res) => {
           adminNote: adminNote || settings?.defaultFooterNote || "Thank you",
           terms: terms || settings?.defaultTerms || "Payment due in 30 days",
           designTemplate: finalTemplate,
-          subtotal,
-          totalTax,
+          subtotal: serverSubtotal,
+          totalTax: serverTotalTax,
           discount,
           shippingCharges: Number(shippingCharges),
           grandTotal,
-          cgst: Number(cgst || 0),
-          sgst: Number(sgst || 0),
-          igst: Number(igst || 0),
+          cgst: serverCgst,
+          sgst: serverSgst,
+          igst: serverIgst,
           tds: Number(tds || 0),
           ewayBillNo,
           reverseCharge: !!reverseCharge,
@@ -391,32 +432,65 @@ exports.updateInvoice = async (req, res) => {
       where: { businessId: req.business.id },
     });
 
-    let subtotal = 0;
-    let totalTax = 0;
+    // Verify Seller State for statutory Indian GST compliance
+    const sellerCountry = (settings?.country || req.business.country || req.business.countryCode || 'IN').trim().toUpperCase();
+    const sellerState = (settings?.state || req.business.state || '').trim();
+    const isIndia = (sellerCountry === 'INDIA' || sellerCountry === 'IN' || req.business.countryCode === 'IN');
+
+    if (isIndia && !sellerState) {
+      return res.status(400).json({
+        success: false,
+        message: "Seller state is not configured in Business Settings. Place of supply cannot be determined for statutory GST compliance."
+      });
+    }
+
+    const customerCountry = (customer?.country || customer?.countryCode || 'IN').trim().toUpperCase();
+    const customerState = (customer?.state || customer?.billingState || customer?.shippingState || '').trim();
+    const isCrossBorder = (sellerCountry !== customerCountry && !['IN','INDIA'].includes(sellerCountry) && !['IN','INDIA'].includes(customerCountry));
+    const isInterState = isCrossBorder || (sellerState.toLowerCase() !== customerState.toLowerCase());
+
+    let serverSubtotal = 0;
+    let serverTotalTax = 0;
+    let serverCgst = 0;
+    let serverSgst = 0;
+    let serverIgst = 0;
 
     const newItems = items.map((i) => {
       const qty = Number(i.quantity || i.hours || 0);
       const rate = Number(i.rate || i.price || 0);
       const lineAmount = qty * rate;
+      serverSubtotal += lineAmount;
 
-      const taxResult = TaxEngine.calculateTax({
-        companyCountry: settings?.country || 'UAE',
-        companyState: settings?.state || '',
-        customerCountry: customer?.country || 'UAE',
-        customerState: customer?.state || '',
-        
-        lineSubtotal: lineAmount,
-        vatType: vatType || 'exclusive',
-        manualTax: {
-          cgstRate: i.cgstPercent,
-          sgstRate: i.sgstPercent,
-          igstRate: i.igstPercent
+      const taxPct = Number(i.taxPercent ?? ((Number(i.cgstPercent || 0) + Number(i.sgstPercent || 0)) || Number(i.igstPercent || 0) || 0));
+
+      let lineCgstPct = 0;
+      let lineSgstPct = 0;
+      let lineIgstPct = 0;
+      let lineTax = 0;
+      let lineCgst = 0;
+      let lineSgst = 0;
+      let lineIgst = 0;
+
+      if (isIndia) {
+        if (isInterState) {
+          lineIgstPct = taxPct;
+          lineIgst = Number(((lineAmount * lineIgstPct) / 100).toFixed(2));
+          lineTax = lineIgst;
+        } else {
+          lineCgstPct = Number((taxPct / 2).toFixed(2));
+          lineSgstPct = Number((taxPct / 2).toFixed(2));
+          lineCgst = Number(((lineAmount * lineCgstPct) / 100).toFixed(2));
+          lineSgst = Number(((lineAmount * lineSgstPct) / 100).toFixed(2));
+          lineTax = lineCgst + lineSgst;
         }
-      });
+      } else {
+        lineTax = Number(((lineAmount * taxPct) / 100).toFixed(2));
+      }
 
-      const effectiveSubtotal = taxResult.effectiveSubtotal !== undefined ? taxResult.effectiveSubtotal : lineAmount;
-      subtotal += effectiveSubtotal;
-      totalTax += taxResult.totalTaxAmount;
+      serverTotalTax += lineTax;
+      serverCgst += lineCgst;
+      serverSgst += lineSgst;
+      serverIgst += lineIgst;
 
       const isService = i.description && (
         i.description.toLowerCase().includes('service') ||
@@ -437,19 +511,22 @@ exports.updateInvoice = async (req, res) => {
         hours: qty,
         quantity: qty,
         rate: rate,
-        amount: effectiveSubtotal,
-        taxDetails: taxResult.breakdown,
-        
-        
-        
-        
-        totalTax: taxResult.totalTaxAmount,
-        totalAmount: effectiveSubtotal + taxResult.totalTaxAmount,
+        amount: lineAmount,
+        taxPercent: taxPct,
+        cgstPercent: lineCgstPct,
+        sgstPercent: lineSgstPct,
+        igstPercent: lineIgstPct,
+        totalTax: lineTax,
+        totalAmount: lineAmount + lineTax,
         discount: Number(i.discount || 0)
       };
     });
 
-    const grandTotal = subtotal + totalTax + Number(shippingCharges) - Number(discount) - Number(tds || 0);
+    const docCurrency = currency || invoiceObj.currency || 'INR';
+    const decimals = getCurrencyDecimals(docCurrency);
+    const grandTotal = roundHalfUp(serverSubtotal + serverTotalTax + Number(shippingCharges) - Number(discount) - Number(tds || 0), decimals);
+    const exchangeRate = Number(invoiceObj.exchangeRate || 1);
+    const baseCurrencyAmount = roundHalfUp(grandTotal * exchangeRate, decimals);
 
     const updatedInvoice = await prisma.$transaction(async (tx) => {
       await tx.invoiceItem.deleteMany({ where: { invoiceId } });
@@ -458,10 +535,14 @@ exports.updateInvoice = async (req, res) => {
       return tx.invoice.update({
         where: { id: invoiceId },
         data: {
-          subtotal,
-          totalTax,
+          subtotal: serverSubtotal,
+          totalTax: serverTotalTax,
           discount,
           grandTotal,
+          exchangeRate,
+          baseCurrencyAmount,
+          statutoryExchangeRate: exchangeRate,
+          statutoryBaseAmount: baseCurrencyAmount,
           invoiceDate: invoiceDate ? new Date(invoiceDate) : undefined,
           dueDate: dueDate ? new Date(dueDate) : undefined,
           poNumber,
@@ -474,9 +555,9 @@ exports.updateInvoice = async (req, res) => {
           designTemplate,
           status,
           shippingCharges: Number(shippingCharges),
-          cgst: cgst !== undefined ? Number(cgst) : undefined,
-          sgst: sgst !== undefined ? Number(sgst) : undefined,
-          igst: igst !== undefined ? Number(igst) : undefined,
+          cgst: serverCgst,
+          sgst: serverSgst,
+          igst: serverIgst,
           tds: tds !== undefined ? Number(tds) : undefined,
           ewayBillNo,
           reverseCharge: reverseCharge !== undefined ? !!reverseCharge : undefined,

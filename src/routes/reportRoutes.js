@@ -50,7 +50,24 @@ router.get(
   Controller.getCurrencyGainLoss
 );
 
+router.post(
+  "/currency/recalculate-fx",
+  auth,
+  business,
+  checkPermission("report", "read"),
+  Controller.recalculateCurrencyFx
+);
+
 router.get("/currency/transactions/export/:format", auth, business, checkPermission("report", "read"), CurrencyExportController.exportCurrencyTransactions);
+
+//////////////////////////////////////////////////////
+// STATUTORY REPORTS
+//////////////////////////////////////////////////////
+const statutoryController = require("../controllers/statutoryController");
+router.get("/statutory/dashboard", auth, business, statutoryController.getDashboardSummary);
+router.get("/statutory/list", auth, business, statutoryController.listAvailableReports);
+router.get("/statutory/generate/:reportCode", auth, business, statutoryController.generateStatutoryReport);
+router.get("/statutory/generate/:reportCode/export/:format", auth, business, TaxExportController.exportStatutoryReport);
 
 //////////////////////////////////////////////////////
 // PROFIT & LOSS

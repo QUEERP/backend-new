@@ -6,6 +6,7 @@ const { releaseStock } = require("./salesOrder.service");
 const { createStockMovement } = require("../inventory/movement.service");
 const TransactionHelper = require("../TransactionHelper");
 const { CurrencyService } = require("../currencyService");
+const { roundHalfUp, getCurrencyDecimals } = require("../currencyFxService");
 
 /**
  * Deducts stock from physical inventory upon dispatch (invoice creation)
@@ -336,6 +337,18 @@ const convertSalesOrderToInvoice = async (businessId, userId, userEmail, salesOr
       return base;
     });
 
+    const currency = salesOrder.currency || "AED";
+    const decimals = getCurrencyDecimals(currency);
+    const subtotal = Number(salesOrder.subtotal || 0);
+    const totalTax = Number(salesOrder.tax || 0);
+    const discount = Number(salesOrder.discount || 0);
+    const shippingCharges = Number(salesOrder.shippingCharges || 0);
+    const grandTotal = roundHalfUp(subtotal + totalTax + shippingCharges - discount, decimals);
+    const exchangeRate = Number(salesOrder.exchangeRate || 1);
+    const statutoryExchangeRate = Number(salesOrder.statutoryExchangeRate || exchangeRate);
+    const baseCurrencyAmount = roundHalfUp(grandTotal * exchangeRate, decimals);
+    const statutoryBaseAmount = roundHalfUp(grandTotal * statutoryExchangeRate, decimals);
+
     // 4. Create Invoice
     const invoice = await tx.invoice.create({
       data: {
@@ -346,19 +359,19 @@ const convertSalesOrderToInvoice = async (businessId, userId, userEmail, salesOr
         quotationId: salesOrder.quotationId,
         salesOrderId: salesOrder.id,
         status: "APPROVED",
-        subtotal: salesOrder.subtotal,
-        totalTax: salesOrder.tax,
-        discount: salesOrder.discount,
-        grandTotal: salesOrder.totalAmount,
-        currency: salesOrder.currency,
+        subtotal,
+        totalTax,
+        discount,
+        grandTotal,
+        currency,
         
         // Propagate Currency Fields
         transactionCurrencyId: salesOrder.transactionCurrencyId,
         baseCurrencyId: salesOrder.baseCurrencyId,
-        exchangeRate: salesOrder.exchangeRate,
-        baseCurrencyAmount: salesOrder.baseCurrencyAmount,
-        statutoryExchangeRate: salesOrder.statutoryExchangeRate,
-        statutoryBaseAmount: salesOrder.statutoryBaseAmount,
+        exchangeRate,
+        baseCurrencyAmount,
+        statutoryExchangeRate,
+        statutoryBaseAmount,
 
         // Propagate Legacy Tax
         cgst: salesOrder.cgst,
@@ -409,6 +422,30 @@ const convertSalesOrderToInvoice = async (businessId, userId, userEmail, salesOr
         totalGrossProfit
       }
     });
+
+    // 5.5 POST TO GENERAL LEDGER
+    const accounts = await getSystemAccounts(tx, businessId);
+    const taxAmountBaseCcy = roundHalfUp(totalTax * exchangeRate, decimals);
+    const grandTotalBaseCcy = baseCurrencyAmount;
+    const netRevenueBaseCcy = grandTotalBaseCcy - taxAmountBaseCcy;
+
+    const journalEntries = [
+      { businessId, accountId: accounts.SYSTEM_AR, debit: grandTotal, credit: 0, baseDebit: grandTotalBaseCcy, baseCredit: 0, description: `Invoice #${invoiceNumber}`, exchangeRate },
+      { businessId, accountId: accounts.SYSTEM_REVENUE, debit: 0, credit: (subtotal - discount), baseDebit: 0, baseCredit: netRevenueBaseCcy, description: `Invoice #${invoiceNumber} (Net Revenue)`, exchangeRate }
+    ];
+
+    if (taxAmountBaseCcy > 0) {
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_TAX_PAYABLE, debit: 0, credit: totalTax, baseDebit: 0, baseCredit: taxAmountBaseCcy, description: `Invoice #${invoiceNumber} (Tax)`, exchangeRate });
+    }
+
+    if (totalCogs > 0) {
+      journalEntries.push(
+        { businessId, accountId: accounts.SYSTEM_COGS, debit: totalCogs, credit: 0, description: `COGS for Invoice #${invoiceNumber}`, exchangeRate: 1.0 },
+        { businessId, accountId: accounts.SYSTEM_INVENTORY, debit: 0, credit: totalCogs, description: `Inventory outflow for Invoice #${invoiceNumber}`, exchangeRate: 1.0 }
+      );
+    }
+
+    await postJournalEntries(tx, journalEntries);
 
     // 6. Complete Sales Order Fulfill Status
     await tx.salesOrder.update({
@@ -547,8 +584,20 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         subtotal: financials ? financials.subtotal : existing.subtotal,
         totalTax: financials ? financials.totalTax : existing.totalTax,
         discount: discount,
-        grandTotal: grandTotal,
+        grandTotal: roundHalfUp(financials ? grandTotal : (data.grandTotal !== undefined ? Number(data.grandTotal) : existing.grandTotal), getCurrencyDecimals(data.currency || existing.currency)),
         currency: data.currency || existing.currency,
+        exchangeRate: Number(financials ? financials.currencyData.exchangeRate : (data.exchangeRate !== undefined ? Number(data.exchangeRate) : (existing.exchangeRate || 1))),
+        baseCurrencyAmount: roundHalfUp(
+          (financials ? grandTotal : (data.grandTotal !== undefined ? Number(data.grandTotal) : existing.grandTotal)) *
+          Number(financials ? financials.currencyData.exchangeRate : (data.exchangeRate !== undefined ? Number(data.exchangeRate) : (existing.exchangeRate || 1))),
+          getCurrencyDecimals(data.currency || existing.currency)
+        ),
+        statutoryExchangeRate: Number(financials ? financials.currencyData.statutoryRate : (data.statutoryExchangeRate !== undefined ? Number(data.statutoryExchangeRate) : (existing.statutoryExchangeRate || existing.exchangeRate || 1))),
+        statutoryBaseAmount: roundHalfUp(
+          (financials ? grandTotal : (data.grandTotal !== undefined ? Number(data.grandTotal) : existing.grandTotal)) *
+          Number(financials ? financials.currencyData.statutoryRate : (data.statutoryExchangeRate !== undefined ? Number(data.statutoryExchangeRate) : (existing.statutoryExchangeRate || existing.exchangeRate || 1))),
+          getCurrencyDecimals(data.currency || existing.currency)
+        ),
         
         // Legacy Tax Projections
         ...(financials ? {
@@ -562,10 +611,6 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         ...(financials ? {
           transactionCurrencyId: financials.currencyData.transactionCurrencyId,
           baseCurrencyId: financials.currencyData.baseCurrencyId,
-          exchangeRate: financials.currencyData.exchangeRate,
-          baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
-          statutoryExchangeRate: financials.currencyData.statutoryRate,
-          statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
         } : {}),
 
         poNumber: data.poNumber !== undefined ? data.poNumber : existing.poNumber,

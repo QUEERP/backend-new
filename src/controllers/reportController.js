@@ -6,63 +6,31 @@ const prisma = require("../config/prisma");
 //////////////////////////////////////////////////////
 // TAX REPORTS
 //////////////////////////////////////////////////////
+const gstTaxReportService = require("../services/gstTaxReportService");
+const {
+  roundHalfUp,
+  getCurrencyDecimals,
+  toMinorUnits,
+  fromMinorUnits,
+  convertToMinorBase,
+  calculateRealizedFx,
+  calculateUnrealizedFx
+} = require("../services/currencyFxService");
+
 exports.getTaxSummary = async (req, res) => {
   try {
     const businessId = req.business.id; // STRICT SCOPING
-    const { fromDate, toDate, taxFrameworkId, taxTypeId, taxRateId, transactionType } = req.query;
+    const { fromDate, toDate } = req.query;
 
-    const where = { businessId };
-    if (fromDate || toDate) {
-      where.createdAt = {};
-      if (fromDate) where.createdAt.gte = new Date(fromDate);
-      if (toDate) where.createdAt.lte = new Date(toDate);
-    }
-    if (transactionType) where.transactionType = transactionType;
-    if (taxRateId) where.taxRateId = taxRateId;
-
-    if (taxFrameworkId || taxTypeId) {
-      where.taxRate = {
-        taxType: {}
-      };
-      if (taxTypeId || taxFrameworkId) {
-      where.OR = where.OR || [];
-      if (taxTypeId) {
-        where.OR.push({ taxRate: { taxType: { id: taxTypeId } } }, { overrideTaxTypeId: taxTypeId });
-      }
-      if (taxFrameworkId) {
-        where.OR.push({ taxRate: { taxType: { taxFrameworkId } } }, { overrideTaxType: { taxFrameworkId } });
-      }
-    }
-    }
-
-    const invoices = await prisma.invoice.findMany({
-      where: { businessId, status: { not: 'DRAFT' } },
-      include: { items: true }
+    const result = await gstTaxReportService.generateGstTaxSummary({
+      businessId,
+      fromDate,
+      toDate
     });
 
-    const enhancedSummary = [];
-    
-    // Aggregate by Invoice
-    let totalTaxBaseCcy = 0;
-    invoices.forEach(inv => {
-      inv.items.forEach(t => {
-        totalTaxBaseCcy += t.totalTax || 0;
-      });
-    });
-
-    if (totalTaxBaseCcy > 0) {
-      enhancedSummary.push({
-        transactionType: 'INVOICE',
-        transactionCurrency: 'BASE',
-        taxType: 'GST',
-        taxRate: 5,
-        totalTaxBaseCcy,
-        totalTaxTxnCcy: totalTaxBaseCcy
-      });
-    }
-
-    res.json({ success: true, summary: enhancedSummary });
+    res.json(result);
   } catch (error) {
+    console.error("getTaxSummary error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -72,7 +40,7 @@ exports.getTaxTransactions = async (req, res) => {
     const businessId = req.business.id; // STRICT SCOPING
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 25;
-    const { fromDate, toDate, taxFrameworkId, taxTypeId, taxRateId, transactionType } = req.query;
+    const { fromDate, toDate, transactionType } = req.query;
 
     const where = { businessId };
     if (fromDate || toDate) {
@@ -81,34 +49,80 @@ exports.getTaxTransactions = async (req, res) => {
       if (toDate) where.createdAt.lte = new Date(toDate);
     }
     if (transactionType) where.transactionType = transactionType;
-    if (taxRateId) where.taxRateId = taxRateId;
-
-    if (taxFrameworkId || taxTypeId) {
-      where.taxRate = {
-        taxType: {}
-      };
-      if (taxTypeId || taxFrameworkId) {
-      where.OR = where.OR || [];
-      if (taxTypeId) {
-        where.OR.push({ taxRate: { taxType: { id: taxTypeId } } }, { overrideTaxTypeId: taxTypeId });
-      }
-      if (taxFrameworkId) {
-        where.OR.push({ taxRate: { taxType: { taxFrameworkId } } }, { overrideTaxType: { taxFrameworkId } });
-      }
-    }
-    }
 
     const totalCount = await prisma.taxTransaction.count({ where });
     
-    const transactions = await prisma.taxTransaction.findMany({
+    let rawTransactions = await prisma.taxTransaction.findMany({
       where,
       include: {
-        taxRate: { include: { taxType: true } }
+        transactionCurrency: true
       },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit
     });
+
+    const allTaxRates = await prisma.taxRate.findMany({ include: { taxType: true } }).catch(() => []);
+    const taxRateMap = {};
+    allTaxRates.forEach(tr => { taxRateMap[tr.id] = tr; });
+
+    let transactions = rawTransactions.map(t => ({
+      ...t,
+      taxRate: t.taxRateId ? taxRateMap[t.taxRateId] : null
+    }));
+
+    // If no records in taxTransaction, synthesize from Invoices & Bills
+    if (totalCount === 0) {
+      const invs = await prisma.invoice.findMany({
+        where: { businessId, status: { not: 'DRAFT' }, totalTax: { gt: 0 } },
+        include: { transactionCurrency: true },
+        take: limit
+      });
+      const bills = await prisma.bill.findMany({
+        where: { businessId, tax: { gt: 0 } },
+        include: { transactionCurrency: true },
+        take: limit
+      });
+
+      const synthetic = [];
+      invs.forEach(inv => {
+        synthetic.push({
+          id: `syn-inv-${inv.id}`,
+          transactionType: 'INVOICE',
+          transactionId: inv.id,
+          taxAmountTxnCcy: inv.totalTax,
+          taxAmountBaseCcy: inv.baseCurrencyAmount ? (inv.totalTax * (inv.exchangeRate || 1)) : inv.totalTax,
+          taxableAmountBaseCcy: inv.subtotal || 0,
+          transactionCurrency: { code: inv.currency || 'INR' },
+          createdAt: inv.invoiceDate || inv.createdAt,
+          itemReference: inv.invoiceNumber
+        });
+      });
+      bills.forEach(bill => {
+        synthetic.push({
+          id: `syn-bill-${bill.id}`,
+          transactionType: 'BILL',
+          transactionId: bill.id,
+          taxAmountTxnCcy: bill.tax,
+          taxAmountBaseCcy: bill.tax * (bill.exchangeRate || 1),
+          taxableAmountBaseCcy: bill.subtotal || 0,
+          transactionCurrency: { code: bill.currency || 'INR' },
+          createdAt: bill.billDate || bill.createdAt,
+          itemReference: bill.billNumber
+        });
+      });
+
+      return res.json({
+        success: true,
+        transactions: synthetic,
+        pagination: {
+          total: synthetic.length,
+          page: 1,
+          limit,
+          totalPages: 1
+        }
+      });
+    }
 
     res.json({
       success: true,
@@ -139,138 +153,549 @@ exports.getCurrencyUsage = async (req, res) => {
       include: { baseCurrency: true }
     });
 
+    const baseCode = business?.baseCurrency?.code || business?.currencyCode || business?.currency || 'INR';
+    const baseSymbol = business?.baseCurrency?.symbol || business?.currencySymbol || (baseCode === 'INR' ? '₹' : baseCode === 'AED' ? 'AED' : '$');
+    const baseName = business?.baseCurrency?.name || (baseCode === 'INR' ? 'Indian Rupee' : baseCode === 'AED' ? 'UAE Dirham' : baseCode);
+    const baseCcyId = business?.baseCurrencyId;
+
+    // Load all currencies
+    const allCurrencies = await prisma.currency.findMany();
+    const ccyByCode = {};
+    const ccyById = {};
+    allCurrencies.forEach(c => {
+      ccyByCode[c.code] = c;
+      ccyById[c.id] = c;
+    });
+
+    // Load commercial exchange rates
+    const rates = await prisma.exchangeRate.findMany({
+      orderBy: { effectiveDate: 'desc' }
+    });
+
+    // Date filtering using IST day boundaries aligned with Tax Reports
+    const { gte, lte } = gstTaxReportService.parseIstDateBoundaries ? gstTaxReportService.parseIstDateBoundaries(fromDate, toDate) : { gte: undefined, lte: undefined };
     const dateFilter = {};
-    if (fromDate) dateFilter.gte = new Date(fromDate);
-    if (toDate) dateFilter.lte = new Date(toDate);
+    if (gte) dateFilter.gte = gte;
+    if (lte) dateFilter.lte = lte;
+    const hasDateFilter = Object.keys(dateFilter).length > 0;
+    const periodEndDate = lte ? new Date(lte) : (toDate ? new Date(toDate) : new Date());
 
-    // Helper to run query safely
-    const getUsage = async (model, dateField, typeName, sumField, extraWhere = {}) => {
-      const where = { businessId, ...extraWhere };
-      if (Object.keys(dateFilter).length > 0) where[dateField] = dateFilter;
-      if (currencyId) where.transactionCurrencyId = currencyId;
-
-      const agg = await prisma[model].groupBy({
-        by: ['transactionCurrencyId'],
-        where,
-        _sum: { [sumField]: true }
-      });
-      return agg.map(a => ({
-        transactionCurrencyId: a.transactionCurrencyId,
-        transactionType: typeName,
-        volumeBaseCcy: a._sum[sumField] || 0
-      }));
-    };
-
-    // Sales side
-    const qAgg = await getUsage('quotation', 'issueDate', 'Quotation', 'baseCurrencyAmount');
-    const soAgg = await getUsage('salesOrder', 'orderDate', 'SalesOrder', 'baseCurrencyAmount');
-    const invAgg = await getUsage('invoice', 'invoiceDate', 'Invoice', 'baseCurrencyAmount');
-    const cnAgg = await getUsage('creditNote', 'createdAt', 'CreditNote', 'baseCurrencyAmount');
-    const custPayAgg = await getUsage('payment', 'paymentDate', 'CustomerPayment', 'baseCurrencyAmount', { billId: null });
-    
-    // Procurement side
-    const prAgg = await getUsage('purchaseRequest', 'createdAt', 'PurchaseRequest', 'baseCurrencyAmount');
-    const poAgg = await getUsage('purchaseOrder', 'orderDate', 'PurchaseOrder', 'baseCurrencyAmount');
-    const billAgg = await getUsage('bill', 'billDate', 'Bill', 'baseCurrencyAmount');
-    const prtAgg = await getUsage('purchaseReturn', 'createdAt', 'PurchaseReturn', 'baseCurrencyAmount');
-    const vendPayAgg = await getUsage('payment', 'paymentDate', 'VendorPayment', 'baseCurrencyAmount', { billId: { not: null } });
-
-    // Combine all
-    const allAggs = [...qAgg, ...soAgg, ...invAgg, ...cnAgg, ...custPayAgg, ...prAgg, ...poAgg, ...billAgg, ...prtAgg, ...vendPayAgg];
-
-    // Group by currency
-    const grouped = {};
-    const currencyIds = new Set(allAggs.map(a => a.transactionCurrencyId).filter(Boolean));
-    const currencies = await prisma.currency.findMany({ where: { id: { in: Array.from(currencyIds) } } });
-    const ccyMap = {};
-    currencies.forEach(c => { ccyMap[c.id] = c.code; });
-
-    allAggs.forEach(a => {
-      const code = a.transactionCurrencyId ? (ccyMap[a.transactionCurrencyId] || 'UNKNOWN') : 'BASE';
-      const currencyIdStr = a.transactionCurrencyId || 'base-currency';
-      if (!grouped[code]) {
-        grouped[code] = {
-          currency: code,
-          currencyId: currencyIdStr,
-          breakdown: [],
-          summary: {
-            sales: 0,
-            purchases: 0,
-            receivables: 0,
-            payables: 0
-          }
+    const getRateDetails = (fromCode, toCode) => {
+      if (fromCode === toCode) {
+        return {
+          rate: 1.0,
+          effectiveDate: null,
+          source: 'Base Currency (1:1 Invariant)',
+          rateType: 'BASE',
+          isStale: false,
+          staleWarning: null
         };
       }
-      grouped[code].breakdown.push({
-        transactionType: a.transactionType,
-        volumeBaseCcy: a.volumeBaseCcy
+      const fromId = ccyByCode[fromCode]?.id;
+      const toId = ccyByCode[toCode]?.id;
+      if (fromId && toId) {
+        // Direct rate as of period-end date
+        const directRates = rates.filter(r => r.fromCurrencyId === fromId && r.toCurrencyId === toId);
+        let matched = directRates.find(r => new Date(r.effectiveDate) <= periodEndDate);
+        let isInverse = false;
+
+        if (!matched && directRates.length > 0) {
+          // If no rate on or before period-end, take closest available direct rate
+          matched = directRates[0];
+        }
+
+        if (!matched) {
+          const invRates = rates.filter(r => r.fromCurrencyId === toId && r.toCurrencyId === fromId);
+          matched = invRates.find(r => new Date(r.effectiveDate) <= periodEndDate) || invRates[0];
+          if (matched) isInverse = true;
+        }
+
+        if (matched) {
+          const rawRate = Number(matched.rate);
+          const rate = isInverse ? (1 / rawRate) : rawRate;
+          const effDate = new Date(matched.effectiveDate);
+          const diffMs = Math.abs(periodEndDate.getTime() - effDate.getTime());
+          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          const isStale = diffDays > 30;
+          const staleWarning = isStale
+            ? `Exchange rate effective date (${effDate.toISOString().slice(0, 10)}) is ${diffDays} days older than report period-end (${periodEndDate.toISOString().slice(0, 10)}). Statutory threshold is 30 days.`
+            : null;
+
+          const baseSource = matched.source || (matched.rateType ? `${matched.rateType} Rate Table` : 'Exchange Rate Table');
+          const source = isInverse ? `Inverse of ${baseSource}` : baseSource;
+
+          return {
+            rate,
+            effectiveDate: matched.effectiveDate,
+            source,
+            rateType: matched.rateType || 'COMMERCIAL',
+            isStale,
+            diffDays,
+            staleWarning
+          };
+        }
+      }
+
+      return {
+        rate: 1.0,
+        effectiveDate: null,
+        source: 'Default 1.0 (No rate recorded in table)',
+        rateType: 'UNRECORDED',
+        isStale: true,
+        diffDays: 999,
+        staleWarning: `No exchange rate record found between ${fromCode} and ${toCode} in exchange rate table.`
+      };
+    };
+
+    const dataQualityWarnings = [];
+
+    // 1. Invoices (Tax Reports posted statuses)
+    const invWhere = {
+      businessId,
+      isDeleted: false,
+      status: { in: gstTaxReportService.POSTED_INVOICE_STATUSES || ['PAID', 'UNPAID', 'PARTIALLY_PAID', 'PARTIAL_PAID', 'SENT', 'APPROVED', 'OVERDUE'] }
+    };
+    if (hasDateFilter) invWhere.invoiceDate = dateFilter;
+    const invoices = await prisma.invoice.findMany({
+      where: invWhere,
+      include: { payments: true }
+    });
+
+    // 2. Bills (Tax Reports posted statuses)
+    const billWhere = {
+      businessId,
+      status: { in: gstTaxReportService.POSTED_BILL_STATUSES || ['PAID', 'UNPAID', 'PARTIALLY_PAID'] }
+    };
+    if (hasDateFilter) billWhere.billDate = dateFilter;
+    const bills = await prisma.bill.findMany({
+      where: billWhere,
+      include: { payments: true }
+    });
+
+    // 3. Credit Notes (Tax Reports posted statuses)
+    const cnWhere = {
+      businessId,
+      isDeleted: false,
+      status: { in: ['OPEN', 'CLOSED'] }
+    };
+    if (hasDateFilter) cnWhere.createdAt = dateFilter;
+    const creditNotes = await prisma.creditNote.findMany({ where: cnWhere });
+
+    // 4. Purchase Returns (Tax Reports posted statuses)
+    const prtWhere = {
+      businessId,
+      status: { notIn: ['DRAFT', 'CANCELLED'] }
+    };
+    if (hasDateFilter) prtWhere.createdAt = dateFilter;
+    let purchaseReturns = [];
+    try {
+      purchaseReturns = await prisma.purchaseReturn.findMany({ where: prtWhere });
+    } catch (e) {
+      purchaseReturns = [];
+    }
+
+    // 5. Standalone Payments
+    const payWhere = {
+      businessId,
+      invoiceId: null,
+      billId: null
+    };
+    if (hasDateFilter) payWhere.paymentDate = dateFilter;
+    const standalonePayments = await prisma.payment.findMany({ where: payWhere });
+
+    // 6. Quotations
+    const qWhere = { businessId };
+    if (hasDateFilter) qWhere.issueDate = dateFilter;
+    const quotations = await prisma.quotation.findMany({ where: qWhere });
+
+    // 7. Sales Orders
+    const soWhere = { businessId };
+    if (hasDateFilter) soWhere.orderDate = dateFilter;
+    const salesOrders = await prisma.salesOrder.findMany({ where: soWhere });
+
+    // 8. Purchase Orders
+    const poWhere = { businessId };
+    if (hasDateFilter) poWhere.orderDate = dateFilter;
+    const purchaseOrders = await prisma.purchaseOrder.findMany({ where: poWhere });
+
+    // Group by currency with integer minor units
+    const grouped = {};
+
+    const getBucket = (code, ccyId) => {
+      const c = code || baseCode;
+      if (!grouped[c]) {
+        const rateDetails = getRateDetails(c, baseCode);
+        grouped[c] = {
+          currency: c,
+          currencyId: ccyId || ccyByCode[c]?.id || 'curr-' + c,
+          exchangeRate: rateDetails.rate,
+          rateDetails,
+          breakdown: [],
+          summaryMinor: {
+            sales: 0,
+            salesBase: 0,
+            purchases: 0,
+            purchasesBase: 0,
+            receivables: 0,
+            receivablesBase: 0,
+            payables: 0,
+            payablesBase: 0
+          },
+          realizedMinorGain: 0,
+          realizedMinorLoss: 0,
+          unrealizedMinorGain: 0,
+          unrealizedMinorLoss: 0,
+          openReceivablesMinor: 0,
+          openPayablesMinor: 0
+        };
+      }
+      return grouped[c];
+    };
+
+    // Process Invoices
+    invoices.forEach(inv => {
+      const code = inv.currency || (inv.transactionCurrencyId ? ccyById[inv.transactionCurrencyId]?.code : baseCode);
+      const b = getBucket(code, inv.transactionCurrencyId);
+      const decimals = getCurrencyDecimals(code);
+      const nominal = Number(inv.grandTotal ?? (inv.subtotal + (inv.totalTax || 0) + (inv.shippingCharges || 0) - (inv.discount || 0)) ?? 0);
+      const nominalMinor = toMinorUnits(nominal, decimals);
+      const bookingRate = Number(inv.exchangeRate || (code === baseCode ? 1 : b.exchangeRate) || 1);
+      const expectedBase = roundHalfUp(nominal * bookingRate, decimals);
+      const actualBase = Number(inv.baseCurrencyAmount !== null && inv.baseCurrencyAmount !== undefined ? inv.baseCurrencyAmount : expectedBase);
+
+      if (Math.abs(actualBase - expectedBase) > 0.01) {
+        dataQualityWarnings.push({
+          code: 'BASE_CURRENCY_AMOUNT_MISMATCH',
+          documentType: 'Invoice',
+          documentNumber: inv.invoiceNumber,
+          nominal,
+          rate: bookingRate,
+          actualBase,
+          expectedBase,
+          diff: roundHalfUp(actualBase - expectedBase, decimals),
+          message: `Invoice ${inv.invoiceNumber}: stored baseCurrencyAmount (${actualBase}) diverges from grandTotal x exchangeRate (${nominal} x ${bookingRate} = ${expectedBase})`
+        });
+      }
+
+      // Do NOT mask or override with nominal: use the stored baseCurrencyAmount
+      const baseMinor = toMinorUnits(actualBase, decimals);
+
+      b.breakdown.push({
+        transactionType: 'Invoice',
+        docNumber: inv.invoiceNumber,
+        nominal: fromMinorUnits(nominalMinor, decimals),
+        volumeBaseCcy: fromMinorUnits(baseMinor, decimals),
+        rate: bookingRate,
+        tax: inv.totalTax || 0,
+        status: inv.status
       });
-      
-      const v = a.volumeBaseCcy;
-      switch(a.transactionType) {
-        case 'Invoice':
-          grouped[code].summary.sales += v;
-          break;
-        case 'CreditNote':
-          grouped[code].summary.sales -= v; // Reversal reduces sales
-          break;
-        case 'Bill':
-          grouped[code].summary.purchases += v;
-          break;
-        case 'PurchaseReturn':
-          grouped[code].summary.purchases -= v; // Reversal reduces purchases
-          break;
-        case 'CustomerPayment':
-          grouped[code].summary.receivables += v;
-          break;
-        case 'VendorPayment':
-          grouped[code].summary.payables += v;
-          break;
-        // Quotation, SalesOrder, PurchaseRequest, PurchaseOrder are intentionally excluded 
-        // from the 4 financial buckets to avoid double-counting the same deal across its lifecycle.
+      b.summaryMinor.sales += nominalMinor;
+      b.summaryMinor.salesBase += baseMinor;
+
+      // Realized FX on invoice payments
+      if (inv.payments && inv.payments.length > 0) {
+        inv.payments.forEach(pay => {
+          const settledAmt = Number(pay.amount || 0);
+          const settledMinor = toMinorUnits(settledAmt, decimals);
+          const payRate = Number(pay.exchangeRate || bookingRate);
+          const payBaseMinor = (code === baseCode) ? settledMinor : convertToMinorBase(settledMinor, payRate);
+
+          b.summaryMinor.receivables += settledMinor;
+          b.summaryMinor.receivablesBase += payBaseMinor;
+
+          if (code !== baseCode) {
+            const fx = calculateRealizedFx({
+              type: 'RECEIVABLE',
+              bookingRate,
+              settlementRate: payRate,
+              foreignAmountSettled: settledAmt,
+              decimals
+            });
+            b.realizedMinorGain += toMinorUnits(fx.realizedGain, decimals);
+            b.realizedMinorLoss += toMinorUnits(fx.realizedLoss, decimals);
+          }
+        });
+      }
+
+      // Unrealized FX on open balance revalued at latest rate
+      if (code !== baseCode) {
+        const paid = Number(inv.amountPaid || 0);
+        const openBal = Math.max(0, nominal - paid);
+        if (openBal > 0) {
+          const openMinor = toMinorUnits(openBal, decimals);
+          b.openReceivablesMinor += openMinor;
+          const latestRate = Number(b.exchangeRate);
+          const uFx = calculateUnrealizedFx({
+            type: 'RECEIVABLE',
+            bookingRate,
+            latestRate,
+            openForeignAmount: openBal,
+            decimals
+          });
+          b.unrealizedMinorGain += toMinorUnits(uFx.unrealizedGain, decimals);
+          b.unrealizedMinorLoss += toMinorUnits(uFx.unrealizedLoss, decimals);
+        }
       }
     });
 
-    const usageValues = Object.values(grouped);
-    
-    // Fetch latest exchange rate for each currency
-    const baseCcyId = business?.baseCurrencyId;
-    if (baseCcyId) {
-      for (const item of usageValues) {
-        if (item.currencyId && item.currencyId !== baseCcyId) {
-          const rate = await prisma.exchangeRate.findFirst({
-            where: {
-              fromCurrencyId: item.currencyId,
-              toCurrencyId: baseCcyId
-            },
-            orderBy: { effectiveDate: 'desc' }
-          });
-          if (rate) {
-            item.exchangeRate = rate.rate;
-          } else {
-            const reverseRate = await prisma.exchangeRate.findFirst({
-              where: {
-                fromCurrencyId: baseCcyId,
-                toCurrencyId: item.currencyId
-              },
-              orderBy: { effectiveDate: 'desc' }
+    // Process Bills
+    bills.forEach(bill => {
+      const code = bill.currency || (bill.transactionCurrencyId ? ccyById[bill.transactionCurrencyId]?.code : baseCode);
+      const b = getBucket(code, bill.transactionCurrencyId);
+      const decimals = getCurrencyDecimals(code);
+      const nominal = Number(bill.totalAmount ?? (bill.subtotal + (bill.tax || 0) - (bill.discount || 0)) ?? 0);
+      const nominalMinor = toMinorUnits(nominal, decimals);
+      const bookingRate = Number(bill.exchangeRate || (code === baseCode ? 1 : b.exchangeRate) || 1);
+      const expectedBase = roundHalfUp(nominal * bookingRate, decimals);
+      const actualBase = Number(bill.baseCurrencyAmount !== null && bill.baseCurrencyAmount !== undefined ? bill.baseCurrencyAmount : expectedBase);
+
+      if (Math.abs(actualBase - expectedBase) > 0.01) {
+        dataQualityWarnings.push({
+          code: 'BASE_CURRENCY_AMOUNT_MISMATCH',
+          documentType: 'Bill',
+          documentNumber: bill.billNumber,
+          nominal,
+          rate: bookingRate,
+          actualBase,
+          expectedBase,
+          diff: roundHalfUp(actualBase - expectedBase, decimals),
+          message: `Bill ${bill.billNumber}: stored baseCurrencyAmount (${actualBase}) diverges from totalAmount x exchangeRate (${nominal} x ${bookingRate} = ${expectedBase})`
+        });
+      }
+
+      // Do NOT mask or override with nominal: use the stored baseCurrencyAmount
+      const baseMinor = toMinorUnits(actualBase, decimals);
+
+      b.breakdown.push({
+        transactionType: 'Bill',
+        docNumber: bill.billNumber,
+        nominal: fromMinorUnits(nominalMinor, decimals),
+        volumeBaseCcy: fromMinorUnits(baseMinor, decimals),
+        rate: bookingRate,
+        tax: bill.tax || 0,
+        status: bill.status
+      });
+      b.summaryMinor.purchases += nominalMinor;
+      b.summaryMinor.purchasesBase += baseMinor;
+
+      // Realized FX on bill payments (Payable - opposite sign)
+      if (bill.payments && bill.payments.length > 0) {
+        bill.payments.forEach(pay => {
+          const settledAmt = Number(pay.amount || 0);
+          const settledMinor = toMinorUnits(settledAmt, decimals);
+          const payRate = Number(pay.exchangeRate || bookingRate);
+          const payBaseMinor = (code === baseCode) ? settledMinor : convertToMinorBase(settledMinor, payRate);
+
+          b.summaryMinor.payables += settledMinor;
+          b.summaryMinor.payablesBase += payBaseMinor;
+
+          if (code !== baseCode) {
+            const fx = calculateRealizedFx({
+              type: 'PAYABLE',
+              bookingRate,
+              settlementRate: payRate,
+              foreignAmountSettled: settledAmt,
+              decimals
             });
-            if (reverseRate && reverseRate.rate !== 0) {
-              item.exchangeRate = 1 / reverseRate.rate;
-            }
+            b.realizedMinorGain += toMinorUnits(fx.realizedGain, decimals);
+            b.realizedMinorLoss += toMinorUnits(fx.realizedLoss, decimals);
           }
-        } else if (item.currencyId === baseCcyId) {
-          item.exchangeRate = 1;
+        });
+      }
+
+      // Unrealized FX on open balance
+      if (code !== baseCode) {
+        const paid = Number(bill.amountPaid || 0);
+        const openBal = Math.max(0, nominal - paid);
+        if (openBal > 0) {
+          const openMinor = toMinorUnits(openBal, decimals);
+          b.openPayablesMinor += openMinor;
+          const latestRate = Number(b.exchangeRate);
+          const uFx = calculateUnrealizedFx({
+            type: 'PAYABLE',
+            bookingRate,
+            latestRate,
+            openForeignAmount: openBal,
+            decimals
+          });
+          b.unrealizedMinorGain += toMinorUnits(uFx.unrealizedGain, decimals);
+          b.unrealizedMinorLoss += toMinorUnits(uFx.unrealizedLoss, decimals);
         }
       }
+    });
+
+    // Process Credit Notes
+    creditNotes.forEach(cn => {
+      const code = cn.currency || baseCode;
+      const b = getBucket(code, cn.transactionCurrencyId);
+      const decimals = getCurrencyDecimals(code);
+      const nominal = Number(cn.amount || cn.grandTotal || cn.subtotal || 0);
+      const nominalMinor = toMinorUnits(nominal, decimals);
+      const rate = Number(cn.exchangeRate || (code === baseCode ? 1 : b.exchangeRate) || 1);
+      const expectedBase = roundHalfUp(nominal * rate, decimals);
+      const actualBase = Number(cn.baseCurrencyAmount !== null && cn.baseCurrencyAmount !== undefined ? cn.baseCurrencyAmount : expectedBase);
+
+      if (Math.abs(actualBase - expectedBase) > 0.01) {
+        dataQualityWarnings.push({
+          code: 'BASE_CURRENCY_AMOUNT_MISMATCH',
+          documentType: 'CreditNote',
+          documentNumber: cn.creditNumber || cn.creditNoteNumber,
+          nominal,
+          rate,
+          actualBase,
+          expectedBase,
+          diff: roundHalfUp(actualBase - expectedBase, decimals),
+          message: `Credit Note ${cn.creditNumber || cn.creditNoteNumber}: stored baseCurrencyAmount (${actualBase}) diverges from amount x exchangeRate (${nominal} x ${rate} = ${expectedBase})`
+        });
+      }
+
+      const baseMinor = toMinorUnits(actualBase, decimals);
+
+      b.breakdown.push({
+        transactionType: 'CreditNote',
+        docNumber: cn.creditNumber || cn.creditNoteNumber,
+        nominal: fromMinorUnits(nominalMinor, decimals),
+        volumeBaseCcy: fromMinorUnits(baseMinor, decimals),
+        rate,
+        tax: cn.taxAmount || cn.tax || 0,
+        status: cn.status
+      });
+      b.summaryMinor.sales -= nominalMinor;
+      b.summaryMinor.salesBase -= baseMinor;
+    });
+
+    // Process Purchase Returns
+    purchaseReturns.forEach(pr => {
+      const code = pr.currency || baseCode;
+      const b = getBucket(code, pr.transactionCurrencyId);
+      const decimals = getCurrencyDecimals(code);
+      const nominal = Number(pr.totalAmount || pr.subtotal || 0);
+      const nominalMinor = toMinorUnits(nominal, decimals);
+      const rate = Number(pr.exchangeRate || (code === baseCode ? 1 : b.exchangeRate) || 1);
+      const baseMinor = convertToMinorBase(nominalMinor, rate);
+
+      b.breakdown.push({
+        transactionType: 'PurchaseReturn',
+        nominal: fromMinorUnits(nominalMinor, decimals),
+        volumeBaseCcy: fromMinorUnits(baseMinor, decimals),
+        rate,
+        status: pr.status
+      });
+      b.summaryMinor.purchases -= nominalMinor;
+      b.summaryMinor.purchasesBase -= baseMinor;
+    });
+
+    // Process Standalone Payments
+    standalonePayments.forEach(pay => {
+      const code = pay.currency || baseCode;
+      const nominal = Number(pay.amount || 0);
+      const nominalMinor = toMinorUnits(nominal);
+      const rate = Number(pay.exchangeRate || getRateDetails(code, baseCode).rate);
+      const baseMinor = (code === baseCode) ? nominalMinor : convertToMinorBase(nominalMinor, rate);
+      const b = getBucket(code, pay.transactionCurrencyId);
+      b.breakdown.push({ transactionType: 'StandalonePayment', volumeBaseCcy: fromMinorUnits(baseMinor), nominal });
+      b.summaryMinor.receivables += nominalMinor;
+      b.summaryMinor.receivablesBase += baseMinor;
+    });
+
+    // Quotations / Orders (for breakdown reference)
+    quotations.forEach(q => {
+      const code = q.currency || baseCode;
+      const nominal = Number(q.grandTotal || q.totalAmount || 0);
+      const rate = Number(q.exchangeRate || getRateDetails(code, baseCode).rate);
+      const baseAmt = (code === baseCode) ? nominal : Number((nominal * rate).toFixed(2));
+      const b = getBucket(code, q.transactionCurrencyId);
+      b.breakdown.push({ transactionType: 'Quotation', volumeBaseCcy: baseAmt, nominal });
+    });
+
+    salesOrders.forEach(so => {
+      const code = so.currency || baseCode;
+      const nominal = Number(so.totalAmount || 0);
+      const rate = Number(so.exchangeRate || getRateDetails(code, baseCode).rate);
+      const baseAmt = (code === baseCode) ? nominal : Number((nominal * rate).toFixed(2));
+      const b = getBucket(code, so.transactionCurrencyId);
+      b.breakdown.push({ transactionType: 'SalesOrder', volumeBaseCcy: baseAmt, nominal });
+    });
+
+    purchaseOrders.forEach(po => {
+      const code = po.currencyCode || baseCode;
+      const nominal = Number(po.totalAmount || 0);
+      const rate = Number(po.exchangeRate || getRateDetails(code, baseCode).rate);
+      const baseAmt = (code === baseCode) ? nominal : Number((nominal * rate).toFixed(2));
+      const b = getBucket(code, po.transactionCurrencyId);
+      b.breakdown.push({ transactionType: 'PurchaseOrder', volumeBaseCcy: baseAmt, nominal });
+    });
+
+    let usageValues = Object.values(grouped).map(b => ({
+      currency: b.currency,
+      currencyId: b.currencyId,
+      exchangeRate: b.exchangeRate,
+      rateDetails: b.rateDetails,
+      breakdown: b.breakdown,
+      isTaxInclusive: true,
+      summary: {
+        sales: fromMinorUnits(b.summaryMinor.sales),
+        salesBase: fromMinorUnits(b.summaryMinor.salesBase),
+        purchases: fromMinorUnits(b.summaryMinor.purchases),
+        purchasesBase: fromMinorUnits(b.summaryMinor.purchasesBase),
+        receivables: fromMinorUnits(b.summaryMinor.receivables),
+        receivablesBase: fromMinorUnits(b.summaryMinor.receivablesBase),
+        payables: fromMinorUnits(b.summaryMinor.payables),
+        payablesBase: fromMinorUnits(b.summaryMinor.payablesBase)
+      },
+      realizedFx: {
+        gain: fromMinorUnits(b.realizedMinorGain),
+        loss: fromMinorUnits(b.realizedMinorLoss),
+        net: fromMinorUnits(b.realizedMinorGain - b.realizedMinorLoss)
+      },
+      unrealizedFx: {
+        gain: fromMinorUnits(b.unrealizedMinorGain),
+        loss: fromMinorUnits(b.unrealizedMinorLoss),
+        net: fromMinorUnits(b.unrealizedMinorGain - b.unrealizedMinorLoss),
+        openReceivables: fromMinorUnits(b.openReceivablesMinor),
+        openPayables: fromMinorUnits(b.openPayablesMinor),
+        revaluationRate: b.exchangeRate
+      }
+    }));
+
+    if (currencyId) {
+      usageValues = usageValues.filter(u => u.currencyId === currencyId || u.currency === currencyId);
     }
+
+    const totals = {
+      totalSalesBase: Number(usageValues.reduce((acc, u) => acc + (u.summary.salesBase || 0), 0).toFixed(2)),
+      totalPurchasesBase: Number(usageValues.reduce((acc, u) => acc + (u.summary.purchasesBase || 0), 0).toFixed(2)),
+      totalReceivablesBase: Number(usageValues.reduce((acc, u) => acc + (u.summary.receivablesBase || 0), 0).toFixed(2)),
+      totalPayablesBase: Number(usageValues.reduce((acc, u) => acc + (u.summary.payablesBase || 0), 0).toFixed(2)),
+      netVolumeBase: Number(usageValues.reduce((acc, u) => acc + (u.summary.salesBase || 0) + (u.summary.purchasesBase || 0), 0).toFixed(2)),
+      realizedFx: {
+        totalGain: Number(usageValues.reduce((acc, u) => acc + (u.realizedFx?.gain || 0), 0).toFixed(2)),
+        totalLoss: Number(usageValues.reduce((acc, u) => acc + (u.realizedFx?.loss || 0), 0).toFixed(2)),
+        netFx: Number(usageValues.reduce((acc, u) => acc + (u.realizedFx?.net || 0), 0).toFixed(2))
+      },
+      unrealizedFx: {
+        totalGain: Number(usageValues.reduce((acc, u) => acc + (u.unrealizedFx?.gain || 0), 0).toFixed(2)),
+        totalLoss: Number(usageValues.reduce((acc, u) => acc + (u.unrealizedFx?.loss || 0), 0).toFixed(2)),
+        netFx: Number(usageValues.reduce((acc, u) => acc + (u.unrealizedFx?.net || 0), 0).toFixed(2))
+      },
+      isTaxInclusive: true
+    };
 
     res.json({
       success: true,
-      baseCurrency: business?.baseCurrency?.code || 'UNKNOWN',
-      usage: usageValues
+      baseCurrency: baseCode,
+      baseCurrencyDetails: {
+        code: baseCode,
+        symbol: baseSymbol,
+        name: baseName
+      },
+      isTaxInclusive: true,
+      totals,
+      usage: usageValues,
+      dataQualityWarnings
     });
   } catch (error) {
+    console.error('getCurrencyUsage error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -280,42 +705,362 @@ exports.getCurrencyGainLoss = async (req, res) => {
     const businessId = req.business.id; // STRICT SCOPING
     const { fromDate, toDate } = req.query;
 
-    const fxAccount = await prisma.account.findFirst({
-      where: { businessId, code: 'SYSTEM_FX_GAIN_LOSS' }
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      include: { baseCurrency: true }
     });
+    const baseCode = business?.baseCurrency?.code || business?.currencyCode || business?.currency || 'INR';
 
-    if (!fxAccount) {
-      return res.json({ success: true, fxGainLoss: [] });
-    }
-
-    const where = { businessId, accountId: fxAccount.id };
-    if (fromDate || toDate) {
-      where.date = {};
-      if (fromDate) where.date.gte = new Date(fromDate);
-      if (toDate) where.date.lte = new Date(toDate);
-    }
-
-    const grouped = await prisma.journalEntry.groupBy({
-      by: ['currency'],
-      where,
-      _sum: {
-        baseDebit: true,
-        baseCredit: true
+    const fxAccounts = await prisma.account.findMany({
+      where: {
+        businessId,
+        OR: [
+          { code: 'SYSTEM_FX_GAIN_LOSS' },
+          { name: { contains: 'FX Gain', mode: 'insensitive' } }
+        ]
       }
     });
 
-    const breakdown = grouped.map(g => ({
-      currency: g.currency || 'UNKNOWN',
-      realizedLoss: g._sum.baseDebit || 0,
-      realizedGain: g._sum.baseCredit || 0,
-      netGainLoss: (g._sum.baseCredit || 0) - (g._sum.baseDebit || 0)
-    }));
+    const fxAccountIds = fxAccounts.map(a => a.id);
+    let breakdown = [];
+    let transactions = [];
+
+    if (fxAccountIds.length > 0) {
+      const where = { businessId, accountId: { in: fxAccountIds } };
+      if (fromDate || toDate) {
+        where.date = {};
+        if (fromDate) where.date.gte = new Date(fromDate);
+        if (toDate) where.date.lte = new Date(toDate);
+      }
+
+      const grouped = await prisma.journalEntry.groupBy({
+        by: ['currency'],
+        where,
+        _sum: {
+          baseDebit: true,
+          baseCredit: true
+        }
+      });
+
+      breakdown = grouped.map(g => ({
+        currency: g.currency || 'UNKNOWN',
+        realizedLoss: g._sum.baseDebit || 0,
+        realizedGain: g._sum.baseCredit || 0,
+        netGainLoss: (g._sum.baseCredit || 0) - (g._sum.baseDebit || 0)
+      }));
+
+      const rawTx = await prisma.journalEntry.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 50
+      });
+
+      transactions = rawTx.map(t => ({
+        id: t.id,
+        date: t.date || t.createdAt,
+        currency: t.currency || 'UNKNOWN',
+        description: t.description || 'Realized FX Impact',
+        realizedLoss: t.baseDebit || 0,
+        realizedGain: t.baseCredit || 0,
+        netGainLoss: (t.baseCredit || 0) - (t.baseDebit || 0)
+      }));
+    }
+
+    // Also inspect settled payments on foreign-currency invoices and bills
+    const invPayments = await prisma.payment.findMany({
+      where: { businessId, invoiceId: { not: null } },
+      include: { invoice: true }
+    });
+
+    const billPayments = await prisma.payment.findMany({
+      where: { businessId, billId: { not: null } },
+      include: { bill: true }
+    });
+
+    const computedTransactions = [];
+    const computedMap = {};
+
+    invPayments.forEach(pay => {
+      if (!pay.invoice) return;
+      const inv = pay.invoice;
+      const c = inv.currency || baseCode;
+      if (c === baseCode) return;
+
+      const bookingRate = Number(inv.exchangeRate || 1);
+      const settlementRate = Number(pay.exchangeRate || bookingRate);
+      const settledAmt = Number(pay.amount || 0);
+
+      const fx = calculateRealizedFx({
+        type: 'RECEIVABLE',
+        bookingRate,
+        settlementRate,
+        foreignAmountSettled: settledAmt
+      });
+
+      if (!computedMap[c]) computedMap[c] = { realizedGain: 0, realizedLoss: 0, netGainLoss: 0 };
+      computedMap[c].realizedGain += fx.realizedGain;
+      computedMap[c].realizedLoss += fx.realizedLoss;
+      computedMap[c].netGainLoss += fx.realizedGainLoss;
+
+      computedTransactions.push({
+        id: pay.id,
+        date: pay.paymentDate || pay.createdAt,
+        currency: c,
+        description: `Settlement of Invoice #${inv.invoiceNumber}: Booking Rate ${bookingRate} vs Settlement Rate ${settlementRate} on ${settledAmt} ${c}`,
+        type: 'RECEIVABLE',
+        documentNumber: inv.invoiceNumber,
+        paymentNumber: pay.paymentNumber,
+        bookingRate,
+        settlementRate,
+        foreignAmount: settledAmt,
+        realizedLoss: fx.realizedLoss,
+        realizedGain: fx.realizedGain,
+        netGainLoss: fx.realizedGainLoss
+      });
+    });
+
+    billPayments.forEach(pay => {
+      if (!pay.bill) return;
+      const bill = pay.bill;
+      const c = bill.currency || baseCode;
+      if (c === baseCode) return;
+
+      const bookingRate = Number(bill.exchangeRate || 1);
+      const settlementRate = Number(pay.exchangeRate || bookingRate);
+      const settledAmt = Number(pay.amount || 0);
+
+      const fx = calculateRealizedFx({
+        type: 'PAYABLE',
+        bookingRate,
+        settlementRate,
+        foreignAmountSettled: settledAmt
+      });
+
+      if (!computedMap[c]) computedMap[c] = { realizedGain: 0, realizedLoss: 0, netGainLoss: 0 };
+      computedMap[c].realizedGain += fx.realizedGain;
+      computedMap[c].realizedLoss += fx.realizedLoss;
+      computedMap[c].netGainLoss += fx.realizedGainLoss;
+
+      computedTransactions.push({
+        id: pay.id,
+        date: pay.paymentDate || pay.createdAt,
+        currency: c,
+        description: `Settlement of Bill #${bill.billNumber}: Booking Rate ${bookingRate} vs Settlement Rate ${settlementRate} on ${settledAmt} ${c} (Payable)`,
+        type: 'PAYABLE',
+        documentNumber: bill.billNumber,
+        paymentNumber: pay.paymentNumber,
+        bookingRate,
+        settlementRate,
+        foreignAmount: settledAmt,
+        realizedLoss: fx.realizedLoss,
+        realizedGain: fx.realizedGain,
+        netGainLoss: fx.realizedGainLoss
+      });
+    });
+
+    // If no journal entries exist, use the computed transactions and summary
+    if (breakdown.length === 0 && Object.keys(computedMap).length > 0) {
+      breakdown = Object.entries(computedMap).map(([curr, val]) => ({
+        currency: curr,
+        realizedGain: Number(val.realizedGain.toFixed(2)),
+        realizedLoss: Number(val.realizedLoss.toFixed(2)),
+        netGainLoss: Number(val.netGainLoss.toFixed(2))
+      }));
+    }
+
+    if (transactions.length === 0 && computedTransactions.length > 0) {
+      transactions = computedTransactions;
+    }
 
     res.json({
       success: true,
-      fxGainLoss: breakdown
+      fxGainLoss: breakdown,
+      transactions,
+      details: computedTransactions
     });
   } catch (error) {
+    console.error('getCurrencyGainLoss error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.recalculateCurrencyFx = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+
+    let fxAccount = await prisma.account.findFirst({
+      where: {
+        businessId,
+        OR: [
+          { code: 'SYSTEM_FX_GAIN_LOSS' },
+          { name: { contains: 'FX Gain', mode: 'insensitive' } }
+        ]
+      }
+    });
+
+    if (!fxAccount) {
+      fxAccount = await prisma.account.create({
+        data: {
+          businessId,
+          name: 'Realized FX Gain/Loss',
+          code: 'SYSTEM_FX_GAIN_LOSS',
+          type: 'EXPENSE',
+          isActive: true
+        }
+      });
+    }
+
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      include: { baseCurrency: true }
+    });
+    const baseCode = business?.baseCurrency?.code || business?.currencyCode || business?.currency || 'INR';
+
+    // 1. Process Invoice Settlements (Receivables)
+    const invPayments = await prisma.payment.findMany({
+      where: { businessId, invoiceId: { not: null } },
+      include: { invoice: true }
+    });
+
+    for (const pay of invPayments) {
+      if (!pay.invoice) continue;
+      const inv = pay.invoice;
+      const invCurrency = inv.currency || baseCode;
+      
+      if (invCurrency !== baseCode && inv.exchangeRate && pay.exchangeRate) {
+        const invRate = Number(inv.exchangeRate);
+        const payRate = Number(pay.exchangeRate);
+        const amount = Number(pay.amount || 0);
+
+        if (amount > 0) {
+          const fx = calculateRealizedFx({
+            type: 'RECEIVABLE',
+            bookingRate: invRate,
+            settlementRate: payRate,
+            foreignAmountSettled: amount
+          });
+
+          if (fx.realizedGainLoss !== 0) {
+            const existing = await prisma.journalEntry.findFirst({
+              where: {
+                businessId,
+                accountId: fxAccount.id,
+                description: { contains: pay.paymentNumber || pay.id }
+              }
+            });
+
+            if (!existing) {
+              if (fx.isGain) {
+                await prisma.journalEntry.create({
+                  data: {
+                    businessId,
+                    accountId: fxAccount.id,
+                    debit: 0,
+                    credit: fx.realizedGain,
+                    baseDebit: 0,
+                    baseCredit: fx.realizedGain,
+                    currency: invCurrency,
+                    exchangeRate: 1.0,
+                    description: `Realized FX Gain on Payment ${pay.paymentNumber || pay.id} for Invoice #${inv.invoiceNumber}`,
+                    date: pay.paymentDate || pay.createdAt
+                  }
+                });
+              } else if (fx.isLoss) {
+                await prisma.journalEntry.create({
+                  data: {
+                    businessId,
+                    accountId: fxAccount.id,
+                    debit: fx.realizedLoss,
+                    credit: 0,
+                    baseDebit: fx.realizedLoss,
+                    baseCredit: 0,
+                    currency: invCurrency,
+                    exchangeRate: 1.0,
+                    description: `Realized FX Loss on Payment ${pay.paymentNumber || pay.id} for Invoice #${inv.invoiceNumber}`,
+                    date: pay.paymentDate || pay.createdAt
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Process Bill Settlements (Payables - reverse sign)
+    const billPayments = await prisma.payment.findMany({
+      where: { businessId, billId: { not: null } },
+      include: { bill: true }
+    });
+
+    for (const pay of billPayments) {
+      if (!pay.bill) continue;
+      const bill = pay.bill;
+      const billCurrency = bill.currency || baseCode;
+
+      if (billCurrency !== baseCode && bill.exchangeRate && pay.exchangeRate) {
+        const billRate = Number(bill.exchangeRate);
+        const payRate = Number(pay.exchangeRate);
+        const amount = Number(pay.amount || 0);
+
+        if (amount > 0) {
+          const fx = calculateRealizedFx({
+            type: 'PAYABLE',
+            bookingRate: billRate,
+            settlementRate: payRate,
+            foreignAmountSettled: amount
+          });
+
+          if (fx.realizedGainLoss !== 0) {
+            const existing = await prisma.journalEntry.findFirst({
+              where: {
+                businessId,
+                accountId: fxAccount.id,
+                description: { contains: pay.paymentNumber || pay.id }
+              }
+            });
+
+            if (!existing) {
+              if (fx.isGain) {
+                await prisma.journalEntry.create({
+                  data: {
+                    businessId,
+                    accountId: fxAccount.id,
+                    debit: 0,
+                    credit: fx.realizedGain,
+                    baseDebit: 0,
+                    baseCredit: fx.realizedGain,
+                    currency: billCurrency,
+                    exchangeRate: 1.0,
+                    description: `Realized FX Gain on Payment ${pay.paymentNumber || pay.id} for Bill #${bill.billNumber}`,
+                    date: pay.paymentDate || pay.createdAt
+                  }
+                });
+              } else if (fx.isLoss) {
+                await prisma.journalEntry.create({
+                  data: {
+                    businessId,
+                    accountId: fxAccount.id,
+                    debit: fx.realizedLoss,
+                    credit: 0,
+                    baseDebit: fx.realizedLoss,
+                    baseCredit: 0,
+                    currency: billCurrency,
+                    exchangeRate: 1.0,
+                    description: `Realized FX Loss on Payment ${pay.paymentNumber || pay.id} for Bill #${bill.billNumber}`,
+                    date: pay.paymentDate || pay.createdAt
+                  }
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return exports.getCurrencyGainLoss(req, res);
+  } catch (error) {
+    console.error('recalculateCurrencyFx error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
