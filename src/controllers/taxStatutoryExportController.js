@@ -2,73 +2,25 @@ const prisma = require("../config/prisma");
 const XLSX = require("xlsx");
 const PDFDocument = require("pdfkit");
 const statutoryRegistry = require("../config/reports/statutoryRegistry");
-const { buildPDF, sendExcel, sendJSON } = require("../utils/exportUtils");
+const { buildPDF, sendExcel, sendJSON, sendCSV } = require("../utils/exportUtils");
 
 
+
+const gstTaxReportService = require("../services/gstTaxReportService");
 
 // -------------------------------------------------------------
 // Tax Summary
 // -------------------------------------------------------------
 const getTaxSummaryData = async (req) => {
   const businessId = req.business.id; // STRICT SCOPING
-  const { fromDate, toDate, taxFrameworkId, taxTypeId, taxRateId, transactionType } = req.query;
+  const { fromDate, toDate } = req.query;
 
-  const where = { businessId };
-  if (fromDate || toDate) {
-    where.createdAt = {};
-    if (fromDate) where.createdAt.gte = new Date(fromDate);
-    if (toDate) where.createdAt.lte = new Date(toDate);
-  }
-  if (transactionType) where.transactionType = transactionType;
-  if (taxRateId) where.taxRateId = taxRateId;
-
-  if (taxFrameworkId || taxTypeId) {
-    where.taxRate = { taxType: {} };
-    if (taxTypeId || taxFrameworkId) {
-      where.OR = where.OR || [];
-      if (taxTypeId) {
-        where.OR.push({ taxRate: { taxType: { id: taxTypeId } } }, { overrideTaxTypeId: taxTypeId });
-      }
-      if (taxFrameworkId) {
-        where.OR.push({ taxRate: { taxType: { taxFrameworkId } } }, { overrideTaxType: { taxFrameworkId } });
-      }
-    }
-  }
-
-  const summary = await prisma.taxTransaction.groupBy({
-    by: ['transactionType', 'taxRateId', 'transactionCurrencyId'],
-    where,
-    _sum: {
-      taxAmountBaseCcy: true,
-      taxAmountTxnCcy: true
-    }
+  const result = await gstTaxReportService.generateGstTaxSummary({
+    businessId,
+    fromDate,
+    toDate
   });
-
-  const rateIds = summary.map(s => s.taxRateId);
-  const rates = await prisma.taxRate.findMany({
-    where: { id: { in: rateIds } },
-    include: { taxType: true }
-  });
-  
-  const rateMap = {};
-  rates.forEach(r => { rateMap[r.id] = r; });
-
-  const currencyIds = [...new Set(summary.map(s => s.transactionCurrencyId).filter(Boolean))];
-  const currencies = await prisma.currency.findMany({ where: { id: { in: currencyIds } } });
-  const ccyMap = {};
-  currencies.forEach(c => { ccyMap[c.id] = c.code; });
-
-  return summary.map(s => {
-    const rate = rateMap[s.taxRateId];
-    return {
-      transactionType: s.transactionType,
-      transactionCurrency: s.transactionCurrencyId ? (ccyMap[s.transactionCurrencyId] || 'UNKNOWN') : 'BASE',
-      taxType: rate?.taxType?.name || 'N/A',
-      taxRate: rate?.rate || 0,
-      totalTaxBaseCcy: s._sum.taxAmountBaseCcy || 0,
-      totalTaxTxnCcy: s._sum.taxAmountTxnCcy || 0
-    };
-  });
+  return result.summary || [];
 };
 
 exports.exportTaxSummary = async (req, res) => {
@@ -80,12 +32,36 @@ exports.exportTaxSummary = async (req, res) => {
       return sendJSON(res, 'Tax_Summary', data);
     }
 
-    if (format === 'excel') {
-      const excelData = data.map(d => ({
+    if (format === 'csv') {
+      const csvData = data.map(d => ({
+        "Category": d.category,
         "Transaction Type": d.transactionType,
+        "Document #": d.documentNumber,
+        "Party": d.partyName,
+        "Date": d.documentDate ? new Date(d.documentDate).toLocaleDateString() : '',
         "Currency": d.transactionCurrency,
         "Tax Type": d.taxType,
         "Tax Rate (%)": d.taxRate,
+        "Taxable Amount (Txn Ccy)": d.taxableAmountTxnCcy,
+        "Taxable Amount (Base Ccy)": d.taxableAmountBaseCcy,
+        "Total Tax (Txn Ccy)": d.totalTaxTxnCcy,
+        "Total Tax (Base Ccy)": d.totalTaxBaseCcy
+      }));
+      return sendCSV(res, 'Tax_Summary', csvData);
+    }
+
+    if (format === 'excel') {
+      const excelData = data.map(d => ({
+        "Category": d.category,
+        "Transaction Type": d.transactionType,
+        "Document #": d.documentNumber,
+        "Party": d.partyName,
+        "Date": d.documentDate ? new Date(d.documentDate).toLocaleDateString() : '',
+        "Currency": d.transactionCurrency,
+        "Tax Type": d.taxType,
+        "Tax Rate (%)": d.taxRate,
+        "Taxable Amount (Txn Ccy)": d.taxableAmountTxnCcy,
+        "Taxable Amount (Base Ccy)": d.taxableAmountBaseCcy,
         "Total Tax (Txn Ccy)": d.totalTaxTxnCcy,
         "Total Tax (Base Ccy)": d.totalTaxBaseCcy
       }));
@@ -93,14 +69,15 @@ exports.exportTaxSummary = async (req, res) => {
     }
 
     if (format === 'pdf') {
-      const headers = ['Type', 'Currency', 'Tax Type', 'Rate (%)', 'Tax (Txn Ccy)', 'Tax (Base Ccy)'];
-      const widths = [120, 80, 150, 70, 120, 120];
+      const headers = ['Category', 'Doc #', 'Party', 'Tax Type', 'Rate (%)', 'Taxable Val', 'Tax Amount'];
+      const widths = [100, 70, 110, 70, 50, 75, 75];
       const rows = data.map(d => [
-        d.transactionType,
-        d.transactionCurrency,
+        d.category,
+        d.documentNumber,
+        (d.partyName || '').slice(0, 18),
         d.taxType,
-        d.taxRate,
-        Number(d.totalTaxTxnCcy).toFixed(2),
+        `${d.taxRate}%`,
+        Number(d.taxableAmountBaseCcy).toFixed(2),
         Number(d.totalTaxBaseCcy).toFixed(2)
       ]);
       return buildPDF(res, 'Tax_Summary', headers, widths, rows);
@@ -129,27 +106,37 @@ const getTaxTransactionsData = async (req) => {
   if (taxRateId) where.taxRateId = taxRateId;
 
   if (taxFrameworkId || taxTypeId) {
-    where.taxRate = { taxType: {} };
-    if (taxTypeId || taxFrameworkId) {
-      where.OR = where.OR || [];
-      if (taxTypeId) {
-        where.OR.push({ taxRate: { taxType: { id: taxTypeId } } }, { overrideTaxTypeId: taxTypeId });
-      }
-      if (taxFrameworkId) {
-        where.OR.push({ taxRate: { taxType: { taxFrameworkId } } }, { overrideTaxType: { taxFrameworkId } });
-      }
-    }
+    const matchingRates = await prisma.taxRate.findMany({
+      where: {
+        ...(taxTypeId ? { taxTypeId } : {}),
+        ...(taxFrameworkId ? { taxType: { taxFrameworkId } } : {})
+      },
+      select: { id: true }
+    });
+    where.taxRateId = { in: matchingRates.map(r => r.id) };
   }
   
-  const transactions = await prisma.taxTransaction.findMany({
+  const rawTransactions = await prisma.taxTransaction.findMany({
     where,
     include: {
-      taxRate: { include: { taxType: true } },
       transactionCurrency: true,
       business: { include: { baseCurrency: true } }
     },
     orderBy: { createdAt: 'desc' }
   });
+
+  const rateIds = rawTransactions.map(t => t.taxRateId).filter(Boolean);
+  const rates = await prisma.taxRate.findMany({
+    where: { id: { in: rateIds } },
+    include: { taxType: true }
+  });
+  const rateMap = {};
+  rates.forEach(r => { rateMap[r.id] = r; });
+
+  const transactions = rawTransactions.map(t => ({
+    ...t,
+    taxRate: t.taxRateId ? rateMap[t.taxRateId] : null
+  }));
 
   return transactions.map(t => {
     // Infer exchange rate if not directly available (usually taxAmountBaseCcy / taxAmountTxnCcy)
@@ -180,6 +167,22 @@ exports.exportTaxTransactions = async (req, res) => {
 
     if (format === 'json') {
       return sendJSON(res, 'Tax_Transactions', data);
+    }
+
+    if (format === 'csv') {
+      const csvData = data.map(d => ({
+        "Date": new Date(d.date).toLocaleString(),
+        "Type": d.type,
+        "Reference": d.reference,
+        "Tax Type": d.taxType,
+        "Rate (%)": d.taxRate,
+        "Txn Ccy": d.transactionCurrency,
+        "Base Ccy": d.baseCurrency,
+        "Exch Rate": d.exchangeRate,
+        "Tax Amount (Txn)": d.taxAmountTxnCcy,
+        "Tax Amount (Base)": d.taxAmountBaseCcy
+      }));
+      return sendCSV(res, 'Tax_Transactions', csvData);
     }
 
     if (format === 'excel') {
@@ -252,6 +255,10 @@ exports.exportStatutoryReport = async (req, res) => {
 
     if (format === 'json') {
       return sendJSON(res, reportName.replace(/\s+/g, '_'), reportData.data);
+    }
+
+    if (format === 'csv') {
+      return sendCSV(res, reportName.replace(/\s+/g, '_'), rows);
     }
 
     if (format === 'excel') {

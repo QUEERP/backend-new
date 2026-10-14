@@ -1,10 +1,11 @@
 const prisma = require("../config/prisma");
 const InventoryService = require("./inventoryService");
+const { roundHalfUp, getCurrencyDecimals } = require("./currencyFxService");
 
 class InvoiceWorkflow {
   /**
    * Generates an Invoice automatically from an approved Sales Order
-   * (Records only item description/name, HSN/SAC code, qty, and rate - excluding taxes)
+   * (Records item details, prorates or retains discount, recomputes grandTotal and baseCurrencyAmount)
    */
   static async createInvoiceFromSalesOrder(params) {
     const { businessId, salesOrderId, invoiceNumber, performedBy, extraData = {} } = params;
@@ -54,9 +55,21 @@ class InvoiceWorkflow {
           
           totalTax: itemTax,
           totalAmount: itemSubtotal + itemTax,
-          unit: item.unit || null
+          unit: item.unit || null,
+          discount: Number(item.discount || 0)
         });
       }
+
+      const currency = extraData.currency || salesOrder.currency || "AED";
+      const decimals = getCurrencyDecimals(currency);
+      const discount = Number(extraData.discount !== undefined ? extraData.discount : (salesOrder.discount || 0));
+      const shippingCharges = Number(extraData.shippingCharges || 0);
+      const tds = Number(extraData.tds || 0);
+      const grandTotal = roundHalfUp(invoiceSubtotal + invoiceTotalTax + shippingCharges - discount - tds, decimals);
+      const exchangeRate = Number(salesOrder.exchangeRate || 1);
+      const statutoryExchangeRate = Number(salesOrder.statutoryExchangeRate || exchangeRate);
+      const baseCurrencyAmount = roundHalfUp(grandTotal * exchangeRate, decimals);
+      const statutoryBaseAmount = roundHalfUp(grandTotal * statutoryExchangeRate, decimals);
 
       // 3. Create the Invoice record
       const invoice = await tx.invoice.create({
@@ -67,16 +80,17 @@ class InvoiceWorkflow {
           invoiceNumber,
           subtotal: invoiceSubtotal,
           totalTax: invoiceTotalTax,
-          grandTotal: invoiceSubtotal + invoiceTotalTax + Number(extraData.shippingCharges || 0) - Number(extraData.tds || 0),
+          discount,
+          grandTotal,
           status: "UNPAID",
-          currency: extraData.currency || salesOrder.currency || "AED",
-          exchangeRate: salesOrder.exchangeRate,
-          baseCurrencyAmount: salesOrder.baseCurrencyAmount,
+          currency,
+          exchangeRate,
+          baseCurrencyAmount,
           baseCurrencyId: salesOrder.baseCurrencyId,
-          statutoryBaseAmount: salesOrder.statutoryBaseAmount,
-          statutoryExchangeRate: salesOrder.statutoryExchangeRate,
+          statutoryBaseAmount,
+          statutoryExchangeRate,
           transactionCurrencyId: salesOrder.transactionCurrencyId,
-          shippingCharges: Number(extraData.shippingCharges || 0),
+          shippingCharges,
           cgst: Number(extraData.cgst || salesOrder.cgst || 0),
           sgst: Number(extraData.sgst || salesOrder.sgst || 0),
           igst: Number(extraData.igst || salesOrder.igst || 0),

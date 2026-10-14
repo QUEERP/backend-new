@@ -1,4 +1,5 @@
 const prisma = require("../config/prisma");
+const { roundHalfUp, getCurrencyDecimals } = require("../services/currencyFxService");
 
 
 //////////////////////////////////////////////////////
@@ -67,6 +68,59 @@ exports.createBill = async (req, res) => {
     const subtotal = req.body.subtotal !== undefined ? Number(req.body.subtotal) : finalItems.reduce((sum, i) => sum + i.quantity * i.price, 0);
     const totalAmount = req.body.totalAmount !== undefined ? Number(req.body.totalAmount) : (subtotal + taxValue - discount);
 
+    const business = await prisma.business.findUnique({
+      where: { id: req.business.id },
+      include: { baseCurrency: true }
+    });
+
+    let transactionCurrencyId = null;
+    let baseCurrencyId = business?.baseCurrencyId || null;
+    let exchangeRate = req.body.exchangeRate !== undefined ? Number(req.body.exchangeRate) : null;
+    let baseCurrencyAmount = null;
+
+    if (currency) {
+      const ccy = await prisma.currency.upsert({
+        where: { code: currency },
+        update: {},
+        create: {
+          code: currency,
+          name: currency,
+          symbol: currency,
+          decimals: 2,
+          decimalPrecision: 2
+        }
+      });
+      transactionCurrencyId = ccy.id;
+    }
+
+    if (!baseCurrencyId && (business?.currency || business?.baseCurrency?.code)) {
+      const bCode = business?.currency || business?.baseCurrency?.code;
+      const baseCcy = await prisma.currency.findUnique({ where: { code: bCode } });
+      if (baseCcy) baseCurrencyId = baseCcy.id;
+    }
+
+    if (transactionCurrencyId && baseCurrencyId) {
+      if (transactionCurrencyId === baseCurrencyId) {
+        exchangeRate = 1.0;
+      } else if (!exchangeRate) {
+        const rateRec = await prisma.exchangeRate.findFirst({
+          where: {
+            fromCurrencyId: transactionCurrencyId,
+            toCurrencyId: baseCurrencyId,
+            effectiveDate: { lte: new Date(billDate) },
+          },
+          orderBy: { effectiveDate: 'desc' }
+        });
+        exchangeRate = rateRec ? rateRec.rate : 1.0;
+      }
+    } else {
+      exchangeRate = exchangeRate || 1.0;
+    }
+
+    const billDecimals = getCurrencyDecimals(currency);
+    totalAmount = roundHalfUp(subtotal + taxValue - discount, billDecimals);
+    baseCurrencyAmount = roundHalfUp(totalAmount * exchangeRate, billDecimals);
+
     const bill = await prisma.bill.create({
       data: {
         businessId: req.business.id,
@@ -79,6 +133,12 @@ exports.createBill = async (req, res) => {
         totalAmount,
         outstandingAmount: totalAmount,
         currency,
+        transactionCurrencyId,
+        baseCurrencyId,
+        exchangeRate,
+        baseCurrencyAmount,
+        statutoryExchangeRate: exchangeRate,
+        statutoryBaseAmount: baseCurrencyAmount,
         billDate: new Date(billDate),
         dueDate: dueDate ? new Date(dueDate) : null,
         notes,
@@ -93,6 +153,27 @@ exports.createBill = async (req, res) => {
       },
       include: { vendor: true, items: true, purchaseOrder: true },
     });
+
+    if (taxValue > 0) {
+      const isIndia = business?.country === 'INDIA' || business?.countryCode === 'IN';
+      await prisma.taxTransaction.create({
+        data: {
+          businessId: req.business.id,
+          transactionType: 'BILL',
+          transactionId: bill.id,
+          documentNumber: bill.billNumber,
+          taxType: isIndia ? 'GST' : 'VAT',
+          taxRate: 5,
+          taxableAmount: subtotal,
+          taxAmount: taxValue,
+          transactionCurrencyId,
+          exchangeRate,
+          taxableAmountBaseCcy: Number((subtotal * exchangeRate).toFixed(2)),
+          taxAmountBaseCcy: Number((taxValue * exchangeRate).toFixed(2)),
+          transactionDate: new Date(billDate),
+        }
+      }).catch(err => console.error("TaxTransaction creation failed:", err.message));
+    }
 
     res.status(201).json({ success: true, bill });
   } catch (error) {
@@ -175,6 +256,34 @@ exports.updateBill = async (req, res) => {
 
     const totalAmount = subtotal + tax - discount;
 
+    let currency = req.body.currency || bill.currency;
+    let exchangeRate = req.body.exchangeRate !== undefined ? Number(req.body.exchangeRate) : bill.exchangeRate;
+    let transactionCurrencyId = bill.transactionCurrencyId;
+    let baseCurrencyId = bill.baseCurrencyId;
+
+    if (req.body.currency && req.body.currency !== bill.currency) {
+      const ccy = await prisma.currency.upsert({
+        where: { code: req.body.currency },
+        update: {},
+        create: {
+          code: req.body.currency,
+          name: req.body.currency,
+          symbol: req.body.currency,
+          decimals: 2,
+          decimalPrecision: 2
+        }
+      });
+      transactionCurrencyId = ccy.id;
+      if (transactionCurrencyId === baseCurrencyId) {
+        exchangeRate = 1.0;
+      }
+    }
+
+    const finalRate = exchangeRate || 1.0;
+    const updateDecimals = getCurrencyDecimals(currency || bill.currency);
+    totalAmount = roundHalfUp(subtotal + tax - discount, updateDecimals);
+    const baseCurrencyAmount = roundHalfUp(totalAmount * finalRate, updateDecimals);
+
     //////////////////////////////////////////////////////
     // DELETE OLD ITEMS
     //////////////////////////////////////////////////////
@@ -192,6 +301,12 @@ exports.updateBill = async (req, res) => {
         tax,
         discount,
         totalAmount,
+        currency,
+        transactionCurrencyId,
+        exchangeRate: finalRate,
+        baseCurrencyAmount,
+        statutoryExchangeRate: finalRate,
+        statutoryBaseAmount: baseCurrencyAmount,
         billDate: billDate ? new Date(billDate) : bill.billDate,
         dueDate: dueDate ? new Date(dueDate) : bill.dueDate,
         notes,

@@ -2,6 +2,7 @@ const prisma = require("../config/prisma");
 const cloudinary = require("../config/cloudinary");
 const generatePdf = require("./generatePdf");
 const creditTemplate = require("../templates/creditNoteTemplate");
+const { roundHalfUp, getCurrencyDecimals } = require("../services/currencyFxService");
 
 module.exports = async ({
   invoice = null,
@@ -32,6 +33,12 @@ module.exports = async ({
 
     const creditNumber = `${prefix}-${String(next).padStart(3, "0")}`;
 
+    const currency = invoice?.currency || bill?.currency || "AED";
+    const decimals = getCurrencyDecimals(currency);
+    const exchangeRate = Number(invoice?.exchangeRate || bill?.exchangeRate || 1);
+    const amount = roundHalfUp(Number(extraAmount), decimals);
+    const baseCurrencyAmount = roundHalfUp(amount * exchangeRate, decimals);
+
     //////////////////////////////////////////////////////
     // CREATE CREDIT NOTE
     //////////////////////////////////////////////////////
@@ -43,13 +50,20 @@ module.exports = async ({
         invoiceId: invoice?.id || null,
         creditNumber,
         type,
-        amount: Number(extraAmount),
-        remainingAmount: Number(extraAmount),
+        amount,
+        remainingAmount: amount,
         reason:
           type === "BILL"
             ? "Bill Overpayment"
             : "Invoice Overpayment",
         status: "OPEN",
+        currency,
+        exchangeRate,
+        baseCurrencyAmount,
+        statutoryExchangeRate: exchangeRate,
+        statutoryBaseAmount: baseCurrencyAmount,
+        transactionCurrencyId: invoice?.transactionCurrencyId || bill?.transactionCurrencyId || null,
+        baseCurrencyId: invoice?.baseCurrencyId || bill?.baseCurrencyId || null,
       },
     });
 
