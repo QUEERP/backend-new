@@ -5,7 +5,9 @@ const {
   resolveGstStateCode, 
   validateGstinPrefix,
   isValidGstinFormat,
-  GST_STATES 
+  GST_STATES,
+  validateLutDetails,
+  isValidIcegatePortCode
 } = require('./gstConfig');
 
 function normalizeCountry(c) {
@@ -321,6 +323,39 @@ function recomputeInvoiceFinancials({
     throw new Error('Export invoice creation requires an explicit exportType ("LUT" or "WITH_PAYMENT_OF_IGST").');
   }
 
+  // Statutory Validation for Exports (Rule 96 / 96A)
+  if (isExportSupply) {
+    if (exportType === 'LUT' || exportType === 'UNDER_LUT') {
+      if (headerData.lutNumber || headerData.lutDate) {
+        const lutVal = validateLutDetails({
+          lutNumber: headerData.lutNumber,
+          lutDate: headerData.lutDate,
+          invoiceDate: docDate
+        });
+        if (!lutVal.valid) {
+          throw new Error(`Statutory LUT Error: ${lutVal.error}`);
+        }
+      }
+    }
+    if (hasGoods) {
+      if (headerData.shippingBillDate) {
+        const dSb = new Date(headerData.shippingBillDate);
+        if (!isNaN(dSb.getTime())) {
+          const sbYmd = dSb.toISOString().slice(0, 10);
+          const invYmd = docDate.toISOString().slice(0, 10);
+          if (sbYmd > invYmd) {
+            throw new Error(`Shipping Bill Date (${sbYmd}) cannot be after Invoice Date (${invYmd}).`);
+          }
+        }
+      }
+      if (headerData.portCode) {
+        if (!isValidIcegatePortCode(headerData.portCode)) {
+          throw new Error(`Invalid ICEGATE Port Code "${headerData.portCode}". Must be a valid 6-character port code (e.g. INKDL4, INMUN1).`);
+        }
+      }
+    }
+  }
+
   let lineItemsSubtotal = 0;
   let lineItemsTotalItemDiscount = 0;
   let lineItemsCgst = 0;
@@ -342,7 +377,7 @@ function recomputeInvoiceFinancials({
     let taxPercent = Number(item.taxPercent || 0);
 
     // Statutory Rate Verification
-    if (taxPercent > 0 && isIndia && !isExportSupply) {
+    if (taxPercent > 0 && isIndia) {
       if (!isValidGstRate(taxPercent, docDate)) {
         throw new Error(
           `Invalid GST rate (${taxPercent}%) for item "${item.description || idx + 1}". ` +
@@ -391,7 +426,7 @@ function recomputeInvoiceFinancials({
       }
 
       if (exportType === 'LUT' || exportType === 'UNDER_LUT') {
-        if (taxPercent > 0 || Number(item.igst || 0) > 0) {
+        if (taxPercent > 0 || Number(item.igst || 0) > 0 || Number(item.igstPercent || 0) > 0 || Number(item.cgstPercent || 0) > 0 || Number(item.sgstPercent || 0) > 0) {
           throw new Error('Statutory Error: Exports under LUT / Bond must be zero-rated (0% IGST). Cannot charge tax.');
         }
         itemIgstPercent = 0;
@@ -455,6 +490,12 @@ function recomputeInvoiceFinancials({
   const recomputedIgst = roundHalfUp(lineItemsIgst, txnDecimals);
   const recomputedTotalTax = roundHalfUp(lineItemsTotalTax, txnDecimals);
 
+  if (isExportSupply && (exportType === 'LUT' || exportType === 'UNDER_LUT')) {
+    if (recomputedTotalTax > 0 || recomputedIgst > 0 || recomputedCgst > 0 || recomputedSgst > 0) {
+      throw new Error('Statutory Error: Exports under LUT / Bond cannot have tax. Total tax must be 0.');
+    }
+  }
+
   // Grand total formula: Subtotal - Item Discounts - Document Discount + Shipping Charges + Recomputed Tax
   const recomputedGrandTotal = roundHalfUp(
     Math.max(recomputedSubtotal - lineItemsTotalItemDiscount - headerDiscount, 0) + shippingCharges + recomputedTotalTax,
@@ -476,6 +517,7 @@ function recomputeInvoiceFinancials({
       rate: recomputedItems[0]?.cgstPercent || 0,
       taxableAmount: recomputedSubtotal - lineItemsTotalItemDiscount,
       taxAmount: recomputedCgst,
+      taxAmountTxnCcy: recomputedCgst,
       taxAmountBaseCcy: roundHalfUp(recomputedCgst * effectiveExchangeRate, baseDecimals)
     });
   }
@@ -485,6 +527,7 @@ function recomputeInvoiceFinancials({
       rate: recomputedItems[0]?.sgstPercent || 0,
       taxableAmount: recomputedSubtotal - lineItemsTotalItemDiscount,
       taxAmount: recomputedSgst,
+      taxAmountTxnCcy: recomputedSgst,
       taxAmountBaseCcy: roundHalfUp(recomputedSgst * effectiveExchangeRate, baseDecimals)
     });
   }
@@ -494,6 +537,7 @@ function recomputeInvoiceFinancials({
       rate: recomputedItems[0]?.igstPercent || 0,
       taxableAmount: recomputedSubtotal - lineItemsTotalItemDiscount,
       taxAmount: recomputedIgst,
+      taxAmountTxnCcy: recomputedIgst,
       taxAmountBaseCcy: roundHalfUp(recomputedIgst * effectiveExchangeRate, baseDecimals)
     });
   }
@@ -513,7 +557,9 @@ function recomputeInvoiceFinancials({
     igst: recomputedIgst,
     totalTax: recomputedTotalTax,
     grandTotal: recomputedGrandTotal,
+    exchangeRate: effectiveExchangeRate,
     baseCurrencyAmount: recomputedBaseAmount,
+    statutoryExchangeRate: effectiveStatutoryRate,
     statutoryBaseAmount: recomputedStatutoryBaseAmount,
     taxTransactions
   };

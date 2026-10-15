@@ -13,6 +13,12 @@ module.exports = (invoice, settings = {}) => {
   // Helper to format currency
   const fmt = (val) => (val || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   
+  const invoiceExchangeRate = Number(invoice.exchangeRate || 1.0);
+  const isForeignCurrency = invoice.currency && invoice.currency.toUpperCase() !== 'INR';
+  const taxableValueDoc = Math.max((invoice.subtotal || 0) - (invoice.discount || 0), 0);
+  const taxableValueInr = taxableValueDoc * invoiceExchangeRate;
+  const grandTotalInr = (invoice.totalAmount || invoice.grandTotal || 0) * invoiceExchangeRate;
+  
   // Determine dynamic headers based on item types
   const hasGoods = (invoice.items || []).some(i => i.itemType === 'GOODS');
   const hasServices = (invoice.items || []).some(i => i.itemType === 'SERVICE');
@@ -296,6 +302,16 @@ module.exports = (invoice, settings = {}) => {
           <tr class="total-row">
             <td>Total Amount</td><td style="text-align:right;">${sym} ${fmt((invoice.totalAmount || invoice.grandTotal || 0))}</td>
           </tr>
+          ${isForeignCurrency ? `
+          <tr style="background:#f0f7ff; color:#1f4e79; font-weight:bold;">
+            <td style="padding:6px 0;">Taxable Value in INR (@ FX ${invoiceExchangeRate})</td>
+            <td style="text-align:right; padding:6px 0;">₹ ${fmt(taxableValueInr)}</td>
+          </tr>
+          <tr style="background:#e6f0fa; color:#1f4e79; font-weight:bold;">
+            <td style="padding:8px 0; font-size:12px;">Total in INR Equivalent</td>
+            <td style="text-align:right; padding:8px 0; font-size:12px;">₹ ${fmt(grandTotalInr)}</td>
+          </tr>
+          ` : ''}
           ${invoice.amountPaid ? `
           <tr>
             <td style="padding: 12px 0; font-weight: bold;">Amount Paid</td><td style="text-align:right; font-weight: bold; color: #16a34a;">- ${sym} ${fmt(invoice.amountPaid)}</td>
@@ -496,6 +512,16 @@ module.exports = (invoice, settings = {}) => {
                <span>TOTAL</span>
                <span>${sym} ${fmt((invoice.totalAmount || invoice.grandTotal || 0))}</span>
              </div>
+             ${isForeignCurrency ? `
+             <div style="background: #f0f7ff; color: #1f4e79; font-weight: bold; padding: 6px 12px; display: flex; justify-content: space-between; font-size: 11px; margin-top: 2px;">
+               <span>Taxable Value in INR (@ FX ${invoiceExchangeRate})</span>
+               <span>₹ ${fmt(taxableValueInr)}</span>
+             </div>
+             <div style="background: #e6f0fa; color: #1f4e79; font-weight: bold; padding: 8px 12px; display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px;">
+               <span>Total in INR Equivalent</span>
+               <span>₹ ${fmt(grandTotalInr)}</span>
+             </div>
+             ` : ''}
              ${invoice.amountPaid ? `
              <div style="background: #f4f4f4; color: #333; font-weight: bold; padding: 10px 15px; display: flex; justify-content: space-between; font-size: 13px; margin-top: 2px;">
                <span>Amount Paid</span>
@@ -716,6 +742,16 @@ module.exports = (invoice, settings = {}) => {
             <td style="padding:10px;">Total</td>
             <td class="text-right" style="padding:10px;">${sym} ${fmt((invoice.totalAmount || invoice.grandTotal || 0))}</td>
           </tr>
+          ${isForeignCurrency ? `
+          <tr style="background:#f0f7ff; color:#1f4e79; font-weight:bold; font-size:11px;">
+            <td style="padding:8px 10px;">Taxable Value in INR (@ FX ${invoiceExchangeRate})</td>
+            <td class="text-right" style="padding:8px 10px;">₹ ${fmt(taxableValueInr)}</td>
+          </tr>
+          <tr style="background:#e6f0fa; color:#1f4e79; font-weight:bold; font-size:12px;">
+            <td style="padding:8px 10px;">Total in INR Equivalent</td>
+            <td class="text-right" style="padding:8px 10px;">₹ ${fmt(grandTotalInr)}</td>
+          </tr>
+          ` : ''}
           ${invoice.amountPaid ? `
           <tr style="background:#f4f4f4; color:#333; font-weight:bold;">
             <td style="padding:10px;">Amount Paid</td>

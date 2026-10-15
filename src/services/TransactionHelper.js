@@ -184,10 +184,15 @@ class TransactionHelper {
     if (taxTransactions && taxTransactions.length > 0) {
       await tx.taxTransaction.createMany({
         data: taxTransactions.map(t => ({
-          ...t,
           businessId,
           transactionType,
-          transactionId
+          transactionId,
+          taxAmountTxnCcy: Number(t.taxAmountTxnCcy !== undefined ? t.taxAmountTxnCcy : (t.taxAmount || 0)),
+          taxAmountBaseCcy: Number(t.taxAmountBaseCcy !== undefined ? t.taxAmountBaseCcy : (t.taxAmount || 0)),
+          taxableAmountBaseCcy: Number(t.taxableAmountBaseCcy !== undefined ? t.taxableAmountBaseCcy : (t.taxableAmount || 0)),
+          taxRateId: t.taxRateId || null,
+          transactionCurrencyId: t.transactionCurrencyId || null,
+          itemReference: t.taxType || t.itemReference || null
         }))
       });
     }

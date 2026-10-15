@@ -5,9 +5,21 @@ module.exports = async (req, res, next) => {
     const userId = req.user.userId;
 
     //////////////////////////////////////////////////////
-    // 1️⃣ READ BUSINESS FROM HEADER
+    // 1️⃣ READ BUSINESS FROM HEADER / QUERY / BODY / PARAMS
     //////////////////////////////////////////////////////
-    const businessId = req.headers["x-business-id"] || req.query["x-business-id"] || req.query.businessId || req.body?.businessId;
+    let rawBizId =
+      req.headers["x-business-id"] ||
+      req.headers["business-id"] ||
+      req.headers["x-businessid"] ||
+      req.query["x-business-id"] ||
+      req.query.businessId ||
+      req.body?.businessId ||
+      req.params?.businessId;
+
+    if (Array.isArray(rawBizId)) {
+      rawBizId = rawBizId[0];
+    }
+    const businessId = typeof rawBizId === "string" ? rawBizId.trim().replace(/^["']|["']$/g, "") : rawBizId;
 
     if (!businessId) {
       return res.status(400).json({

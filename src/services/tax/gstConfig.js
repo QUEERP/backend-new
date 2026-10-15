@@ -185,6 +185,104 @@ function validateGstinPrefix(gstin, stateInput) {
   return { valid: true, stateMaster, gstinStateCode };
 }
 
+/**
+ * 6-character statutory ICEGATE port codes for Indian export customs locations
+ */
+const ICEGATE_PORT_CODES = [
+  { code: 'INMUN1', name: 'Mundra Sea Port (Gujarat)' },
+  { code: 'INKDL4', name: 'Kandla Sea Port (Gujarat)' },
+  { code: 'INHZA1', name: 'Hazira Port (Gujarat)' },
+  { code: 'INPAV1', name: 'Pipavav Port (Gujarat)' },
+  { code: 'INNSA1', name: 'Nhava Sheva / JNPT (Maharashtra)' },
+  { code: 'INBOM1', name: 'Mumbai Sea Port (Maharashtra)' },
+  { code: 'INBOM4', name: 'Mumbai Air Cargo (Maharashtra)' },
+  { code: 'INDEL4', name: 'Delhi Air Cargo (IGIA, New Delhi)' },
+  { code: 'INMAA1', name: 'Chennai Sea Port (Tamil Nadu)' },
+  { code: 'INMAA4', name: 'Chennai Air Cargo (Tamil Nadu)' },
+  { code: 'INCCU1', name: 'Kolkata Sea Port (West Bengal)' },
+  { code: 'INCCU4', name: 'Kolkata Air Cargo (West Bengal)' },
+  { code: 'INCOK1', name: 'Cochin Sea Port (Kerala)' },
+  { code: 'INBLR4', name: 'Bengaluru Air Cargo (Karnataka)' },
+  { code: 'INHYD4', name: 'Hyderabad Air Cargo (Telangana)' },
+  { code: 'INAMD4', name: 'Ahmedabad Air Cargo (Gujarat)' },
+  { code: 'INVTZ1', name: 'Visakhapatnam Port (Andhra Pradesh)' },
+  { code: 'INTUT1', name: 'Tuticorin Port (Tamil Nadu)' },
+  { code: 'INGOI1', name: 'Marmagao Port (Goa)' },
+  { code: 'INIXY1', name: 'Kandla SEZ (Gujarat)' }
+];
+
+function isValidIcegatePortCode(portCode) {
+  if (!portCode || typeof portCode !== 'string') return false;
+  const clean = portCode.trim().toUpperCase();
+  return /^[A-Z]{2}[A-Z0-9]{3}[0-9A-Z]$/.test(clean);
+}
+
+function getIndianFinancialYear(date) {
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+  const year = d.getFullYear();
+  const month = d.getMonth(); // 0 = Jan, 3 = Apr
+  const startYear = month >= 3 ? year : year - 1;
+  const endYear = startYear + 1;
+  return {
+    startYear,
+    endYear,
+    label: `FY ${startYear}-${String(endYear).slice(2)}`,
+    startDate: new Date(Date.UTC(startYear, 3, 1, 0, 0, 0)),
+    endDate: new Date(Date.UTC(endYear, 2, 31, 23, 59, 59, 999))
+  };
+}
+
+function isValidLutNumberFormat(lutNumber) {
+  if (!lutNumber || typeof lutNumber !== 'string') return false;
+  const trimmed = lutNumber.trim().toUpperCase();
+  // Standard GST portal ARN: AD + 2-digit state + 2-digit month + 2-digit year + 7 digits (+ optional 1 char)
+  // e.g. AD2401240012345
+  const lutArnRegex = /^AD[0-9]{2}(0[1-9]|1[0-2])[0-9]{2}[0-9]{7}[A-Z0-9]?$/;
+  // Also accept general 14-16 alphanumeric ARN starting with AD
+  const generalArnRegex = /^AD[0-9]{12,14}[A-Z0-9]?$/;
+  return lutArnRegex.test(trimmed) || generalArnRegex.test(trimmed);
+}
+
+function validateLutDetails({ lutNumber, lutDate, invoiceDate }) {
+  if (lutDate) {
+    const dLut = new Date(lutDate);
+    const dInv = new Date(invoiceDate || new Date());
+    if (isNaN(dLut.getTime())) {
+      return { valid: false, error: 'Invalid LUT Date format.' };
+    }
+
+    const lutYmd = dLut.toISOString().slice(0, 10);
+    const invYmd = dInv.toISOString().slice(0, 10);
+    if (lutYmd > invYmd) {
+      return { 
+        valid: false, 
+        error: `LUT Date (${lutYmd}) cannot be after Invoice Date (${invYmd}). The LUT must be in place on or before the invoice date.` 
+      };
+    }
+
+    const invFy = getIndianFinancialYear(dInv);
+    const lutFy = getIndianFinancialYear(dLut);
+    if (invFy && lutFy && lutFy.label !== invFy.label) {
+      return {
+        valid: false,
+        error: `LUT is not valid for ${invFy.label}. LUT was filed in ${lutFy.label} and expired on ${lutFy.endDate.toISOString().slice(0, 10)}. A fresh LUT must be filed for ${invFy.label}.`
+      };
+    }
+  }
+
+  if (lutNumber && String(lutNumber).trim()) {
+    if (!isValidLutNumberFormat(lutNumber)) {
+      return { 
+        valid: false, 
+        error: `Invalid LUT Number format "${lutNumber}". Must be a valid GST ARN starting with "AD" followed by 12-14 digits (e.g. AD2401240012345).` 
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
 module.exports = {
   GST_RATE_ENTRIES,
   getValidGstRatesForDate,
@@ -193,5 +291,10 @@ module.exports = {
   resolveGstState,
   resolveGstStateCode,
   isValidGstinFormat,
-  validateGstinPrefix
+  validateGstinPrefix,
+  ICEGATE_PORT_CODES,
+  isValidIcegatePortCode,
+  getIndianFinancialYear,
+  isValidLutNumberFormat,
+  validateLutDetails
 };

@@ -139,13 +139,24 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
     });
 
     const itemsToCreate = recomputed.processedItems.map((item) => {
-      const base = { ...item };
-      delete base.productId;
-      delete base.warehouseId;
-      delete base.price;
-      delete base.taxRuleId;
-      delete base.id;
-      delete base.invoiceId;
+      const base = {
+        description: item.description || '',
+        amount: Number(item.amount || 0),
+        hours: Number(item.hours || item.quantity || 0),
+        rate: Number(item.rate || 0),
+        quantity: Number(item.quantity || 1),
+        discount: Number(item.discount || 0),
+        taxPercent: Number(item.taxPercent || 0),
+        cgstPercent: Number(item.cgstPercent || 0),
+        sgstPercent: Number(item.sgstPercent || 0),
+        igstPercent: Number(item.igstPercent || 0),
+        totalTax: Number(item.totalTax || 0),
+        totalAmount: Number(item.totalAmount || 0),
+        hsnSacCode: item.hsnSacCode || null,
+        itemName: item.itemName || null,
+        itemType: item.itemType || 'GOODS',
+        unit: item.unit || 'pcs'
+      };
       if (item.productId) {
         base.product = { connect: { id: item.productId } };
       }
@@ -555,13 +566,24 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
       });
 
       const processedItems = recomputed.processedItems.map((item) => {
-        const base = { ...item };
-        delete base.productId;
-        delete base.warehouseId;
-        delete base.invoiceId;
-        delete base.id;
-        delete base.price;
-        delete base.taxRuleId;
+        const base = {
+          description: item.description || '',
+          amount: Number(item.amount || 0),
+          hours: Number(item.hours || item.quantity || 0),
+          rate: Number(item.rate || 0),
+          quantity: Number(item.quantity || 1),
+          discount: Number(item.discount || 0),
+          taxPercent: Number(item.taxPercent || 0),
+          cgstPercent: Number(item.cgstPercent || 0),
+          sgstPercent: Number(item.sgstPercent || 0),
+          igstPercent: Number(item.igstPercent || 0),
+          totalTax: Number(item.totalTax || 0),
+          totalAmount: Number(item.totalAmount || 0),
+          hsnSacCode: item.hsnSacCode || null,
+          itemName: item.itemName || null,
+          itemType: item.itemType || 'GOODS',
+          unit: item.unit || 'pcs'
+        };
         if (item.productId) {
           base.product = { connect: { id: item.productId } };
         }
