@@ -238,12 +238,13 @@ async function runUnitTests() {
   assert.ok(report.kpis, "Report must have kpis");
   console.log("Live Report KPIs:", JSON.stringify(report.kpis, null, 2));
 
-  // With INV-002 corrected to 5% statutory rate (₹45 gross tax minus CN-001 reversal ₹2.14 = ₹42.86):
-  assert.strictEqual(report.kpis.outputTax, 42.86, "Output tax must be 42.86 after credit note reduction");
+  // INV-002 statutory rate: ₹45.00 gross tax; CN-001 has totalTax=0 (balance credit, non-tax-reducing):
+  assert.strictEqual(report.kpis.outputTax, 45.00, "Output tax must be 45.00");
   assert.strictEqual(report.kpis.inputTax, 400.00, "Input tax must be 400.00");
-  assert.strictEqual(report.kpis.netPayable, -357.14, "Net payable must be -357.14");
-  assert.strictEqual(report.kpis.netItcCarryForward, 357.14, "Net ITC Carry Forward must be 357.14");
-  assert.strictEqual(report.kpis.netItcReceivable, 357.14, "Net ITC Receivable alias must be 357.14");
+  assert.strictEqual(report.kpis.netPayable, -355.00, "Net payable must be -355.00");
+  assert.strictEqual(report.kpis.netItcCarryForward, 355.00, "Net ITC Carry Forward must be 355.00");
+  assert.strictEqual(report.kpis.netItcReceivable, 355.00, "Net ITC Receivable alias must be 355.00");
+  assert.strictEqual(report.kpis.taxablePurchases, 16240.00, "Taxable purchases must include zero-tax bills (₹16,240.00)");
 
   // With all invoices now conforming to standard GST slabs, warnings count must be 0
   assert.strictEqual(report.dataQualityWarnings.length, 0, "All documents must have valid statutory rates with 0 warnings");

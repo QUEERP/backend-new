@@ -62,6 +62,17 @@ exports.createPayment = async (req, res) => {
         paymentNumber = `P-${String(lastNumber + 1).padStart(3, "0")}`;
       }
 
+      const paymentCurrencyCode = req.body.currency || bill.currency;
+      if (!paymentCurrencyCode) {
+        return errorResponse(res, "Payment currency is required and could not be determined.", 400);
+      }
+      if (bill.currency && paymentCurrencyCode !== bill.currency && (!req.body.exchangeRate || Number(req.body.exchangeRate) <= 0)) {
+        return errorResponse(res, `Payment currency (${paymentCurrencyCode}) differs from bill currency (${bill.currency}). An explicit positive settlement exchange rate must be supplied.`, 400);
+      }
+      const paymentCurrencyData = await CurrencyService.resolveCurrencyData(businessId, paymentCurrencyCode, new Date(paymentDate));
+      const paymentRate = (bill.currency && paymentCurrencyCode === bill.currency) ? (bill.exchangeRate || 1.0) : (req.body.exchangeRate ? Number(req.body.exchangeRate) : paymentCurrencyData.exchangeRate);
+      const baseDecimals = paymentCurrencyData.baseDecimals || 2;
+
       let payment = await prisma.payment.create({
         data: {
           paymentNumber,
@@ -73,6 +84,13 @@ exports.createPayment = async (req, res) => {
           transactionId,
           note,
           createdBy: userId,
+          currency: paymentCurrencyCode,
+          transactionCurrencyId: paymentCurrencyData.transactionCurrencyId,
+          baseCurrencyId: paymentCurrencyData.baseCurrencyId,
+          exchangeRate: paymentRate,
+          baseCurrencyAmount: CurrencyService.scaleAmount(currentAmount, paymentRate, baseDecimals),
+          statutoryExchangeRate: paymentCurrencyData.statutoryRate,
+          statutoryBaseAmount: CurrencyService.scaleAmount(currentAmount, paymentCurrencyData.statutoryRate, baseDecimals)
         },
       });
 
@@ -816,6 +834,10 @@ exports.allocateExistingInvoice = async (req, res) => {
       const invoice = invoices[0];
 
       if (invoice.status !== 'UNPAID') throw new Error("Invoice must be UNPAID");
+
+      if (payment.currency && invoice.currency && payment.currency !== invoice.currency) {
+        throw new Error(`Cannot allocate: Payment currency (${payment.currency}) does not match Invoice currency (${invoice.currency}). Cross-currency allocations require explicit settlement conversion.`);
+      }
 
       const unapplied = Number(payment.amount) - Number(payment.amountAllocated);
       const invoiceRemaining = Number(invoice.grandTotal) - Number(invoice.amountPaid);

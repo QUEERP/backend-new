@@ -1,0 +1,151 @@
+{
+  "generatedAt": "2026-10-15T07:07:16.862Z",
+  "invoices": [
+    {
+      "id": "0e8a83ae-7d5c-47c5-948e-bc50a9829505",
+      "invoiceNumber": "INV-002",
+      "businessId": "44c72903-27a2-4951-a223-5e6e411f24c7",
+      "businessName": "Farez Management",
+      "currency": "CAD",
+      "grandTotal": 2260,
+      "issues": [
+        "item has invalid statutory GST rate for date"
+      ]
+    },
+    {
+      "id": "f9e0cceb-2503-4fa3-879f-907c2c508564",
+      "invoiceNumber": "INV-001",
+      "businessId": "44c72903-27a2-4951-a223-5e6e411f24c7",
+      "businessName": "Farez Management",
+      "currency": "CAD",
+      "grandTotal": 3390,
+      "issues": [
+        "item has invalid statutory GST rate for date"
+      ]
+    }
+  ],
+  "bills": [],
+  "payments": [
+    {
+      "id": "ebf6d389-9f3a-4d39-b879-6622938c48f7",
+      "paymentNumber": "VPAY-004",
+      "businessId": "dc70ca38-b141-477d-a379-f02649117a78",
+      "businessName": "testing",
+      "amount": 78,
+      "currency": "AED",
+      "issues": [
+        "Payment currency (AED) != linked document currency (INR)"
+      ]
+    },
+    {
+      "id": "1a1d5582-5761-430c-a614-542ab7b81cec",
+      "paymentNumber": "PAY-003",
+      "businessId": "e24ee048-2039-4c2e-a1c9-24bf7b2f943e",
+      "businessName": "Dev Priya",
+      "amount": 1000,
+      "currency": "AED",
+      "issues": [
+        "Payment stored as default 'AED' on non-AED business (CAD)"
+      ]
+    },
+    {
+      "id": "66070230-11aa-4eb2-b02b-c90001098c23",
+      "paymentNumber": "PAY-004",
+      "businessId": "e24ee048-2039-4c2e-a1c9-24bf7b2f943e",
+      "businessName": "Dev Priya",
+      "amount": 400,
+      "currency": "AED",
+      "issues": [
+        "Payment stored as default 'AED' on non-AED business (CAD)"
+      ]
+    },
+    {
+      "id": "685b7dc4-cf58-4c54-ad55-4b5512dafa21",
+      "paymentNumber": "PAY-001",
+      "businessId": "e24ee048-2039-4c2e-a1c9-24bf7b2f943e",
+      "businessName": "Dev Priya",
+      "amount": 2000,
+      "currency": "AED",
+      "issues": [
+        "Payment stored as default 'AED' on non-AED business (CAD)"
+      ]
+    },
+    {
+      "id": "0f68f599-5e1f-4c98-8452-f72ef5a80bde",
+      "paymentNumber": "PAY-002",
+      "businessId": "e24ee048-2039-4c2e-a1c9-24bf7b2f943e",
+      "businessName": "Dev Priya",
+      "amount": 10,
+      "currency": "AED",
+      "issues": [
+        "Payment stored as default 'AED' on non-AED business (CAD)"
+      ]
+    },
+    {
+      "id": "aff67fdc-48bc-485f-b8d1-a9c14cc4df68",
+      "paymentNumber": "PAY-001",
+      "businessId": "44c72903-27a2-4951-a223-5e6e411f24c7",
+      "businessName": "Farez Management",
+      "amount": 2000,
+      "currency": "AED",
+      "issues": [
+        "Payment stored as default 'AED' on non-AED business (INR)"
+      ]
+    },
+    {
+      "id": "8702c234-88eb-4aef-bf75-79beead189df",
+      "paymentNumber": "PAY-002",
+      "businessId": "44c72903-27a2-4951-a223-5e6e411f24c7",
+      "businessName": "Farez Management",
+      "amount": 1390,
+      "currency": "AED",
+      "issues": [
+        "Payment stored as default 'AED' on non-AED business (INR)"
+      ]
+    },
+    {
+      "id": "13b19b83-ef13-4183-8262-7f86cb090077",
+      "paymentNumber": "PAY-005",
+      "businessId": "e24ee048-2039-4c2e-a1c9-24bf7b2f943e",
+      "businessName": "Dev Priya",
+      "amount": 10000,
+      "currency": "AED",
+      "issues": [
+        "Payment currency (AED) != linked document currency (CAD)"
+      ]
+    },
+    {
+      "id": "f07802f5-0c12-4779-ba91-516ba17b096d",
+      "paymentNumber": "PAY-006",
+      "businessId": "e24ee048-2039-4c2e-a1c9-24bf7b2f943e",
+      "businessName": "Dev Priya",
+      "amount": 2400,
+      "currency": "AED",
+      "issues": [
+        "Payment currency (AED) != linked document currency (CAD)"
+      ]
+    },
+    {
+      "id": "9ad79927-786c-4e79-aae4-011cf776e08e",
+      "paymentNumber": "PAY-003",
+      "businessId": "44c72903-27a2-4951-a223-5e6e411f24c7",
+      "businessName": "Farez Management",
+      "amount": 2000,
+      "currency": "AED",
+      "issues": [
+        "Payment stored as default 'AED' on non-AED business (INR)"
+      ]
+    },
+    {
+      "id": "a82903a9-3e48-4bbc-bdde-0e27ddbff045",
+      "paymentNumber": "PAY-007",
+      "businessId": "e24ee048-2039-4c2e-a1c9-24bf7b2f943e",
+      "businessName": "Dev Priya",
+      "amount": 2000,
+      "currency": "AED",
+      "issues": [
+        "Payment stored as default 'AED' on non-AED business (CAD)"
+      ]
+    }
+  ]
+}

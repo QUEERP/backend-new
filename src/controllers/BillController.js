@@ -249,12 +249,23 @@ exports.updateBill = async (req, res) => {
     //////////////////////////////////////////////////////
     // RECALCULATE
     //////////////////////////////////////////////////////
-    const subtotal = items.reduce(
-      (sum, i) => sum + i.quantity * i.price,
-      0
-    );
+    let calculatedSubtotal = 0;
+    let calculatedLineTax = 0;
 
-    const totalAmount = subtotal + tax - discount;
+    for (const item of items) {
+      const qty = Number(item.quantity || 0);
+      const prc = Number(item.price || 0);
+      const lineAmt = qty * prc;
+      calculatedSubtotal += lineAmt;
+
+      if (item.tax !== undefined) {
+        calculatedLineTax += Number(item.tax || 0);
+      } else if (item.taxPercent !== undefined) {
+        calculatedLineTax += (lineAmt * (Number(item.taxPercent) / 100));
+      } else if (item.total !== undefined && item.total > lineAmt) {
+        calculatedLineTax += (item.total - lineAmt);
+      }
+    }
 
     let currency = req.body.currency || bill.currency;
     let exchangeRate = req.body.exchangeRate !== undefined ? Number(req.body.exchangeRate) : bill.exchangeRate;
@@ -281,8 +292,23 @@ exports.updateBill = async (req, res) => {
 
     const finalRate = exchangeRate || 1.0;
     const updateDecimals = getCurrencyDecimals(currency || bill.currency);
-    totalAmount = roundHalfUp(subtotal + tax - discount, updateDecimals);
-    const baseCurrencyAmount = roundHalfUp(totalAmount * finalRate, updateDecimals);
+    const business = await prisma.business.findUnique({
+      where: { id: req.business.id },
+      include: { baseCurrency: true }
+    });
+    const baseCurrencyCode = business?.baseCurrency?.code || business?.currency || 'INR';
+    const baseDecimals = business?.baseCurrency?.decimals !== undefined 
+      ? business.baseCurrency.decimals 
+      : getCurrencyDecimals(baseCurrencyCode);
+
+    const subtotal = roundHalfUp(calculatedSubtotal, updateDecimals);
+    const finalTax = calculatedLineTax > 0
+      ? roundHalfUp(calculatedLineTax, updateDecimals)
+      : roundHalfUp(Number(tax !== undefined ? tax : (bill.tax || 0)), updateDecimals);
+    const finalDiscount = roundHalfUp(Number(discount !== undefined ? discount : (bill.discount || 0)), updateDecimals);
+
+    const totalAmount = roundHalfUp(subtotal + finalTax - finalDiscount, updateDecimals);
+    const baseCurrencyAmount = roundHalfUp(totalAmount * finalRate, baseDecimals);
 
     //////////////////////////////////////////////////////
     // DELETE OLD ITEMS

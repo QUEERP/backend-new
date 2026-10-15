@@ -111,6 +111,37 @@ module.exports = (invoice, settings = {}) => {
     </div>
   `;
 
+  // Statutory Export Endorsement (Rule 96 / 96A CGST Rules)
+  let exportEndorsementHtml = '';
+  const exportType = (invoice.exportType || '').toUpperCase().trim();
+  const isExport = exportType === 'LUT' || exportType === 'UNDER_LUT' || exportType === 'WITH_PAYMENT_OF_IGST' || exportType === 'WITH_IGST' || (invoice.destinationCountry && !['INDIA', 'IN'].includes(invoice.destinationCountry.toUpperCase()));
+
+  if (isExport || exportType) {
+    const isWithPayment = exportType === 'WITH_PAYMENT_OF_IGST' || exportType === 'WITH_IGST' || (Number(invoice.igst || 0) > 0 && exportType.includes('WITH'));
+    const endorsementTitle = isWithPayment
+      ? "SUPPLY MEANT FOR EXPORT ON PAYMENT OF INTEGRATED TAX"
+      : "SUPPLY MEANT FOR EXPORT UNDER BOND OR LETTER OF UNDERTAKING WITHOUT PAYMENT OF INTEGRATED TAX";
+
+    const lutDateStr = invoice.lutDate ? new Date(invoice.lutDate).toLocaleDateString('en-IN') : null;
+    const sbDateStr = invoice.shippingBillDate ? new Date(invoice.shippingBillDate).toLocaleDateString('en-IN') : null;
+
+    exportEndorsementHtml = `
+      <div style="border: 1.5px solid #1f4e79; background: #f0f7ff; padding: 10px 14px; margin: 15px 0; border-radius: 4px; font-size: 10px;">
+        <div style="color: #1f4e79; font-weight: bold; text-transform: uppercase; font-size: 10.5px; margin-bottom: 6px; letter-spacing: 0.5px;">
+          ${endorsementTitle}
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px; font-size: 9px; color: #333;">
+          ${invoice.lutNumber ? `<div><strong>LUT No:</strong> ${invoice.lutNumber}</div>` : ''}
+          ${lutDateStr ? `<div><strong>LUT Date:</strong> ${lutDateStr}</div>` : ''}
+          ${invoice.destinationCountry ? `<div><strong>Destination Country:</strong> ${invoice.destinationCountry}</div>` : ''}
+          ${invoice.shippingBillNumber ? `<div><strong>Shipping Bill No:</strong> ${invoice.shippingBillNumber}</div>` : ''}
+          ${sbDateStr ? `<div><strong>Shipping Bill Date:</strong> ${sbDateStr}</div>` : ''}
+          ${invoice.portCode ? `<div><strong>Port Code:</strong> ${invoice.portCode}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
   if (template === 'classic') {
     return `
 <!DOCTYPE html>
@@ -196,6 +227,8 @@ module.exports = (invoice, settings = {}) => {
         </table>
       </div>
     </div>
+
+    ${exportEndorsementHtml}
 
     <div class="yellow-billto-label" style="font-size: 16px;">Service Details:</div>
     
@@ -378,6 +411,8 @@ module.exports = (invoice, settings = {}) => {
       </div>
     </div>
     
+    ${exportEndorsementHtml}
+
     <table class="orange-table">
       <thead>
         ${settings.businessType === 'Basic' ? `
@@ -601,6 +636,8 @@ module.exports = (invoice, settings = {}) => {
         </div>
       </div>
     </div>
+
+    ${exportEndorsementHtml}
 
     <table>
       <thead>

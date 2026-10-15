@@ -34,8 +34,18 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
     const paymentNumber = await generateDocNumber(tx, businessId, "PAY", "payment", "paymentNumber");
 
     const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
-    const currencyCode = data.currency || "AED";
-    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate);
+    const currencyCode = data.currency || invoice.currency;
+    if (!currencyCode) {
+      throw new Error("Payment currency is required and could not be determined.");
+    }
+
+    if (invoice.currency && currencyCode !== invoice.currency && (!data.exchangeRate || Number(data.exchangeRate) <= 0)) {
+      throw new Error(`Payment currency (${currencyCode}) differs from invoice currency (${invoice.currency}). An explicit positive settlement exchange rate must be supplied.`);
+    }
+
+    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate, tx);
+    const paymentRate = (invoice.currency && currencyCode === invoice.currency) ? (invoice.exchangeRate || 1.0) : (data.exchangeRate ? Number(data.exchangeRate) : currencyData.exchangeRate);
+    const baseDecimals = currencyData.baseDecimals || 2;
 
     // 4. Create Payment Record
     const payment = await tx.payment.create({
@@ -54,10 +64,10 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
         currency: currencyCode,
         transactionCurrencyId: currencyData.transactionCurrencyId,
         baseCurrencyId: currencyData.baseCurrencyId,
-        exchangeRate: currencyData.exchangeRate,
-        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.exchangeRate, currencyData.decimals),
+        exchangeRate: paymentRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, paymentRate, baseDecimals),
         statutoryExchangeRate: currencyData.statutoryRate,
-        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, currencyData.decimals)
+        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, baseDecimals)
       }
     });
 
@@ -131,8 +141,8 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
     
     // We already derived the base currency amounts using the resolved exchange rate.
     // We pass explicit baseDebit/baseCredit to ledger to avoid rounding drift, while logging the actual rate.
-    const paymentRate = currencyData.exchangeRate;
-    const invoiceRate = Number(invoice.exchangeRate) || paymentRate; // Fallback if invoice doesn't have it
+    const effectivePaymentRate = paymentRate || currencyData.exchangeRate;
+    const invoiceRate = Number(invoice.exchangeRate) || effectivePaymentRate; // Fallback if invoice doesn't have it
 
     const paymentAmountBaseCcy = payment.baseCurrencyAmount;
     const overpaidAmountBaseCcy = creditNote ? creditNote.baseCurrencyAmount : 0;
@@ -217,8 +227,12 @@ const createQuotationPayment = async (businessId, userId, userEmail, quotationId
     const paymentNumber = await generateDocNumber(tx, businessId, "PAY", "payment", "paymentNumber");
 
     const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
-    const currencyCode = data.currency || quotation.currency || "AED";
-    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate);
+    const currencyCode = data.currency || quotation.currency;
+    if (!currencyCode) {
+      throw new Error("Payment currency is required.");
+    }
+    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate, tx);
+    const baseDecimals = currencyData.baseDecimals || 2;
 
     // 4. Create Payment Record
     const payment = await tx.payment.create({
@@ -238,9 +252,9 @@ const createQuotationPayment = async (businessId, userId, userEmail, quotationId
         transactionCurrencyId: currencyData.transactionCurrencyId,
         baseCurrencyId: currencyData.baseCurrencyId,
         exchangeRate: currencyData.exchangeRate,
-        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.exchangeRate, currencyData.decimals),
+        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.exchangeRate, baseDecimals),
         statutoryExchangeRate: currencyData.statutoryRate,
-        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, currencyData.decimals)
+        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, baseDecimals)
       }
     });
 
@@ -307,8 +321,10 @@ const createCustomerPayment = async (businessId, userId, userEmail, customerId, 
     const paymentNumber = await generateDocNumber(tx, businessId, "PAY", "payment", "paymentNumber");
 
     const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
-    const currencyCode = data.currency || "AED";
-    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate);
+    const business = await tx.business.findUnique({ where: { id: businessId }, include: { baseCurrency: true } });
+    const currencyCode = data.currency || customer.currency || business?.baseCurrency?.code || business?.currency || 'INR';
+    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate, tx);
+    const baseDecimals = currencyData.baseDecimals || 2;
 
     // Create Payment Record
     const payment = await tx.payment.create({
@@ -328,9 +344,9 @@ const createCustomerPayment = async (businessId, userId, userEmail, customerId, 
         transactionCurrencyId: currencyData.transactionCurrencyId,
         baseCurrencyId: currencyData.baseCurrencyId,
         exchangeRate: currencyData.exchangeRate,
-        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.exchangeRate, currencyData.decimals),
+        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.exchangeRate, baseDecimals),
         statutoryExchangeRate: currencyData.statutoryRate,
-        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, currencyData.decimals)
+        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, currencyData.statutoryRate, baseDecimals)
       }
     });
 

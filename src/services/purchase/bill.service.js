@@ -103,9 +103,9 @@ const createBill = async (businessId, userId, userEmail, data) => {
         transactionCurrencyId: financials.currencyData.transactionCurrencyId,
         baseCurrencyId: financials.currencyData.baseCurrencyId,
         exchangeRate: financials.currencyData.exchangeRate,
-        baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+        baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.baseDecimals || 2),
         statutoryExchangeRate: financials.currencyData.statutoryRate,
-        statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+        statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.baseDecimals || 2),
 
         billDate: transactionDate,
         dueDate: data.dueDate ? new Date(data.dueDate) : null,
