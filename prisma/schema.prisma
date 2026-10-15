@@ -137,6 +137,7 @@ model Business {
   batches                Batch[]
   brands                 Brand[]
   users                  BusinessUser[]
+  customerBankAccounts   CustomerBankAccount[]
   baseCurrency           Currency?              @relation("BusinessBaseCurrency", fields: [baseCurrencyId], references: [id])
   countryRef             Country?               @relation(fields: [countryId], references: [id])
   owner                  User                   @relation("BusinessOwner", fields: [ownerId], references: [id])
@@ -348,6 +349,7 @@ model Customer {
   accountNumber       String?
   swiftCode           String?
   iban                String?
+  bankAccounts        CustomerBankAccount[]
 
   @@index([businessId])
   @@index([accountOwnerId])
@@ -407,6 +409,13 @@ model Invoice {
   statutoryBaseAmount   Float?
   statutoryExchangeRate Float?
   transactionCurrencyId String?
+  exportType            String?
+  lutNumber             String?
+  lutDate               DateTime?
+  destinationCountry    String?
+  shippingBillNumber    String?
+  shippingBillDate      DateTime?
+  portCode              String?
   creditNotes           CreditNote[]
   auditLogs             InvoiceAuditLog[]
   items                 InvoiceItem[]
@@ -573,7 +582,7 @@ model Payment {
   amountAllocated       Float               @default(0)
   projectId             String?
   status                String              @default("unapplied")
-  currency              String?             @default("AED")
+  currency              String?
   exchangeRate          Float?
   baseCurrencyAmount    Float?
   baseCurrencyId        String?
@@ -1566,9 +1575,47 @@ model BillItem {
   taxCategory String?
   productId   String?
   warehouseId String?
+  taxPercent    Float?
+  cgst          Float?
+  sgst          Float?
+  igst          Float?
+  taxableAmount Float?
   bill        Bill       @relation(fields: [billId], references: [id], onDelete: Cascade)
   product     Product?   @relation(fields: [productId], references: [id])
   warehouse   Warehouse? @relation(fields: [warehouseId], references: [id])
+}
+
+
+
+model CustomerBankAccount {
+  id                     String    @id @default(uuid())
+  customerId             String
+  businessId             String
+  accountHolderName      String
+  bankName               String
+  accountNumberEncrypted String
+  accountNumberMasked    String
+  country                String
+  currency               String
+  ifsc                   String?
+  iban                   String?
+  swift                  String?
+  routingNumber          String?
+  branchName             String?
+  upiId                  String?
+  sortCode               String?
+  transitNumber          String?
+  institutionNumber      String?
+  bsb                    String?
+  isPrimary              Boolean   @default(false)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  customer               Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  business               Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([businessId])
+  @@map("customer_bank_accounts")
 }
 
 model Product {

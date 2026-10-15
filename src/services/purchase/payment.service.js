@@ -41,6 +41,7 @@ const recordVendorPayment = async (businessId, userId, userEmail, billId, data) 
     const decimals = paymentCurrencyData.decimals;
 
     // 3. Create Payment Record linked to Bill
+    const baseDecimals = paymentCurrencyData.baseDecimals || 2;
     const payment = await tx.payment.create({
       data: {
         paymentNumber,
@@ -51,7 +52,14 @@ const recordVendorPayment = async (businessId, userId, userEmail, billId, data) 
         paymentMode: data.paymentMode || "BANK_TRANSFER",
         transactionId: data.transactionId || null,
         note: data.note || null,
-        createdBy: userId
+        createdBy: userId,
+        currency: paymentCurrencyCode,
+        transactionCurrencyId: paymentCurrencyData.transactionCurrencyId,
+        baseCurrencyId: paymentCurrencyData.baseCurrencyId,
+        exchangeRate: paymentRate,
+        baseCurrencyAmount: CurrencyService.scaleAmount(paymentAmount, paymentRate, baseDecimals),
+        statutoryExchangeRate: paymentCurrencyData.statutoryRate,
+        statutoryBaseAmount: CurrencyService.scaleAmount(paymentAmount, paymentCurrencyData.statutoryRate, baseDecimals)
       }
     });
 

@@ -242,6 +242,8 @@ async function generateGstTaxSummary({ businessId, fromDate, toDate }) {
 
   let totalOutputTaxBasePaise = 0;
   let totalInputTaxBasePaise = 0;
+  const exportsList = [];
+  let totalExportTurnoverBasePaise = 0;
 
   // ----------------------------------------------------
   // Process Posted Invoices (Output Tax & Turnover)
@@ -323,10 +325,37 @@ async function generateGstTaxSummary({ businessId, fromDate, toDate }) {
         salesDocTaxablePaise.set(bucketKey, taxableBasePaise);
       }
 
+      const isDocExport = (normalizeCountry(inv.customer?.countryCode || inv.customer?.country) !== 'INDIA' && normalizeCountry(inv.customer?.countryCode || inv.customer?.country) !== '') || !!inv.exportType;
+
       if (rate === 0) {
         // Zero-rated, Nil-rated or Exempt invoice
-        const isExport = (normalizeCountry(inv.customer?.countryCode || inv.customer?.country) !== 'INDIA' && normalizeCountry(inv.customer?.countryCode || inv.customer?.country) !== '');
-        const taxLabel = isExport ? 'Zero Rated (Export)' : 'Nil Rated (0%)';
+        let taxLabel = 'Nil-rated';
+        if (isDocExport) {
+          taxLabel = 'Export (LUT)';
+        } else if ((inv.terms && inv.terms.toLowerCase().includes('exempt')) || (inv.adminNote && inv.adminNote.toLowerCase().includes('exempt'))) {
+          taxLabel = 'Exempt';
+        }
+
+        if (isDocExport) {
+          totalExportTurnoverBasePaise += taxableBasePaise;
+          exportsList.push({
+            documentId: inv.id,
+            documentNumber: docNumber,
+            documentDate: docDate,
+            partyName: inv.customer?.company || inv.customer?.name || 'Foreign Customer',
+            gstin: inv.customer?.vatNumber || '-',
+            destinationCountry: inv.destinationCountry || inv.customer?.country || 'Foreign Destination',
+            exportType: inv.exportType === 'WITH_PAYMENT_OF_IGST' ? 'With Payment of IGST' : 'Export (LUT)',
+            shippingBillNumber: inv.shippingBillNumber || '-',
+            shippingBillDate: inv.shippingBillDate ? new Date(inv.shippingBillDate).toISOString().slice(0, 10) : '-',
+            portCode: inv.portCode || '-',
+            invoiceValueTxn: Number(inv.grandTotal || 0),
+            invoiceValueBase: Number(inv.baseCurrencyAmount || (Number(inv.grandTotal || 0) * fxRate).toFixed(2)),
+            taxableValueBase: taxableBase,
+            igstBase: 0,
+            isLut: true
+          });
+        }
 
         taxLines.push({
           id: `${inv.id}_NIL_${rate}`,
@@ -388,8 +417,30 @@ async function generateGstTaxSummary({ businessId, fromDate, toDate }) {
           placeOfSupply: 'undetermined'
         });
       } else if (placeOfSupplyResult === true) {
-        // Inter-State (IGST)
+        // Inter-State (IGST) or Export with Payment of IGST
         totalOutputTaxBasePaise += totalTaxBasePaise;
+
+        const isExportSupply = isDocExport;
+        if (isExportSupply) {
+          totalExportTurnoverBasePaise += taxableBasePaise;
+          exportsList.push({
+            documentId: inv.id,
+            documentNumber: docNumber,
+            documentDate: docDate,
+            partyName: inv.customer?.company || inv.customer?.name || 'Foreign Customer',
+            gstin: inv.customer?.vatNumber || '-',
+            destinationCountry: inv.destinationCountry || inv.customer?.country || 'Foreign Destination',
+            exportType: 'With Payment of IGST',
+            shippingBillNumber: inv.shippingBillNumber || '-',
+            shippingBillDate: inv.shippingBillDate ? new Date(inv.shippingBillDate).toISOString().slice(0, 10) : '-',
+            portCode: inv.portCode || '-',
+            invoiceValueTxn: Number(inv.grandTotal || 0),
+            invoiceValueBase: Number(inv.baseCurrencyAmount || (Number(inv.grandTotal || 0) * fxRate).toFixed(2)),
+            taxableValueBase: taxableBase,
+            igstBase: totalTaxBase,
+            isLut: false
+          });
+        }
 
         taxLines.push({
           id: `${inv.id}_IGST_${rate}`,
@@ -400,7 +451,7 @@ async function generateGstTaxSummary({ businessId, fromDate, toDate }) {
           documentDate: docDate,
           partyName: inv.customer?.company || inv.customer?.name || 'Customer',
           transactionCurrency: ccy,
-          taxType: 'IGST',
+          taxType: isExportSupply ? 'Export (With Payment of IGST)' : 'IGST',
           taxRate: rate,
           taxableAmountTxnCcy: taxableTxn,
           taxableAmountBaseCcy: taxableBase,
@@ -545,12 +596,124 @@ async function generateGstTaxSummary({ businessId, fromDate, toDate }) {
     const taxBase = Number((taxAmt * fxRate).toFixed(2));
     const taxBasePaise = toPaise(taxBase);
 
+
+
+    // Record distinct taxable purchase turnover in base currency
+    if (subtotalBasePaise > 0) {
+      purchasesDocTaxablePaise.set(docKey, subtotalBasePaise);
+    }
+
+    const vendorPos = isInterStateSupply(business, bill.vendor);
+
+    // Requirement 4: Do NOT skip tax = 0. Include zero-tax bills as Nil-rated purchases
     if (taxAmt <= 0) {
+      taxLines.push({
+        id: `${docKey}_NIL_PURCHASE`,
+        category: VALID_CATEGORIES.INPUT_TAX,
+        transactionType: 'BILL',
+        documentId: bill.id,
+        documentNumber: docNumber,
+        documentDate: docDate,
+        partyName: bill.vendor?.name || bill.vendor?.companyName || 'Vendor',
+        transactionCurrency: ccy,
+        taxType: 'Nil-rated (Purchases 0%)',
+        taxRate: 0,
+        taxableAmountTxnCcy: subtotal,
+        taxableAmountBaseCcy: subtotalBase,
+        totalTaxTxnCcy: 0,
+        totalTaxBaseCcy: 0,
+        isInvalidRate: false,
+        placeOfSupply: vendorPos
+      });
       continue;
     }
 
-    if (subtotalBasePaise > 0) {
-      purchasesDocTaxablePaise.set(docKey, subtotalBasePaise);
+    // Check if bill has line items with tax breakdown (Requirement 6)
+    const hasLineItemTaxes = bill.items && bill.items.length > 0 && bill.items.some(it => (it.taxPercent !== null && it.taxPercent > 0) || (it.cgst !== null && it.cgst > 0) || (it.sgst !== null && it.sgst > 0) || (it.igst !== null && it.igst > 0));
+
+    if (hasLineItemTaxes) {
+      for (const item of bill.items) {
+        const itemTaxable = Number(item.taxableAmount || (Number(item.quantity || 0) * Number(item.rate || 0)) || 0);
+        const itemTaxableBase = Number((itemTaxable * fxRate).toFixed(2));
+        const itemCgst = Number(item.cgst || 0);
+        const itemSgst = Number(item.sgst || 0);
+        const itemIgst = Number(item.igst || 0);
+        const itemTaxPercent = Number(item.taxPercent || 0);
+
+        if (itemCgst > 0 || itemSgst > 0) {
+          if (itemCgst !== itemSgst) {
+            dataQualityWarnings.push({
+              code: 'CGST_SGST_MISMATCH',
+              documentNumber: docNumber,
+              message: `Bill ${docNumber} has unequal CGST (${itemCgst}) and SGST (${itemSgst}) amounts.`
+            });
+          }
+          const cgstBase = Number((itemCgst * fxRate).toFixed(2));
+          const sgstBase = Number((itemSgst * fxRate).toFixed(2));
+          totalInputTaxBasePaise += (toPaise(cgstBase) + toPaise(sgstBase));
+
+          taxLines.push({
+            id: `${bill.id}_${item.id}_INP_CGST`,
+            category: VALID_CATEGORIES.INPUT_TAX,
+            transactionType: 'BILL',
+            documentId: bill.id,
+            documentNumber: docNumber,
+            documentDate: docDate,
+            partyName: bill.vendor?.name || bill.vendor?.companyName || 'Vendor',
+            transactionCurrency: ccy,
+            taxType: 'Input CGST',
+            taxRate: itemTaxPercent > 0 ? Number((itemTaxPercent / 2).toFixed(2)) : 0,
+            taxableAmountTxnCcy: itemTaxable,
+            taxableAmountBaseCcy: itemTaxableBase,
+            totalTaxTxnCcy: itemCgst,
+            totalTaxBaseCcy: cgstBase,
+            isInvalidRate: false,
+            placeOfSupply: false
+          });
+
+          taxLines.push({
+            id: `${bill.id}_${item.id}_INP_SGST`,
+            category: VALID_CATEGORIES.INPUT_TAX,
+            transactionType: 'BILL',
+            documentId: bill.id,
+            documentNumber: docNumber,
+            documentDate: docDate,
+            partyName: bill.vendor?.name || bill.vendor?.companyName || 'Vendor',
+            transactionCurrency: ccy,
+            taxType: 'Input SGST',
+            taxRate: itemTaxPercent > 0 ? Number((itemTaxPercent / 2).toFixed(2)) : 0,
+            taxableAmountTxnCcy: itemTaxable,
+            taxableAmountBaseCcy: itemTaxableBase,
+            totalTaxTxnCcy: itemSgst,
+            totalTaxBaseCcy: sgstBase,
+            isInvalidRate: false,
+            placeOfSupply: false
+          });
+        } else if (itemIgst > 0) {
+          const igstBase = Number((itemIgst * fxRate).toFixed(2));
+          totalInputTaxBasePaise += toPaise(igstBase);
+
+          taxLines.push({
+            id: `${bill.id}_${item.id}_INP_IGST`,
+            category: VALID_CATEGORIES.INPUT_TAX,
+            transactionType: 'BILL',
+            documentId: bill.id,
+            documentNumber: docNumber,
+            documentDate: docDate,
+            partyName: bill.vendor?.name || bill.vendor?.companyName || 'Vendor',
+            transactionCurrency: ccy,
+            taxType: 'Input IGST',
+            taxRate: itemTaxPercent,
+            taxableAmountTxnCcy: itemTaxable,
+            taxableAmountBaseCcy: itemTaxableBase,
+            totalTaxTxnCcy: itemIgst,
+            totalTaxBaseCcy: igstBase,
+            isInvalidRate: false,
+            placeOfSupply: true
+          });
+        }
+      }
+      continue;
     }
 
     // Determine tax rate without fake 5% default
@@ -559,9 +722,6 @@ async function generateGstTaxSummary({ businessId, fromDate, toDate }) {
 
     const validRatesForDoc = getValidGstRatesForDate(docDate);
     const isInvalidRate = !validRatesForDoc.has(taxRate);
-
-    // Split bills into CGST/SGST vs IGST if supplier location allows
-    const vendorPos = isInterStateSupply(business, bill.vendor);
 
     if (vendorPos === false) {
       // Intra-state purchase: split into Input CGST and Input SGST
@@ -627,17 +787,23 @@ async function generateGstTaxSummary({ businessId, fromDate, toDate }) {
         placeOfSupply: true
       });
     } else {
-      // Undetermined vendor POS: generic Input GST
+      // Requirement 5: Undetermined vendor POS placed in Undetermined bucket with warning
+      dataQualityWarnings.push({
+        code: 'UNDETERMINED_PLACE_OF_SUPPLY',
+        documentNumber: docNumber,
+        message: `Place of supply is undetermined for bill ${docNumber}: vendor state or business state is missing.`
+      });
+
       taxLines.push({
-        id: `${docKey}_ITC`,
-        category: VALID_CATEGORIES.INPUT_TAX,
+        id: `${docKey}_ITC_UNDET`,
+        category: VALID_CATEGORIES.UNDETERMINED,
         transactionType: 'BILL',
         documentId: bill.id,
         documentNumber: docNumber,
         documentDate: docDate,
         partyName: bill.vendor?.name || bill.vendor?.companyName || 'Vendor',
         transactionCurrency: ccy,
-        taxType: isIndia ? 'Input GST' : 'Input VAT',
+        taxType: 'Undetermined (Supplier State Missing)',
         taxRate,
         taxableAmountTxnCcy: subtotal,
         taxableAmountBaseCcy: subtotalBase,
@@ -735,15 +901,19 @@ async function generateGstTaxSummary({ businessId, fromDate, toDate }) {
       netItcReceivable: fromPaise(netItcCarryForwardBasePaise), // Backwards compatibility alias
       taxableSales: fromPaise(distinctTaxableSalesBasePaise),
       taxablePurchases: fromPaise(distinctTaxablePurchasesBasePaise),
+      exportTurnover: fromPaise(totalExportTurnoverBasePaise),
+      exportCount: exportsList.length,
       outputTaxPaise: totalOutputTaxBasePaise,
       inputTaxPaise: totalInputTaxBasePaise,
       netPayablePaise: netPayableBasePaise,
       netItcCarryForwardPaise: netItcCarryForwardBasePaise,
       netItcReceivablePaise: netItcCarryForwardBasePaise,
       taxableSalesPaise: distinctTaxableSalesBasePaise,
-      taxablePurchasesPaise: distinctTaxablePurchasesBasePaise
+      taxablePurchasesPaise: distinctTaxablePurchasesBasePaise,
+      exportTurnoverPaise: totalExportTurnoverBasePaise
     },
     summary: taxLines,
+    exports: exportsList,
     dataQualityWarnings
   };
 }

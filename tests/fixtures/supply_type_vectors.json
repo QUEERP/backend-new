@@ -1,0 +1,145 @@
+[
+  {
+    "description": "Same state domestic goods supply (Gujarat to Gujarat)",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "INDIA", "state": "Gujarat" },
+    "options": { "isGoods": true },
+    "expected": {
+      "supplyType": "CGST_SGST",
+      "isIntraState": true,
+      "isInterState": false,
+      "isExport": false,
+      "sellerStateCode": "24",
+      "buyerStateCode": "24",
+      "applicableTaxes": ["CGST", "SGST"]
+    }
+  },
+  {
+    "description": "Inter-state domestic goods supply (Gujarat to Maharashtra)",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "INDIA", "state": "Maharashtra" },
+    "options": { "isGoods": true },
+    "expected": {
+      "supplyType": "IGST",
+      "isIntraState": false,
+      "isInterState": true,
+      "isExport": false,
+      "sellerStateCode": "24",
+      "buyerStateCode": "27",
+      "applicableTaxes": ["IGST"]
+    }
+  },
+  {
+    "description": "Goods Place of Supply uses Ship-To state when differing from Bill-To (Section 10(1) IGST Act)",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "INDIA", "billingState": "Gujarat", "shippingState": "Maharashtra" },
+    "options": { "isGoods": true, "shipTo": "Maharashtra" },
+    "expected": {
+      "supplyType": "IGST",
+      "isIntraState": false,
+      "isInterState": true,
+      "isExport": false,
+      "sellerStateCode": "24",
+      "buyerStateCode": "27",
+      "applicableTaxes": ["IGST"]
+    }
+  },
+  {
+    "description": "Services Place of Supply uses Bill-To state even if Ship-To differs (Section 12(2) IGST Act)",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "INDIA", "billingState": "Gujarat", "shippingState": "Maharashtra" },
+    "options": { "isGoods": false, "shipTo": "Maharashtra" },
+    "expected": {
+      "supplyType": "CGST_SGST",
+      "isIntraState": true,
+      "isInterState": false,
+      "isExport": false,
+      "sellerStateCode": "24",
+      "buyerStateCode": "24",
+      "applicableTaxes": ["CGST", "SGST"]
+    }
+  },
+  {
+    "description": "Export supply under LUT (Zero-rated, Section 16 IGST Act)",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "UAE" },
+    "options": { "exportType": "LUT" },
+    "expected": {
+      "supplyType": "EXPORT_LUT",
+      "isExport": true,
+      "isIntraState": false,
+      "isInterState": false,
+      "applicableTaxes": ["IGST_ZERO"]
+    }
+  },
+  {
+    "description": "Export supply with payment of IGST (Section 16 IGST Act)",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "USA" },
+    "options": { "exportType": "WITH_PAYMENT_OF_IGST" },
+    "expected": {
+      "supplyType": "EXPORT_WITH_IGST",
+      "isExport": true,
+      "isIntraState": false,
+      "isInterState": false,
+      "applicableTaxes": ["IGST"]
+    }
+  },
+  {
+    "description": "SEZ supply under LUT without IGST (Section 7(5)(b) IGST Act)",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "INDIA", "state": "Gujarat", "isSez": true },
+    "options": { "isSez": true, "sezType": "WITHOUT_PAYMENT_OF_IGST" },
+    "expected": {
+      "supplyType": "SEZ_WITHOUT_IGST",
+      "isExport": false,
+      "isIntraState": false,
+      "isInterState": true,
+      "isSez": true,
+      "applicableTaxes": ["IGST_ZERO"]
+    }
+  },
+  {
+    "description": "SEZ supply with payment of IGST (Section 7(5)(b) IGST Act)",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "INDIA", "state": "Gujarat", "isSez": true },
+    "options": { "isSez": true, "sezType": "WITH_PAYMENT_OF_IGST" },
+    "expected": {
+      "supplyType": "SEZ_WITH_IGST",
+      "isExport": false,
+      "isIntraState": false,
+      "isInterState": true,
+      "isSez": true,
+      "applicableTaxes": ["IGST"]
+    }
+  },
+  {
+    "description": "State name normalization variants (Gujarat, gujarat , GJ, 24)",
+    "seller": { "country": "INDIA", "state": "gujarat ", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "INDIA", "state": "GJ" },
+    "options": { "isGoods": true },
+    "expected": {
+      "supplyType": "CGST_SGST",
+      "sellerStateCode": "24",
+      "buyerStateCode": "24"
+    }
+  },
+  {
+    "description": "Missing buyer state produces UNDETERMINED warning",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "INDIA", "state": "" },
+    "options": {},
+    "expected": {
+      "supplyType": "UNDETERMINED"
+    }
+  },
+  {
+    "description": "Missing buyer country produces UNDETERMINED warning",
+    "seller": { "country": "INDIA", "state": "Gujarat", "gstNumber": "24AAAAA0000A1Z5" },
+    "buyer": { "country": "" },
+    "options": {},
+    "expected": {
+      "supplyType": "UNDETERMINED"
+    }
+  }
+]

@@ -67,9 +67,9 @@ const createCreditNote = async (businessId, userId, userEmail, data) => {
         transactionCurrencyId: financials.currencyData.transactionCurrencyId,
         baseCurrencyId: financials.currencyData.baseCurrencyId,
         exchangeRate: financials.currencyData.exchangeRate,
-        baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
+        baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.baseDecimals || 2),
         statutoryExchangeRate: financials.currencyData.statutoryRate,
-        statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals)
+        statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.baseDecimals || 2)
       }
     });
 
@@ -79,7 +79,7 @@ const createCreditNote = async (businessId, userId, userEmail, data) => {
     // A Credit Note reverses the AR and Revenue/Tax legs of an Invoice.
     const accounts = await getSystemAccounts(tx, businessId);
     
-    const taxAmountBaseCcy = CurrencyService.scaleAmount(financials.totalTax, financials.currencyData.exchangeRate, financials.currencyData.decimals);
+    const taxAmountBaseCcy = CurrencyService.scaleAmount(financials.totalTax, financials.currencyData.exchangeRate, financials.currencyData.baseDecimals || 2);
     const grandTotalBaseCcy = creditNote.baseCurrencyAmount;
     
     // Plug technique: derive revenue reversal to guarantee perfectly balanced journal entries

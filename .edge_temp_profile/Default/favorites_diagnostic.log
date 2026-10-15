@@ -1,0 +1,16 @@
+2026-10-15 09:11:00.485: [INFO] CurrentProfilePath: C:\Users\DELL\Downloads\new-queerp\backend\.edge_temp_profile\Default
+2026-10-15 09:11:00.485: [INFO] Profiles total count: 1
+2026-10-15 09:11:00.485: [INFO] Profile: name=Profile 1 path=C:\Users\DELL\Downloads\new-queerp\backend\.edge_temp_profile\Default lastActive=null
+2026-10-15 09:11:00.485: [INFO] LastUsedProfileDir: C:\Users\DELL\Downloads\new-queerp\backend\.edge_temp_profile\Default
+2026-10-15 09:11:00.485: [INFO] VisibilityChanged: 0
+2026-10-15 09:11:00.651: [INFO] OnDoneLoading sync enabled: 0
+2026-10-15 09:11:00.651: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-10-15 09:11:00.651: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-10-15 09:11:00.651: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-10-15 09:11:01.639: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 0
+2026-10-15 09:11:12.739: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 0
+2026-10-15 09:11:12.863: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-10-15 09:11:12.968: [INFO] Primary account changed.
+2026-10-15 09:11:12.968: [INFO] OnPrimaryAccountChanged PrimaryAccountChangeEvent::Type::kSet
+2026-10-15 09:11:13.001: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3
+2026-10-15 09:11:13.124: [INFO] RecordSyncInitDuration has_sync_been_enabled: 0 state: 3

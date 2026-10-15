@@ -269,7 +269,7 @@ exports.getCurrencyUsage = async (req, res) => {
     if (hasDateFilter) billWhere.billDate = dateFilter;
     const bills = await prisma.bill.findMany({
       where: billWhere,
-      include: { payments: true }
+      include: { payments: true, vendor: true }
     });
 
     // 3. Credit Notes (Tax Reports posted statuses)
@@ -681,6 +681,44 @@ exports.getCurrencyUsage = async (req, res) => {
       isTaxInclusive: true
     };
 
+    // Itemize every bill for Statutory Purchases Reconciliation (Requirement 5)
+    const billsReconciliation = bills.map(bill => {
+      const code = bill.currency || (bill.transactionCurrencyId ? ccyById[bill.transactionCurrencyId]?.code : baseCode);
+      const decimals = getCurrencyDecimals(code);
+      const bookingRate = Number(bill.exchangeRate || (code === baseCode ? 1 : (getRateDetails(code, baseCode).rate || 1)));
+      const subtotal = Number(bill.subtotal || 0);
+      const tax = Number(bill.tax || 0);
+      const total = Number(bill.totalAmount ?? (subtotal + tax - (bill.discount || 0)) ?? 0);
+      const expectedBase = roundHalfUp(total * bookingRate, decimals);
+      const baseCurrencyAmount = Number(bill.baseCurrencyAmount !== null && bill.baseCurrencyAmount !== undefined ? bill.baseCurrencyAmount : expectedBase);
+
+      return {
+        id: bill.id,
+        billNumber: bill.billNumber || bill.id,
+        billDate: bill.billDate,
+        vendorName: bill.vendor?.name || bill.vendor?.companyName || 'Vendor',
+        status: bill.status,
+        currency: code,
+        exchangeRate: bookingRate,
+        subtotal,
+        tax,
+        total,
+        baseCurrencyAmount
+      };
+    });
+
+    const totalBillsSubtotalBase = roundHalfUp(billsReconciliation.reduce((sum, b) => {
+      const bDecimals = getCurrencyDecimals(b.currency);
+      return sum + (b.currency === baseCode ? b.subtotal : roundHalfUp(b.subtotal * b.exchangeRate, bDecimals));
+    }, 0), 2);
+
+    const totalBillsTaxBase = roundHalfUp(billsReconciliation.reduce((sum, b) => {
+      const bDecimals = getCurrencyDecimals(b.currency);
+      return sum + (b.currency === baseCode ? b.tax : roundHalfUp(b.tax * b.exchangeRate, bDecimals));
+    }, 0), 2);
+
+    const totalBillsVolumeBase = roundHalfUp(billsReconciliation.reduce((sum, b) => sum + b.baseCurrencyAmount, 0), 2);
+
     res.json({
       success: true,
       baseCurrency: baseCode,
@@ -692,6 +730,16 @@ exports.getCurrencyUsage = async (req, res) => {
       isTaxInclusive: true,
       totals,
       usage: usageValues,
+      billsReconciliation,
+      billsReconciliationSummary: {
+        count: billsReconciliation.length,
+        totalSubtotalBase: totalBillsSubtotalBase,
+        totalTaxBase: totalBillsTaxBase,
+        totalPurchasesVolumeBase: totalBillsVolumeBase,
+        taxReportSum: roundHalfUp(totalBillsSubtotalBase + totalBillsTaxBase, 2),
+        variance: roundHalfUp(Math.abs(totalBillsVolumeBase - (totalBillsSubtotalBase + totalBillsTaxBase)), 2),
+        isReconciled: Math.abs(totalBillsVolumeBase - (totalBillsSubtotalBase + totalBillsTaxBase)) <= 0.05
+      },
       dataQualityWarnings
     });
   } catch (error) {

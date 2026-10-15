@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { roundHalfUp, getCurrencyDecimals } = require('./currencyFxService');
 
 class RateResolutionError extends Error {
   constructor(message) {
@@ -16,7 +17,7 @@ class CurrencyService {
    * @param {string} businessId 
    * @param {string} transactionCurrencyCode (e.g. "USD", "EUR")
    * @param {Date} transactionDate 
-   * @returns {Promise<{ transactionCurrencyId, baseCurrencyId, exchangeRate, statutoryRate, decimals }>}
+   * @returns {Promise<{ transactionCurrencyId, baseCurrencyId, exchangeRate, statutoryRate, decimals, baseDecimals }>}
    */
   static async resolveCurrencyData(businessId, transactionCurrencyCode, transactionDate = new Date(), txClient = prisma) {
     // 1. Fetch Business with its Base Currency and Country
@@ -30,22 +31,22 @@ class CurrencyService {
     }
 
     const baseCurrencyId = business.baseCurrencyId;
+    const baseCurrencyCode = business.baseCurrency?.code || business.currency || 'INR';
+    const baseDecimals = business.baseCurrency?.decimals !== undefined
+      ? business.baseCurrency.decimals
+      : getCurrencyDecimals(baseCurrencyCode);
 
-    // 2. Fetch or Create Transaction Currency by Code
-    const transactionCurrency = await prisma.currency.upsert({
-      where: { code: transactionCurrencyCode },
-      update: {},
-      create: {
-        code: transactionCurrencyCode,
-        name: transactionCurrencyCode,
-        symbol: transactionCurrencyCode,
-        decimals: 2,
-        decimalPrecision: 2
-      }
+    // 2. Fetch Transaction Currency by Code (Never upsert silently)
+    const transactionCurrency = await txClient.currency.findUnique({
+      where: { code: transactionCurrencyCode }
     });
 
+    if (!transactionCurrency) {
+      throw new RateResolutionError(`Unsupported or unknown currency code: "${transactionCurrencyCode}". Currencies must be configured in system currency master before use.`);
+    }
+
     const transactionCurrencyId = transactionCurrency.id;
-    const decimals = transactionCurrency.decimals || 2;
+    const decimals = transactionCurrency.decimals !== undefined ? transactionCurrency.decimals : getCurrencyDecimals(transactionCurrencyCode);
 
     // 3. Same Currency Fast-Path
     if (transactionCurrencyId === baseCurrencyId) {
@@ -54,14 +55,15 @@ class CurrencyService {
         baseCurrencyId,
         exchangeRate: 1.0,
         statutoryRate: 1.0,
-        decimals
+        decimals,
+        baseDecimals
       };
     }
 
     // 4. Cross Currency - Fetch ExchangeRateRule for Business Country + Base Currency
     let rule = null;
     if (business.countryId) {
-      rule = await prisma.exchangeRateRule.findUnique({
+      rule = await txClient.exchangeRateRule.findUnique({
         where: {
           countryId_baseCurrencyId: {
             countryId: business.countryId,
@@ -75,7 +77,7 @@ class CurrencyService {
     const statutoryRateSource = rule?.statutoryRateSource || null;
 
     // 5. Fetch Commercial Exchange Rate
-    const commercialRateRecord = await prisma.exchangeRate.findFirst({
+    const commercialRateRecord = await txClient.exchangeRate.findFirst({
       where: {
         fromCurrencyId: transactionCurrencyId,
         toCurrencyId: baseCurrencyId,
@@ -86,14 +88,14 @@ class CurrencyService {
     });
 
     if (!commercialRateRecord) {
-      throw new RateResolutionError(`Missing COMMERCIAL exchange rate for ${transactionCurrencyCode} -> ${business.baseCurrency.code} on or before ${transactionDate.toISOString()}`);
+      throw new RateResolutionError(`Missing COMMERCIAL exchange rate for ${transactionCurrencyCode} -> ${business.baseCurrency?.code || business.currency || 'INR'} on or before ${transactionDate.toISOString()}`);
     }
 
     let statutoryRate = commercialRateRecord.rate;
 
     // 6. Fetch Statutory Exchange Rate (if mandated by the country)
     if (requiresStatutoryRate) {
-      const statutoryRateRecord = await prisma.exchangeRate.findFirst({
+      const statutoryRateRecord = await txClient.exchangeRate.findFirst({
         where: {
           fromCurrencyId: transactionCurrencyId,
           toCurrencyId: baseCurrencyId,
@@ -105,7 +107,7 @@ class CurrencyService {
       });
 
       if (!statutoryRateRecord) {
-        throw new RateResolutionError(`Missing STATUTORY exchange rate for ${transactionCurrencyCode} -> ${business.baseCurrency.code} (Source: ${statutoryRateSource || 'ANY'}) on or before ${transactionDate.toISOString()}`);
+        throw new RateResolutionError(`Missing STATUTORY exchange rate for ${transactionCurrencyCode} -> ${business.baseCurrency?.code || business.currency || 'INR'} (Source: ${statutoryRateSource || 'ANY'}) on or before ${transactionDate.toISOString()}`);
       }
       
       statutoryRate = statutoryRateRecord.rate;
@@ -116,17 +118,27 @@ class CurrencyService {
       baseCurrencyId,
       exchangeRate: commercialRateRecord.rate,
       statutoryRate,
-      decimals
+      decimals,
+      baseDecimals
     };
   }
 
   /**
    * Helper to scale an amount using the exchange rate and rounding correctly.
+   * Standardized to use roundHalfUp on integer minor units (paise/cents).
+   * Strictly enforces positive non-zero exchange rate and valid numeric amounts.
    */
   static scaleAmount(amountTxn, rate, decimals = 2) {
-    if (!amountTxn) return 0;
-    const scaled = amountTxn * rate;
-    return Number(scaled.toFixed(decimals));
+    if (amountTxn === undefined || amountTxn === null || isNaN(Number(amountTxn))) {
+      throw new Error(`Invalid transaction amount: ${amountTxn}`);
+    }
+    const rateNum = Number(rate);
+    if (rate === undefined || rate === null || isNaN(rateNum) || rateNum <= 0) {
+      throw new Error(`Invalid exchange rate: ${rate}. Exchange rate must be a strictly positive number greater than 0.`);
+    }
+    const numAmount = Number(amountTxn);
+    const scaled = numAmount * rateNum;
+    return roundHalfUp(scaled, decimals);
   }
 }
 

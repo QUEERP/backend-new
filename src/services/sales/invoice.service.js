@@ -7,6 +7,7 @@ const { createStockMovement } = require("../inventory/movement.service");
 const TransactionHelper = require("../TransactionHelper");
 const { CurrencyService } = require("../currencyService");
 const { roundHalfUp, getCurrencyDecimals } = require("../currencyFxService");
+const { recomputeInvoiceFinancials } = require("../tax/supplyTypeEngine");
 
 /**
  * Deducts stock from physical inventory upon dispatch (invoice creation)
@@ -103,54 +104,58 @@ const restoreStock = async (tx, businessId, items) => {
 
 const createInvoice = async (businessId, userId, userEmail, data) => {
   return await prisma.$transaction(async (tx) => {
+    // 0. Verify Business and Customer
+    const business = await tx.business.findUnique({
+      where: { id: businessId },
+      include: { baseCurrency: true }
+    });
+    if (!business) throw new Error(`Business not found with ID: ${businessId}`);
+
+    const customer = await tx.customer.findUnique({
+      where: { id: data.customerId }
+    });
+    if (!customer) throw new Error(`Customer not found with ID: ${data.customerId}`);
+
     // 1. Generate unique invoice number
     const invoiceNumber = await generateDocNumber(tx, businessId, "INV", "invoice", "invoiceNumber");
 
-    // 2. Compute pricing via TransactionHelper
+    // 2. Resolve Currencies and Exchange Rates
     const transactionDate = data.invoiceDate ? new Date(data.invoiceDate) : new Date();
-    const discount = Number(data.discount || 0);
+    const currencyCode = data.currency || business.baseCurrency?.code || business.currency || "INR";
+    const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, transactionDate, tx);
+    const exchangeRate = Number(data.exchangeRate || currencyData.exchangeRate || 1.0);
+    const statutoryRate = Number(data.statutoryExchangeRate || currencyData.statutoryRate || exchangeRate);
 
-    const financials = await TransactionHelper.processTransactionFinancials({
-      businessId,
-      transactionDate,
-      currencyCode: data.currency,
+    // 3. Recompute Financials strictly from line items
+    const recomputed = recomputeInvoiceFinancials({
+      business,
+      customer,
       items: data.items,
-      customerId: data.customerId,
-      globalDiscount: discount,
-      txClient: tx,
-      userId
+      headerData: data,
+      baseCurrencyCode: business.baseCurrency?.code || business.currency || "INR",
+      transactionCurrencyCode: currencyCode,
+      exchangeRate,
+      statutoryRate
     });
 
-    const grandTotal = financials.subtotal + financials.totalTax - discount;
-
-    // 3. Process invoice items with backward compatibility fields (hours, rate, amount)
-    const processedItems = data.items.map((item) => {
-      const orig = data.items.find(i => i.productId === item.productId || i.description === item.description) || {};
-      const qty = Number(item.quantity || 0);
-      const prc = Number(item.price || item.rate || 0);
-      const dsc = Number(item.discount || 0);
-      const amt = Math.max((qty * prc) - dsc, 0);
-
-      const base = {
-        ...item,
-        hours: Number(orig.hours || 0),
-        rate: prc,
-        amount: amt, // backward compatibility mapping
-        totalTax: 0, // This is superseded by TaxTransaction, keep 0 for backward compat structure
-        totalAmount: amt,
-      };
-      // Remove any leftover relation fields that must be explicitly connected
+    const itemsToCreate = recomputed.processedItems.map((item) => {
+      const base = { ...item };
       delete base.productId;
       delete base.warehouseId;
       delete base.price;
       delete base.taxRuleId;
+      delete base.id;
+      delete base.invoiceId;
       if (item.productId) {
         base.product = { connect: { id: item.productId } };
+      }
+      if (item.warehouseId) {
+        base.warehouse = { connect: { id: item.warehouseId } };
       }
       return base;
     });
 
-    // 4. Create Invoice
+    // 4. Create Invoice with verified recomputed values
     const invoice = await tx.invoice.create({
       data: {
         businessId,
@@ -160,49 +165,53 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
         quotationId: data.quotationId || null,
         salesOrderId: data.salesOrderId || null,
         status: "DRAFT",
-        subtotal: financials.subtotal,
-        totalTax: financials.totalTax,
-        discount: discount,
-        grandTotal: grandTotal,
-        currency: data.currency || "AED",
-        
-        // Legacy fields mapping
-        cgst: financials.legacyTaxes.cgst,
-        sgst: financials.legacyTaxes.sgst,
-        igst: financials.legacyTaxes.igst,
-        vatAmount: financials.legacyTaxes.vatAmount,
-        
-        // Engine Fields
-        transactionCurrencyId: financials.currencyData.transactionCurrencyId,
-        baseCurrencyId: financials.currencyData.baseCurrencyId,
-        exchangeRate: financials.currencyData.exchangeRate,
-        baseCurrencyAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.exchangeRate, financials.currencyData.decimals),
-        statutoryExchangeRate: financials.currencyData.statutoryRate,
-        statutoryBaseAmount: CurrencyService.scaleAmount(grandTotal, financials.currencyData.statutoryRate, financials.currencyData.decimals),
+        subtotal: recomputed.subtotal,
+        totalTax: recomputed.totalTax,
+        discount: Number(data.discount || 0),
+        grandTotal: recomputed.grandTotal,
+        currency: currencyCode,
+
+        // Accurate tax heads
+        cgst: recomputed.cgst,
+        sgst: recomputed.sgst,
+        igst: recomputed.igst,
+        vatAmount: data.vatAmount !== undefined ? Number(data.vatAmount) : (recomputed.totalTax || 0),
+
+        // Engine & Multi-currency fields
+        transactionCurrencyId: currencyData.transactionCurrencyId,
+        baseCurrencyId: currencyData.baseCurrencyId,
+        exchangeRate: recomputed.exchangeRate,
+        baseCurrencyAmount: recomputed.baseCurrencyAmount,
+        statutoryExchangeRate: recomputed.statutoryExchangeRate,
+        statutoryBaseAmount: recomputed.statutoryBaseAmount,
+
         poNumber: data.poNumber || null,
         poDate: data.poDate ? new Date(data.poDate) : null,
         soNumber: data.soNumber || null,
         soDate: data.soDate ? new Date(data.soDate) : null,
-        invoiceDate: data.invoiceDate ? new Date(data.invoiceDate) : new Date(),
+        invoiceDate: transactionDate,
         dueDate: data.dueDate ? new Date(data.dueDate) : null,
         terms: data.terms || null,
         adminNote: data.adminNote || null,
         designTemplate: data.designTemplate || "modern",
         projectId: data.projectId || null,
-        cgst: data.cgst || 0,
-        sgst: data.sgst || 0,
-        igst: data.igst || 0,
-        tds: data.tds || 0,
-        vatAmount: data.vatAmount || 0,
-        vatPercentage: data.vatPercentage || 0,
+        tds: Number(data.tds || 0),
+        vatPercentage: Number(data.vatPercentage || 0),
         vatType: data.vatType || null,
         emirate: data.emirate || null,
         ewayBillNo: data.ewayBillNo || null,
         transportDetails: data.transportDetails || null,
-        reverseCharge: data.reverseCharge || false,
-        shippingCharges: data.shippingCharges || 0,
+        reverseCharge: !!data.reverseCharge,
+        shippingCharges: Number(data.shippingCharges || 0),
+        exportType: data.exportType || null,
+        lutNumber: data.lutNumber || null,
+        lutDate: data.lutDate ? new Date(data.lutDate) : null,
+        destinationCountry: data.destinationCountry || null,
+        shippingBillNumber: data.shippingBillNumber || null,
+        shippingBillDate: data.shippingBillDate ? new Date(data.shippingBillDate) : null,
+        portCode: data.portCode || null,
         items: {
-          create: processedItems
+          create: itemsToCreate
         }
       },
       include: {
@@ -211,7 +220,9 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
       }
     });
 
-    await TransactionHelper.saveTaxLedger(tx, businessId, "INVOICE", invoice.id, financials.taxTransactions);
+    if (recomputed.taxTransactions && recomputed.taxTransactions.length > 0) {
+      await TransactionHelper.saveTaxLedger(tx, businessId, "INVOICE", invoice.id, recomputed.taxTransactions);
+    }
 
     // 5. Deduct Stock immediately from physical inventory
     const { totalCogs, totalGrossProfit } = await deductStock(tx, businessId, invoice.items, false);
@@ -229,8 +240,8 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
       await tx.project.update({
         where: { id: data.projectId },
         data: { 
-          revenue: { increment: grandTotal },
-          invoicedRevenue: { increment: grandTotal }
+          revenue: { increment: recomputed.grandTotal },
+          invoicedRevenue: { increment: recomputed.grandTotal }
         }
       });
     }
@@ -239,23 +250,24 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
     const accounts = await getSystemAccounts(tx, businessId);
     
     // Tax Engine: Split Revenue and Tax Payable
-    const taxAmountBaseCcy = CurrencyService.scaleAmount(financials.totalTax, financials.currencyData.exchangeRate, financials.currencyData.decimals);
+    const baseDecimals = currencyData.baseDecimals || 2;
+    const taxAmountBaseCcy = CurrencyService.scaleAmount(recomputed.totalTax, recomputed.exchangeRate, baseDecimals);
     const grandTotalBaseCcy = invoice.baseCurrencyAmount;
     
     // Plug technique: derive revenue to guarantee perfectly balanced journal entries
     const netRevenueBaseCcy = grandTotalBaseCcy - taxAmountBaseCcy;
 
     // Pass the actual exchange rate for audit/reporting, but provide pre-scaled base values directly.
-    const invoiceRate = financials.currencyData.exchangeRate;
+    const invoiceRate = recomputed.exchangeRate;
 
     const journalEntries = [
       // Leg 1: Invoice Issue
-      { businessId, accountId: accounts.SYSTEM_AR, debit: grandTotal, credit: 0, baseDebit: grandTotalBaseCcy, baseCredit: 0, description: `Invoice #${invoiceNumber}`, exchangeRate: invoiceRate },
-      { businessId, accountId: accounts.SYSTEM_REVENUE, debit: 0, credit: (financials.subtotal - discount), baseDebit: 0, baseCredit: netRevenueBaseCcy, description: `Invoice #${invoiceNumber} (Net Revenue)`, exchangeRate: invoiceRate }
+      { businessId, accountId: accounts.SYSTEM_AR, debit: recomputed.grandTotal, credit: 0, baseDebit: grandTotalBaseCcy, baseCredit: 0, description: `Invoice #${invoiceNumber}`, exchangeRate: invoiceRate },
+      { businessId, accountId: accounts.SYSTEM_REVENUE, debit: 0, credit: (recomputed.subtotal - Number(data.discount || 0)), baseDebit: 0, baseCredit: netRevenueBaseCcy, description: `Invoice #${invoiceNumber} (Net Revenue)`, exchangeRate: invoiceRate }
     ];
 
     if (taxAmountBaseCcy > 0) {
-      journalEntries.push({ businessId, accountId: accounts.SYSTEM_TAX_PAYABLE, debit: 0, credit: financials.totalTax, baseDebit: 0, baseCredit: taxAmountBaseCcy, description: `Invoice #${invoiceNumber} (Tax)`, exchangeRate: invoiceRate });
+      journalEntries.push({ businessId, accountId: accounts.SYSTEM_TAX_PAYABLE, debit: 0, credit: recomputed.totalTax, baseDebit: 0, baseCredit: taxAmountBaseCcy, description: `Invoice #${invoiceNumber} (Tax)`, exchangeRate: invoiceRate });
     }
 
     // Leg 2: COGS / Inventory Outflow
@@ -277,7 +289,7 @@ const createInvoice = async (businessId, userId, userEmail, data) => {
       action: "INVOICE_CREATED",
       entityType: "Invoice",
       entityId: invoice.id,
-      details: { invoiceNumber, grandTotal: grandTotal }
+      details: { invoiceNumber, grandTotal: recomputed.grandTotal }
     });
 
     await triggerNotification(tx, {
@@ -503,50 +515,47 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
       throw new Error(`Cannot edit invoice in ${existing.status} status.`);
     }
 
+    let recomputed = null;
     let financials = null;
     let grandTotal = existing.grandTotal;
     let discount = existing.discount;
 
     // Trigger recalculation if any financial input changes
-    if (data.items || data.currency || data.discount !== undefined || data.invoiceDate) {
+    if (data.items || data.currency || data.discount !== undefined || data.invoiceDate || data.shippingCharges !== undefined || data.tds !== undefined || data.exportType !== undefined) {
       discount = data.discount !== undefined ? Number(data.discount) : existing.discount;
       const transactionDate = data.invoiceDate ? new Date(data.invoiceDate) : existing.invoiceDate;
       const itemsToProcess = data.items || await tx.invoiceItem.findMany({ where: { invoiceId } });
 
+      const business = await tx.business.findUnique({
+        where: { id: businessId },
+        include: { baseCurrency: true }
+      });
+      const customer = await tx.customer.findUnique({
+        where: { id: data.customerId || existing.customerId }
+      });
+
+      const currencyCode = data.currency || existing.currency || business?.baseCurrency?.code || 'INR';
+      const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, transactionDate, tx);
+
+      const exchangeRate = data.exchangeRate !== undefined ? Number(data.exchangeRate) : (existing.exchangeRate || currencyData.exchangeRate || 1.0);
+      const statutoryRate = data.statutoryExchangeRate !== undefined ? Number(data.statutoryExchangeRate) : (existing.statutoryExchangeRate || currencyData.statutoryRate || exchangeRate);
+
       // Restore previous dispatched stock
       await restoreStock(tx, businessId, existing.items);
 
-      // 2. Re-calculate pricing via Engine
-      financials = await TransactionHelper.processTransactionFinancials({
-        businessId,
-        transactionDate,
-        currencyCode: data.currency || existing.currency,
+      recomputed = recomputeInvoiceFinancials({
+        business,
+        customer,
         items: itemsToProcess,
-        customerId: data.customerId || existing.customerId,
-        globalDiscount: discount,
-        userId,
-        txClient: tx
+        headerData: { ...existing, ...data },
+        baseCurrencyCode: business?.baseCurrency?.code || business?.currency || 'INR',
+        transactionCurrencyCode: currencyCode,
+        exchangeRate,
+        statutoryRate
       });
-      
-      grandTotal = financials.subtotal + financials.totalTax - discount;
 
-      // Process invoice items
-      const processedItems = itemsToProcess.map((item) => {
-        const orig = (data.items || []).find(i => i.productId === item.productId || i.description === item.description) || {};
-        const qty = Number(item.quantity || 0);
-        const prc = Number(item.price || item.rate || 0);
-        const dsc = Number(item.discount || 0);
-        const amt = Math.max((qty * prc) - dsc, 0);
-
-        const base = {
-          ...item,
-          hours: Number(orig.hours || 0),
-          rate: prc,
-          amount: amt,
-          totalTax: 0,
-          totalAmount: amt
-        };
-        // Remove relation fields that must be connected
+      const processedItems = recomputed.processedItems.map((item) => {
+        const base = { ...item };
         delete base.productId;
         delete base.warehouseId;
         delete base.invoiceId;
@@ -556,6 +565,9 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         if (item.productId) {
           base.product = { connect: { id: item.productId } };
         }
+        if (item.warehouseId) {
+          base.warehouse = { connect: { id: item.warehouseId } };
+        }
         return base;
       });
 
@@ -564,13 +576,16 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         await tx.invoiceItem.deleteMany({
           where: { invoiceId }
         });
-        
-        financials.processedItemsToSave = processedItems;
       }
 
       await tx.taxTransaction.deleteMany({
         where: { transactionId: invoiceId, transactionType: "INVOICE" }
       });
+
+      financials = {
+        currencyData,
+        processedItemsToSave: processedItems
+      };
     }
 
     const updated = await tx.invoice.update({
@@ -581,30 +596,22 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         quotationId: data.quotationId !== undefined ? data.quotationId : existing.quotationId,
         salesOrderId: data.salesOrderId !== undefined ? data.salesOrderId : existing.salesOrderId,
         status: data.status || existing.status,
-        subtotal: financials ? financials.subtotal : existing.subtotal,
-        totalTax: financials ? financials.totalTax : existing.totalTax,
+        subtotal: recomputed ? recomputed.subtotal : existing.subtotal,
+        totalTax: recomputed ? recomputed.totalTax : existing.totalTax,
         discount: discount,
-        grandTotal: roundHalfUp(financials ? grandTotal : (data.grandTotal !== undefined ? Number(data.grandTotal) : existing.grandTotal), getCurrencyDecimals(data.currency || existing.currency)),
+        grandTotal: recomputed ? recomputed.grandTotal : existing.grandTotal,
         currency: data.currency || existing.currency,
-        exchangeRate: Number(financials ? financials.currencyData.exchangeRate : (data.exchangeRate !== undefined ? Number(data.exchangeRate) : (existing.exchangeRate || 1))),
-        baseCurrencyAmount: roundHalfUp(
-          (financials ? grandTotal : (data.grandTotal !== undefined ? Number(data.grandTotal) : existing.grandTotal)) *
-          Number(financials ? financials.currencyData.exchangeRate : (data.exchangeRate !== undefined ? Number(data.exchangeRate) : (existing.exchangeRate || 1))),
-          getCurrencyDecimals(data.currency || existing.currency)
-        ),
-        statutoryExchangeRate: Number(financials ? financials.currencyData.statutoryRate : (data.statutoryExchangeRate !== undefined ? Number(data.statutoryExchangeRate) : (existing.statutoryExchangeRate || existing.exchangeRate || 1))),
-        statutoryBaseAmount: roundHalfUp(
-          (financials ? grandTotal : (data.grandTotal !== undefined ? Number(data.grandTotal) : existing.grandTotal)) *
-          Number(financials ? financials.currencyData.statutoryRate : (data.statutoryExchangeRate !== undefined ? Number(data.statutoryExchangeRate) : (existing.statutoryExchangeRate || existing.exchangeRate || 1))),
-          getCurrencyDecimals(data.currency || existing.currency)
-        ),
+        exchangeRate: recomputed ? recomputed.exchangeRate : existing.exchangeRate,
+        baseCurrencyAmount: recomputed ? recomputed.baseCurrencyAmount : existing.baseCurrencyAmount,
+        statutoryExchangeRate: recomputed ? recomputed.statutoryExchangeRate : existing.statutoryExchangeRate,
+        statutoryBaseAmount: recomputed ? recomputed.statutoryBaseAmount : existing.statutoryBaseAmount,
         
-        // Legacy Tax Projections
-        ...(financials ? {
-          cgst: financials.legacyTaxes.cgst,
-          sgst: financials.legacyTaxes.sgst,
-          igst: financials.legacyTaxes.igst,
-          vatAmount: financials.legacyTaxes.vatAmount
+        // Accurate Tax Heads
+        ...(recomputed ? {
+          cgst: recomputed.cgst,
+          sgst: recomputed.sgst,
+          igst: recomputed.igst,
+          vatAmount: data.vatAmount !== undefined ? Number(data.vatAmount) : (recomputed.totalTax || 0)
         } : {}),
         
         // Engine Fields
@@ -629,7 +636,15 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         ewayBillNo: data.ewayBillNo !== undefined ? data.ewayBillNo : existing.ewayBillNo,
         transportDetails: data.transportDetails !== undefined ? data.transportDetails : existing.transportDetails,
         reverseCharge: data.reverseCharge !== undefined ? data.reverseCharge : existing.reverseCharge,
-        shippingCharges: data.shippingCharges !== undefined ? data.shippingCharges : existing.shippingCharges,
+        shippingCharges: data.shippingCharges !== undefined ? Number(data.shippingCharges) : existing.shippingCharges,
+        tds: data.tds !== undefined ? Number(data.tds) : existing.tds,
+        exportType: data.exportType !== undefined ? data.exportType : existing.exportType,
+        lutNumber: data.lutNumber !== undefined ? data.lutNumber : existing.lutNumber,
+        lutDate: data.lutDate !== undefined ? (data.lutDate ? new Date(data.lutDate) : null) : existing.lutDate,
+        destinationCountry: data.destinationCountry !== undefined ? data.destinationCountry : existing.destinationCountry,
+        shippingBillNumber: data.shippingBillNumber !== undefined ? data.shippingBillNumber : existing.shippingBillNumber,
+        shippingBillDate: data.shippingBillDate !== undefined ? (data.shippingBillDate ? new Date(data.shippingBillDate) : null) : existing.shippingBillDate,
+        portCode: data.portCode !== undefined ? data.portCode : existing.portCode,
         items: (financials && data.items) ? {
           create: financials.processedItemsToSave
         } : undefined
@@ -649,7 +664,9 @@ const updateInvoice = async (businessId, userId, userEmail, invoiceId, data) => 
         });
       }
       
-      await TransactionHelper.saveTaxLedger(tx, businessId, "INVOICE", updated.id, financials.taxTransactions);
+      if (recomputed?.taxTransactions && recomputed.taxTransactions.length > 0) {
+        await TransactionHelper.saveTaxLedger(tx, businessId, "INVOICE", updated.id, recomputed.taxTransactions);
+      }
     }
 
     await logAction(tx, {
