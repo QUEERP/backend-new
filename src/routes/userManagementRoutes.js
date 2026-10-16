@@ -6,6 +6,7 @@ const {
   toggleUserStatus,
   assignDirectPermission,
   cancelInvite,
+  updateUser,
 } = require("../controllers/userManagementController");
 
 const authMiddleware = require("../middlewares/authMiddleware");
@@ -19,10 +20,21 @@ router.use(businessMiddleware);
 
 router.get("/", checkPermission("user", "read"), getBusinessUsers);
 
-
 router.post("/", checkPermission("user", "create"), createUser);
 
 router.post("/invite", checkPermission("user", "create"), inviteUser);
+
+router.put(
+  "/:membershipId",
+  checkPermission("user", "update"),
+  updateUser
+);
+
+router.patch(
+  "/:membershipId",
+  checkPermission("user", "update"),
+  updateUser
+);
 
 router.patch(
   "/:membershipId/status",
@@ -40,6 +52,5 @@ router.delete(
   checkPermission("user", "delete"),
   cancelInvite
 );
-
 
 module.exports = router;
