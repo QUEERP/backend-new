@@ -322,7 +322,8 @@ const createCustomerPayment = async (businessId, userId, userEmail, customerId, 
 
     const paymentDate = data.paymentDate ? new Date(data.paymentDate) : new Date();
     const business = await tx.business.findUnique({ where: { id: businessId }, include: { baseCurrency: true } });
-    const currencyCode = data.currency || customer.currency || business?.baseCurrency?.code || business?.currency || 'INR';
+    const custCurrency = customer.currency && customer.currency !== 'SYSTEM' ? customer.currency : null;
+    const currencyCode = (data.currency && data.currency !== 'SYSTEM') ? data.currency : (custCurrency || business?.baseCurrency?.code || business?.currency || 'USD');
     const currencyData = await CurrencyService.resolveCurrencyData(businessId, currencyCode, paymentDate, tx);
     const baseDecimals = currencyData.baseDecimals || 2;
 

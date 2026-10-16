@@ -751,7 +751,7 @@ exports.getPaymentDetails = async (req, res) => {
 
     const amount_unapplied = Number(payment.amount) - Number(payment.amountAllocated || 0);
     const customerId = payment.customerId || payment.project?.customerId || null;
-    const currency = payment.invoice?.currency || payment.quotation?.currency || payment.customer?.currency || null;
+    const currency = payment.currency || payment.invoice?.currency || payment.quotation?.currency || payment.customer?.currency || null;
     res.json({ success: true, data: { ...payment, customerId, currency, unappliedBalance: amount_unapplied } });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -787,6 +787,7 @@ exports.allocateNewInvoice = async (req, res) => {
           grandTotal: amount,
           subtotal: amount,
           amountPaid: amount,
+          currency: payment.currency || 'USD',
           adminNote: description
         }
       });
@@ -833,10 +834,21 @@ exports.allocateExistingInvoice = async (req, res) => {
       if (!invoices || invoices.length === 0) throw new Error("Invoice not found");
       const invoice = invoices[0];
 
-      if (invoice.status !== 'UNPAID') throw new Error("Invoice must be UNPAID");
+      if (invoice.status === 'PAID') throw new Error("Invoice is already fully paid");
 
-      if (payment.currency && invoice.currency && payment.currency !== invoice.currency) {
-        throw new Error(`Cannot allocate: Payment currency (${payment.currency}) does not match Invoice currency (${invoice.currency}). Cross-currency allocations require explicit settlement conversion.`);
+      let effectivePaymentCurrency = payment.currency;
+      if (payment.customerId === invoice.customerId && invoice.currency) {
+        if (!effectivePaymentCurrency || effectivePaymentCurrency === 'SYSTEM' || (Number(payment.amountAllocated || 0) === 0 && effectivePaymentCurrency !== invoice.currency)) {
+          await tx.payment.update({
+            where: { id: paymentId },
+            data: { currency: invoice.currency }
+          });
+          effectivePaymentCurrency = invoice.currency;
+        }
+      }
+
+      if (effectivePaymentCurrency && invoice.currency && effectivePaymentCurrency !== invoice.currency) {
+        throw new Error(`Cannot allocate: Payment currency (${effectivePaymentCurrency}) does not match Invoice currency (${invoice.currency}). Cross-currency allocations require explicit settlement conversion.`);
       }
 
       const unapplied = Number(payment.amount) - Number(payment.amountAllocated);
