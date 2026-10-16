@@ -24,4 +24,18 @@ router.get(
   controller.getUserPermissions
 );
 
+router.post(
+  "/sync/:userId",
+  auth,
+  businessMiddleware,
+  controller.syncUserPermissions
+);
+
+router.put(
+  "/sync/:userId",
+  auth,
+  businessMiddleware,
+  controller.syncUserPermissions
+);
+
 module.exports = router;

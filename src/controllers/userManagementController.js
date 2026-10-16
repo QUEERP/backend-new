@@ -320,6 +320,132 @@ const cancelInvite = async (req, res) => {
   }
 };
 
+//////////////////////////////////////////////////////
+// UPDATE USER DETAILS (NAME, EMAIL, ROLE, STATUS, PASSWORD)
+//////////////////////////////////////////////////////
+const updateUser = async (req, res) => {
+  try {
+    const { membershipId } = req.params;
+    const businessId = req.business.id;
+    const { name, email, roleName, status, isActive, password } = req.body;
+
+    const membership = await prisma.businessUser.findFirst({
+      where: {
+        businessId,
+        OR: [
+          { id: membershipId },
+          { userId: membershipId },
+        ],
+      },
+      include: {
+        user: true,
+        role: true,
+      },
+    });
+
+    if (!membership) {
+      return errorResponse(res, "User membership not found", 404);
+    }
+
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      select: { ownerId: true },
+    });
+
+    const isOwner = business && business.ownerId === membership.userId;
+
+    // Check if trying to deactivate business owner
+    const targetIsActive = typeof isActive === "boolean" 
+      ? isActive 
+      : (typeof status === "string" ? status.toLowerCase() === "active" : undefined);
+
+    if (isOwner && targetIsActive === false) {
+      return errorResponse(res, "Cannot deactivate the business owner", 400);
+    }
+
+    // 1. Update user credentials / info in prisma.user
+    const userUpdateData = {};
+    if (name && name.trim()) {
+      userUpdateData.name = name.trim();
+    }
+    if (email && email.trim() && email.trim().toLowerCase() !== membership.user.email.toLowerCase()) {
+      const normalizedEmail = email.trim().toLowerCase();
+      const existingUser = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+      });
+      if (existingUser && existingUser.id !== membership.userId) {
+        return errorResponse(res, "Email already in use by another account", 400);
+      }
+      userUpdateData.email = normalizedEmail;
+    }
+    if (password && password.trim()) {
+      if (password.trim().length < 6) {
+        return errorResponse(res, "Password must be at least 6 characters long", 400);
+      }
+      userUpdateData.password = await bcrypt.hash(password.trim(), 10);
+    }
+
+    if (Object.keys(userUpdateData).length > 0) {
+      await prisma.user.update({
+        where: { id: membership.userId },
+        data: userUpdateData,
+      });
+    }
+
+    // 2. Update membership (role, isActive)
+    const membershipUpdateData = {};
+    if (typeof targetIsActive === "boolean") {
+      membershipUpdateData.isActive = targetIsActive;
+    }
+
+    if (roleName && roleName.trim() && roleName.trim() !== membership.role?.name) {
+      if (isOwner && roleName.trim() !== "Admin") {
+        return errorResponse(res, "Business owner role must remain Admin", 400);
+      }
+
+      const roleToFind = roleName.trim();
+      let role = await prisma.role.findFirst({
+        where: { businessId, name: roleToFind },
+      });
+
+      if (!role) {
+        const allowedRoles = ["Admin", "Manager", "Accountant", "User", "Viewer"];
+        if (allowedRoles.includes(roleToFind)) {
+          role = await prisma.role.create({
+            data: { name: roleToFind, businessId },
+          });
+        } else {
+          return errorResponse(res, `Role '${roleToFind}' not found.`, 400);
+        }
+      }
+      membershipUpdateData.roleId = role.id;
+    }
+
+    if (Object.keys(membershipUpdateData).length > 0) {
+      await prisma.businessUser.update({
+        where: { id: membership.id },
+        data: membershipUpdateData,
+      });
+    }
+
+    // Fetch updated membership
+    const updated = await prisma.businessUser.findUnique({
+      where: { id: membership.id },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true },
+        },
+        role: true,
+      },
+    });
+
+    return successResponse(res, updated, "User updated successfully");
+  } catch (error) {
+    console.error("updateUser error:", error);
+    return errorResponse(res, "Internal server error", 500);
+  }
+};
+
 module.exports = {
   getBusinessUsers,
   createUser,
@@ -327,4 +453,5 @@ module.exports = {
   toggleUserStatus,
   assignDirectPermission,
   cancelInvite,
+  updateUser,
 };

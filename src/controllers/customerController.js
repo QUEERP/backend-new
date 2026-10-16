@@ -16,12 +16,41 @@ function normalizeCountryName(countryInput) {
   if (!countryInput) return 'INDIA';
   const c = String(countryInput).trim().toUpperCase();
   if (['IN', 'IND', 'INDIA'].includes(c)) return 'INDIA';
-  if (['AE', 'ARE', 'UAE', 'UNITED ARAB EMIRATES'].includes(c)) return 'UAE';
-  if (['US', 'USA', 'UNITED STATES', 'UNITED STATES OF AMERICA'].includes(c)) return 'USA';
-  if (['GB', 'GBR', 'UK', 'UNITED KINGDOM'].includes(c)) return 'UK';
+  if (['AE', 'ARE', 'UAE', 'UNITED ARAB EMIRATES'].includes(c) || c.includes('EMIRATES')) return 'UAE';
+  if (['US', 'USA', 'UNITED STATES', 'UNITED STATES OF AMERICA'].includes(c) || c.includes('UNITED STATES')) return 'USA';
+  if (['GB', 'GBR', 'UK', 'UNITED KINGDOM'].includes(c) || c.includes('KINGDOM')) return 'UK';
   if (['CA', 'CAN', 'CANADA'].includes(c)) return 'CANADA';
   if (['AU', 'AUS', 'AUSTRALIA'].includes(c)) return 'AUSTRALIA';
   return c;
+}
+
+const VALID_PRISMA_REGIONS = new Set([
+  'INDIA', 'UAE', 'AFGHANISTAN', 'ALBANIA', 'ALGERIA', 'ARGENTINA', 'AUSTRALIA', 'AUSTRIA',
+  'BAHRAIN', 'BANGLADESH', 'BELGIUM', 'BRAZIL', 'CANADA', 'CHILE', 'CHINA', 'COLOMBIA',
+  'CROATIA', 'CZECH_REPUBLIC', 'DENMARK', 'EGYPT', 'ETHIOPIA', 'FINLAND', 'FRANCE', 'GERMANY',
+  'GHANA', 'GREECE', 'HONG_KONG', 'HUNGARY', 'INDONESIA', 'IRAN', 'IRAQ', 'IRELAND', 'ISRAEL',
+  'ITALY', 'JAPAN', 'JORDAN', 'KAZAKHSTAN', 'KENYA', 'KUWAIT', 'LEBANON', 'MALAYSIA', 'MEXICO',
+  'MOROCCO', 'MYANMAR', 'NEPAL', 'NETHERLANDS', 'NEW_ZEALAND', 'NIGERIA', 'NORWAY', 'OMAN',
+  'PAKISTAN', 'PHILIPPINES', 'POLAND', 'PORTUGAL', 'QATAR', 'ROMANIA', 'RUSSIA', 'SAUDI_ARABIA',
+  'SINGAPORE', 'SOUTH_AFRICA', 'SOUTH_KOREA', 'SPAIN', 'SRI_LANKA', 'SWEDEN', 'SWITZERLAND',
+  'TAIWAN', 'TANZANIA', 'THAILAND', 'TUNISIA', 'TURKEY', 'UKRAINE', 'UNITED_ARAB_EMIRATES',
+  'UNITED_KINGDOM', 'UNITED_STATES', 'VENEZUELA', 'VIETNAM', 'ZIMBABWE', 'OTHER'
+]);
+
+/**
+ * Maps country/region to a valid Prisma Region enum or falls back to 'OTHER'
+ */
+function toPrismaRegion(countryInput) {
+  if (!countryInput) return 'INDIA';
+  const c = String(countryInput).trim().toUpperCase().replace(/[-\s]+/g, '_');
+  if (VALID_PRISMA_REGIONS.has(c)) return c;
+  if (['US', 'USA', 'UNITED_STATES', 'UNITED_STATES_OF_AMERICA'].includes(c)) return 'UNITED_STATES';
+  if (['GB', 'GBR', 'UK', 'UNITED_KINGDOM', 'ENGLAND', 'GREAT_BRITAIN'].includes(c)) return 'UNITED_KINGDOM';
+  if (['AE', 'ARE', 'UAE', 'UNITED_ARAB_EMIRATES'].includes(c)) return 'UAE';
+  if (['IN', 'IND', 'INDIA'].includes(c)) return 'INDIA';
+  if (['CA', 'CAN', 'CANADA'].includes(c)) return 'CANADA';
+  if (['AU', 'AUS', 'AUSTRALIA'].includes(c)) return 'AUSTRALIA';
+  return 'OTHER';
 }
 
 //////////////////////////////////////////////////////
@@ -95,7 +124,7 @@ exports.createCustomer = async (req, res) => {
     // Country is the single source of truth:
     // Link or merge Region, Country, billing and shipping country so they never conflict
     const resolvedCountry = normalizeCountryName(inputCountry || region || "INDIA");
-    const resolvedRegion = resolvedCountry;
+    const resolvedRegion = toPrismaRegion(region || inputCountry || resolvedCountry);
 
     // Default Currency by Country if not provided
     let effectiveCurrency = currency;
@@ -202,11 +231,11 @@ exports.createCustomer = async (req, res) => {
             message: `Bank validation failed: ${valRes.errors.join(' ')}`
           });
         }
-        const rawNum = String(b.accountNumber || b.accountNumberPlain || '').trim();
+        const rawNum = String(b.accountNumber || b.accountNumberPlain || b.iban || b.swift || 'ACCOUNT').trim();
         validatedBankAccounts.push({
           businessId: req.business.id,
-          accountHolderName: b.accountHolderName.trim(),
-          bankName: b.bankName.trim(),
+          accountHolderName: (b.accountHolderName || '').trim(),
+          bankName: (b.bankName || '').trim(),
           accountNumberEncrypted: encryptAccountNumber(rawNum),
           accountNumberMasked: maskAccountNumber(rawNum),
           country: String(b.country || resolvedCountry).toUpperCase(),
@@ -274,11 +303,11 @@ exports.createCustomer = async (req, res) => {
         crmStatus,
 
         // Legacy Bank Details
-        bankName,
-        accountName,
-        accountNumber,
-        swiftCode,
-        iban,
+        bankName: bankName || (validatedBankAccounts[0] ? validatedBankAccounts[0].bankName : null),
+        accountName: accountName || (validatedBankAccounts[0] ? validatedBankAccounts[0].accountHolderName : null),
+        accountNumber: accountNumber || (validatedBankAccounts[0] ? validatedBankAccounts[0].accountNumberMasked : null),
+        swiftCode: swiftCode || (validatedBankAccounts[0] ? validatedBankAccounts[0].swift : null),
+        iban: iban || (validatedBankAccounts[0] ? validatedBankAccounts[0].iban : null),
 
         // Bank Accounts relation
         ...(validatedBankAccounts.length > 0 && {
@@ -569,13 +598,13 @@ exports.updateCustomer = async (req, res) => {
           if (!valRes.valid) {
             throw new Error(`Bank validation failed: ${valRes.errors.join(' ')}`);
           }
-          const rawNum = String(b.accountNumber || b.accountNumberPlain || '').trim();
+          const rawNum = String(b.accountNumber || b.accountNumberPlain || b.iban || b.swift || 'ACCOUNT').trim();
           await tx.customerBankAccount.create({
             data: {
               customerId: id,
               businessId: req.business.id,
-              accountHolderName: b.accountHolderName.trim(),
-              bankName: b.bankName.trim(),
+              accountHolderName: (b.accountHolderName || '').trim(),
+              bankName: (b.bankName || '').trim(),
               accountNumberEncrypted: encryptAccountNumber(rawNum),
               accountNumberMasked: maskAccountNumber(rawNum),
               country: String(b.country || resolvedCountry).toUpperCase(),
@@ -601,7 +630,7 @@ exports.updateCustomer = async (req, res) => {
         data: {
           ...rest,
           country: resolvedCountry,
-          region: resolvedCountry,
+          region: toPrismaRegion(rest.region || rest.country || resolvedCountry),
           billingCountry: rest.billingCountry || resolvedCountry,
           shippingCountry: rest.shippingCountry || rest.billingCountry || resolvedCountry,
           state: resolvedState,
