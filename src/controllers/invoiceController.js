@@ -9,6 +9,7 @@ const InventoryService = require("../services/inventoryService");
 const TaxEngine = require("../services/taxEngine");
 const InvoiceWorkflow = require("../services/invoiceWorkflow");
 const { roundHalfUp, getCurrencyDecimals } = require("../services/currencyFxService");
+const { CurrencyService } = require("../services/currencyService");
 
 exports.createInvoice = async (req, res) => {
   console.log("=== CREATE INVOICE CALLED ===");
@@ -192,6 +193,45 @@ exports.createInvoice = async (req, res) => {
 
       const grandTotal = serverSubtotal + serverTotalTax + Number(shippingCharges) - Number(discount) - Number(tds || 0);
 
+      // Multi-currency FX Resolution
+      const docCurrency = currency || settings?.currency || "INR";
+      const docDate = invoiceDate ? new Date(invoiceDate) : new Date();
+      const currencyData = await CurrencyService.resolveCurrencyData(
+        req.business.id,
+        docCurrency,
+        docDate,
+        tx
+      );
+
+      let effectiveRate = currencyData.exchangeRate;
+      let effectiveStatutoryRate = currencyData.statutoryRate || effectiveRate;
+
+      if (req.body.isManualOverride && req.body.exchangeRate && Number(req.body.exchangeRate) > 0) {
+        effectiveRate = Number(req.body.exchangeRate);
+        effectiveStatutoryRate = req.body.statutoryExchangeRate ? Number(req.body.statutoryExchangeRate) : effectiveRate;
+
+        // Record manual override in exchange_rates table
+        if (currencyData.transactionCurrencyId && currencyData.baseCurrencyId && currencyData.transactionCurrencyId !== currencyData.baseCurrencyId) {
+          await tx.exchangeRate.create({
+            data: {
+              fromCurrencyId: currencyData.transactionCurrencyId,
+              toCurrencyId: currencyData.baseCurrencyId,
+              rate: effectiveRate,
+              effectiveDate: docDate,
+              source: `MANUAL (${req.user?.email || 'User'}: ${req.body.overrideReason || 'Invoice override'})`,
+              rateType: 'COMMERCIAL',
+              fetchedAt: new Date()
+            }
+          });
+        }
+      } else if (req.body.exchangeRate && Number(req.body.exchangeRate) > 0) {
+        effectiveRate = Number(req.body.exchangeRate);
+      }
+
+      const decimals = getCurrencyDecimals(docCurrency);
+      const baseCurrencyAmount = roundHalfUp(grandTotal * effectiveRate, decimals);
+      const statutoryBaseAmount = roundHalfUp(grandTotal * effectiveStatutoryRate, decimals);
+
       return tx.invoice.create({
         data: {
           businessId: req.business.id,
@@ -199,7 +239,7 @@ exports.createInvoice = async (req, res) => {
           invoiceNumber,
           invoiceDate: new Date(invoiceDate),
           dueDate: dueDate ? new Date(dueDate) : null,
-          currency: currency || settings?.currency || "AED",
+          currency: docCurrency,
           poNumber,
           poDate: poDate ? new Date(poDate) : null,
           soNumber,
@@ -225,6 +265,14 @@ exports.createInvoice = async (req, res) => {
           emirate,
           projectId: projectId || null,
           items: { create: invoiceItems },
+
+          // FX Booked Rate Snapshot
+          transactionCurrencyId: currencyData.transactionCurrencyId,
+          baseCurrencyId: currencyData.baseCurrencyId,
+          exchangeRate: effectiveRate,
+          baseCurrencyAmount,
+          statutoryExchangeRate: effectiveStatutoryRate,
+          statutoryBaseAmount,
         },
         include: {
           customer: true,

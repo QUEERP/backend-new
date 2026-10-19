@@ -3280,6 +3280,7 @@ model ExchangeRate {
   source         String?
   rateType       String   @default("COMMERCIAL")
   createdAt      DateTime @default(now())
+  fetchedAt      DateTime? @default(now())
   createdBy      String?
   fromCurrency   Currency @relation("FromExchangeRates", fields: [fromCurrencyId], references: [id])
   toCurrency     Currency @relation("ToExchangeRates", fields: [toCurrencyId], references: [id])

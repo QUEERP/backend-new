@@ -17,7 +17,8 @@
     "postinstall": "prisma generate",
     "test:security": "node test-security-override.js",
     "test:fx": "node tests/currencyFx.test.js",
-    "test:all": "node test-security-override.js && node test-canada-override.js && node tests/currencyFx.test.js",
+    "test:live-rates": "node tests/liveExchangeRates.test.js",
+    "test:all": "node test-security-override.js && node test-canada-override.js && node tests/currencyFx.test.js && node tests/liveExchangeRates.test.js",
     "test": "npm run test:all"
   },
   "keywords": [],

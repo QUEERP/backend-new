@@ -220,6 +220,13 @@ exports.createCustomer = async (req, res) => {
       formattedTags = tags;
     }
 
+    if (iban && /[^a-zA-Z0-9]/.test(String(iban).trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "IBAN cannot contain special characters or spaces."
+      });
+    }
+
     // Validate and prepare Bank Accounts
     const validatedBankAccounts = [];
     if (Array.isArray(bankAccounts) && bankAccounts.length > 0) {
@@ -241,7 +248,7 @@ exports.createCustomer = async (req, res) => {
           country: String(b.country || resolvedCountry).toUpperCase(),
           currency: b.currency || effectiveCurrency,
           ifsc: b.ifsc ? String(b.ifsc).toUpperCase().trim() : null,
-          iban: b.iban ? String(b.iban).toUpperCase().replace(/\s/g, '') : null,
+          iban: b.iban ? String(b.iban).toUpperCase().replace(/[^A-Z0-9]/g, '') : null,
           swift: b.swift ? String(b.swift).toUpperCase().trim() : null,
           routingNumber: b.routingNumber ? String(b.routingNumber).trim() : null,
           branchName: b.branchName ? String(b.branchName).trim() : null,
@@ -307,7 +314,7 @@ exports.createCustomer = async (req, res) => {
         accountName: accountName || (validatedBankAccounts[0] ? validatedBankAccounts[0].accountHolderName : null),
         accountNumber: accountNumber || (validatedBankAccounts[0] ? validatedBankAccounts[0].accountNumberMasked : null),
         swiftCode: swiftCode || (validatedBankAccounts[0] ? validatedBankAccounts[0].swift : null),
-        iban: iban || (validatedBankAccounts[0] ? validatedBankAccounts[0].iban : null),
+        iban: iban ? String(iban).toUpperCase().replace(/[^A-Z0-9]/g, '') : (validatedBankAccounts[0] ? validatedBankAccounts[0].iban : null),
 
         // Bank Accounts relation
         ...(validatedBankAccounts.length > 0 && {
@@ -585,6 +592,13 @@ exports.updateCustomer = async (req, res) => {
       }
     }
 
+    if (rest.iban && /[^a-zA-Z0-9]/.test(String(rest.iban).trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "IBAN cannot contain special characters or spaces."
+      });
+    }
+
     // Update customer in transaction
     const customer = await prisma.$transaction(async (tx) => {
       // If bankAccounts array supplied, update/replace
@@ -610,7 +624,7 @@ exports.updateCustomer = async (req, res) => {
               country: String(b.country || resolvedCountry).toUpperCase(),
               currency: b.currency || 'USD',
               ifsc: b.ifsc ? String(b.ifsc).toUpperCase().trim() : null,
-              iban: b.iban ? String(b.iban).toUpperCase().replace(/\s/g, '') : null,
+              iban: b.iban ? String(b.iban).toUpperCase().replace(/[^A-Z0-9]/g, '') : null,
               swift: b.swift ? String(b.swift).toUpperCase().trim() : null,
               routingNumber: b.routingNumber ? String(b.routingNumber).trim() : null,
               branchName: b.branchName ? String(b.branchName).trim() : null,
@@ -640,6 +654,7 @@ exports.updateCustomer = async (req, res) => {
           ...(annualRevenue !== undefined && { annualRevenue: annualRevenue ? Number(annualRevenue) : null }),
           ...(employeeCount !== undefined && { employeeCount: employeeCount ? parseInt(employeeCount) : null }),
           ...(formattedTags !== undefined && { tags: formattedTags }),
+          ...(rest.iban !== undefined && { iban: rest.iban ? String(rest.iban).toUpperCase().replace(/[^A-Z0-9]/g, '') : null }),
         },
         include: {
           bankAccounts: {
