@@ -227,6 +227,7 @@ exports.getCurrencyUsage = async (req, res) => {
           return {
             rate,
             effectiveDate: matched.effectiveDate,
+            fetchedAt: matched.fetchedAt || matched.createdAt || matched.effectiveDate,
             source,
             rateType: matched.rateType || 'COMMERCIAL',
             isStale,
@@ -626,37 +627,45 @@ exports.getCurrencyUsage = async (req, res) => {
       b.breakdown.push({ transactionType: 'PurchaseOrder', volumeBaseCcy: baseAmt, nominal });
     });
 
-    let usageValues = Object.values(grouped).map(b => ({
-      currency: b.currency,
-      currencyId: b.currencyId,
-      exchangeRate: b.exchangeRate,
-      rateDetails: b.rateDetails,
-      breakdown: b.breakdown,
-      isTaxInclusive: true,
-      summary: {
-        sales: fromMinorUnits(b.summaryMinor.sales),
-        salesBase: fromMinorUnits(b.summaryMinor.salesBase),
-        purchases: fromMinorUnits(b.summaryMinor.purchases),
-        purchasesBase: fromMinorUnits(b.summaryMinor.purchasesBase),
-        receivables: fromMinorUnits(b.summaryMinor.receivables),
-        receivablesBase: fromMinorUnits(b.summaryMinor.receivablesBase),
-        payables: fromMinorUnits(b.summaryMinor.payables),
-        payablesBase: fromMinorUnits(b.summaryMinor.payablesBase)
-      },
-      realizedFx: {
-        gain: fromMinorUnits(b.realizedMinorGain),
-        loss: fromMinorUnits(b.realizedMinorLoss),
-        net: fromMinorUnits(b.realizedMinorGain - b.realizedMinorLoss)
-      },
-      unrealizedFx: {
-        gain: fromMinorUnits(b.unrealizedMinorGain),
-        loss: fromMinorUnits(b.unrealizedMinorLoss),
-        net: fromMinorUnits(b.unrealizedMinorGain - b.unrealizedMinorLoss),
-        openReceivables: fromMinorUnits(b.openReceivablesMinor),
-        openPayables: fromMinorUnits(b.openPayablesMinor),
-        revaluationRate: b.exchangeRate
-      }
-    }));
+    let usageValues = Object.values(grouped).map(b => {
+      const foreignSales = fromMinorUnits(b.summaryMinor.sales);
+      const bookedSalesBase = fromMinorUnits(b.summaryMinor.salesBase);
+      const latestRate = Number(b.exchangeRate || 1);
+      const valueAtLatestRate = b.currency === baseCode ? bookedSalesBase : roundHalfUp(foreignSales * latestRate, 2);
+
+      return {
+        currency: b.currency,
+        currencyId: b.currencyId,
+        exchangeRate: latestRate,
+        rateDetails: b.rateDetails,
+        breakdown: b.breakdown,
+        isTaxInclusive: true,
+        summary: {
+          sales: foreignSales,
+          salesBase: bookedSalesBase,
+          valueAtLatestRate: valueAtLatestRate,
+          purchases: fromMinorUnits(b.summaryMinor.purchases),
+          purchasesBase: fromMinorUnits(b.summaryMinor.purchasesBase),
+          receivables: fromMinorUnits(b.summaryMinor.receivables),
+          receivablesBase: fromMinorUnits(b.summaryMinor.receivablesBase),
+          payables: fromMinorUnits(b.summaryMinor.payables),
+          payablesBase: fromMinorUnits(b.summaryMinor.payablesBase)
+        },
+        realizedFx: {
+          gain: fromMinorUnits(b.realizedMinorGain),
+          loss: fromMinorUnits(b.realizedMinorLoss),
+          net: fromMinorUnits(b.realizedMinorGain - b.realizedMinorLoss)
+        },
+        unrealizedFx: {
+          gain: fromMinorUnits(b.unrealizedMinorGain),
+          loss: fromMinorUnits(b.unrealizedMinorLoss),
+          net: fromMinorUnits(b.unrealizedMinorGain - b.unrealizedMinorLoss),
+          openReceivables: fromMinorUnits(b.openReceivablesMinor),
+          openPayables: fromMinorUnits(b.openPayablesMinor),
+          revaluationRate: latestRate
+        }
+      };
+    });
 
     if (currencyId) {
       usageValues = usageValues.filter(u => u.currencyId === currencyId || u.currency === currencyId);
@@ -664,6 +673,7 @@ exports.getCurrencyUsage = async (req, res) => {
 
     const totals = {
       totalSalesBase: Number(usageValues.reduce((acc, u) => acc + (u.summary.salesBase || 0), 0).toFixed(2)),
+      totalValueAtLatestRate: Number(usageValues.reduce((acc, u) => acc + (u.summary.valueAtLatestRate || 0), 0).toFixed(2)),
       totalPurchasesBase: Number(usageValues.reduce((acc, u) => acc + (u.summary.purchasesBase || 0), 0).toFixed(2)),
       totalReceivablesBase: Number(usageValues.reduce((acc, u) => acc + (u.summary.receivablesBase || 0), 0).toFixed(2)),
       totalPayablesBase: Number(usageValues.reduce((acc, u) => acc + (u.summary.payablesBase || 0), 0).toFixed(2)),

@@ -76,24 +76,22 @@ class CurrencyService {
     const requiresStatutoryRate = rule?.requiresStatutoryRate || false;
     const statutoryRateSource = rule?.statutoryRateSource || null;
 
-    // 5. Fetch Commercial Exchange Rate
-    const commercialRateRecord = await txClient.exchangeRate.findFirst({
-      where: {
-        fromCurrencyId: transactionCurrencyId,
-        toCurrencyId: baseCurrencyId,
-        effectiveDate: { lte: transactionDate },
-        rateType: 'COMMERCIAL'
-      },
-      orderBy: { effectiveDate: 'desc' }
-    });
-
-    if (!commercialRateRecord) {
-      throw new RateResolutionError(`Missing COMMERCIAL exchange rate for ${transactionCurrencyCode} -> ${business.baseCurrency?.code || business.currency || 'INR'} on or before ${transactionDate.toISOString()}`);
+    // 5. Fetch Commercial Exchange Rate via liveRateSyncService (with on-demand live fallback, age warnings, and strict blocking)
+    const { liveRateSyncService } = require('./fx/liveRateSyncService');
+    let resolvedRateData;
+    try {
+      resolvedRateData = await liveRateSyncService.resolveCommercialRate(businessId, transactionCurrencyCode, transactionDate, txClient);
+    } catch (err) {
+      if (err.message && err.message.includes('No exchange rate for')) {
+        throw new RateResolutionError(err.message);
+      }
+      throw new RateResolutionError(`Failed to resolve exchange rate for ${transactionCurrencyCode}: ${err.message}`);
     }
 
-    let statutoryRate = commercialRateRecord.rate;
+    const exchangeRate = resolvedRateData.rate;
+    let statutoryRate = exchangeRate;
 
-    // 6. Fetch Statutory Exchange Rate (if mandated by the country)
+    // 6. Fetch Statutory Exchange Rate (if mandated by the country, strictly separate from commercial API)
     if (requiresStatutoryRate) {
       const statutoryRateRecord = await txClient.exchangeRate.findFirst({
         where: {
@@ -116,8 +114,13 @@ class CurrencyService {
     return {
       transactionCurrencyId,
       baseCurrencyId,
-      exchangeRate: commercialRateRecord.rate,
+      exchangeRate,
       statutoryRate,
+      source: resolvedRateData.source,
+      fetchedAt: resolvedRateData.fetchedAt,
+      effectiveDate: resolvedRateData.effectiveDate,
+      warningLevel: resolvedRateData.warningLevel,
+      warningMessage: resolvedRateData.warningMessage,
       decimals,
       baseDecimals
     };

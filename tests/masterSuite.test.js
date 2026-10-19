@@ -453,6 +453,9 @@ async function runMasterSuite() {
     // IBAN Mod-97 (UAE)
     assert.strictEqual(validateIban('AE070331234567890123456'), true);
     assert.strictEqual(validateIban('AE070331234567890123457'), false); // Invalid checksum
+    assert.strictEqual(validateIban('AE07-0331-234567890123456'), false); // Hyphens rejected
+    assert.strictEqual(validateIban('AE070331234567890123456@'), false); // Special characters rejected
+    assert.strictEqual(validateIban('AE07 0331 2345 6789 0123 456'), false); // Spaces rejected
 
     // ABA Routing (US 9 digits + checksum)
     // Chase Bank: 021000021 -> 3*(0+0+0) + 7*(2+0+2) + 1*(1+0+1) = 0 + 28 + 2 = 30 % 10 = 0

@@ -52,7 +52,10 @@ function maskAccountNumber(accountNumber) {
  */
 function validateIban(iban) {
   if (!iban) return false;
-  const clean = String(iban).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const str = String(iban).trim();
+  // Strictly reject special characters and whitespace
+  if (/[^a-zA-Z0-9]/.test(str)) return false;
+  const clean = str.toUpperCase();
   if (clean.length < 15 || clean.length > 34) return false;
 
   // Move first 4 characters to end
@@ -156,6 +159,15 @@ function validateCustomerBank(accountData, countryCode) {
   }
   if (!accountData.bankName || !accountData.bankName.trim()) {
     errors.push('Bank name is required.');
+  }
+
+  if (accountData.iban) {
+    const ibanStr = String(accountData.iban).trim();
+    if (/[^a-zA-Z0-9]/.test(ibanStr)) {
+      errors.push('IBAN cannot contain special characters or spaces.');
+    } else if (ibanStr.length < 15 || ibanStr.length > 34) {
+      errors.push('IBAN must be between 15 and 34 alphanumeric characters.');
+    }
   }
 
   const rawAccount = String(

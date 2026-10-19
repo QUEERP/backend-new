@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const app = require("./src/app");
+const { liveRateScheduler } = require("./src/services/fx/liveRateScheduler");
 
 const PORT = process.env.PORT || 3001;
 
@@ -10,6 +11,7 @@ app.get("/health", (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`http://localhost:${PORT}`);
+  liveRateScheduler.start();
 });
 
 // Fixed: Correctly binding keepAliveTimeout to the server instance
