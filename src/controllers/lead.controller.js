@@ -524,10 +524,32 @@ exports.convertToCustomer = async (req, res) => {
 //////////////////////////////////////////////////////
 // MOVE PIPELINE STAGE
 //////////////////////////////////////////////////////
+const STAGE_STATUS_MAP = {
+  '1': 'NEW',
+  '2': 'CONTACTED',
+  '3': 'QUALIFIED',
+  '4': 'PROPOSAL_PENDING',
+  '5': 'NEGOTIATION',
+  '6': 'CONVERTED',
+  'NEW': 'NEW',
+  'CONTACTED': 'CONTACTED',
+  'QUALIFIED': 'QUALIFIED',
+  'PROPOSAL': 'PROPOSAL_PENDING',
+  'PROPOSAL_PENDING': 'PROPOSAL_PENDING',
+  'PROPOSAL_SENT': 'PROPOSAL_SENT',
+  'NEGOTIATION': 'NEGOTIATION',
+  'CONVERTED': 'CONVERTED',
+  'WON': 'WON',
+  'LOST': 'LOST',
+  'CANCELLED': 'CANCELLED',
+  'UNDER_REVIEW': 'UNDER_REVIEW',
+  'REQUIREMENT_GATHERING': 'REQUIREMENT_GATHERING',
+};
+
 exports.moveStage = async (req, res) => {
   try {
     const { id } = req.params;
-    const { stageId } = req.body;
+    const stageInput = req.body.status || req.body.stageId || req.body.stage;
 
     // Validate lead
     const lead = await prisma.lead.findFirst({
@@ -541,23 +563,56 @@ exports.moveStage = async (req, res) => {
       });
     }
 
-    // Validate stageId if provided
-    if (stageId) {
-      const stage = await prisma.pipelineStage.findUnique({
-        where: { id: stageId },
+    if (!stageInput) {
+      return res.status(400).json({
+        success: false,
+        message: "Stage or status is required",
       });
+    }
 
-      if (!stage) {
-        return res.status(400).json({
-          success: false,
-          message: "Pipeline stage not found. Please create stages first from the pipeline settings.",
-        });
+    let targetStatus = null;
+    let resolvedStageId = null;
+
+    const upperInput = String(stageInput).toUpperCase().trim();
+    if (STAGE_STATUS_MAP[upperInput]) {
+      targetStatus = STAGE_STATUS_MAP[upperInput];
+    }
+
+    // Check if stageInput is a UUID corresponding to a custom PipelineStage
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(stageInput));
+    if (isUuid) {
+      const customStage = await prisma.pipelineStage.findUnique({
+        where: { id: stageInput },
+      });
+      if (customStage) {
+        resolvedStageId = customStage.id;
+        if (!targetStatus) {
+          const nameKey = customStage.name.toUpperCase().replace(/\s+/g, '_');
+          if (STAGE_STATUS_MAP[nameKey]) {
+            targetStatus = STAGE_STATUS_MAP[nameKey];
+          }
+        }
       }
+    }
+
+    if (!targetStatus && !resolvedStageId) {
+      return res.status(400).json({
+        success: false,
+        message: "Pipeline stage not found. Please create stages first from the pipeline settings.",
+      });
+    }
+
+    const updateData = {};
+    if (targetStatus) {
+      updateData.status = targetStatus;
+    }
+    if (resolvedStageId) {
+      updateData.stageId = resolvedStageId;
     }
 
     const updatedLead = await prisma.lead.update({
       where: { id },
-      data: { stageId: stageId || null },
+      data: updateData,
       include: { stage: true },
     });
 
@@ -566,7 +621,7 @@ exports.moveStage = async (req, res) => {
       action: "MOVE_STAGE",
       moduleName: "Lead",
       recordId: id,
-      details: { stageId },
+      details: { stageId: stageInput, targetStatus, resolvedStageId },
     });
 
     res.json({ success: true, data: updatedLead });
