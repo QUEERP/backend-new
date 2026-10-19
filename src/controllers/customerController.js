@@ -60,6 +60,7 @@ exports.createCustomer = async (req, res) => {
   try {
     const {
       company,
+      leadId,
       region,
       vatNumber,
       phone,
@@ -265,6 +266,16 @@ exports.createCustomer = async (req, res) => {
     //////////////////////////////////////////////////////
     // CREATE CRM ACCOUNT
     //////////////////////////////////////////////////////
+    let customerLeadId = undefined;
+    if (leadId) {
+      const existingWithLead = await prisma.customer.findFirst({
+        where: { leadId }
+      });
+      if (!existingWithLead) {
+        customerLeadId = leadId;
+      }
+    }
+
     const customer = await prisma.customer.create({
       data: {
         businessId: req.business.id,
@@ -277,6 +288,7 @@ exports.createCustomer = async (req, res) => {
         group,
         currency: effectiveCurrency,
         defaultLanguage,
+        ...(customerLeadId ? { leadId: customerLeadId } : {}),
 
         address,
         city,
@@ -348,6 +360,47 @@ exports.createCustomer = async (req, res) => {
         }
       }
     });
+
+    // If converted from a lead, link and mark lead as CONVERTED
+    if (leadId) {
+      try {
+        const lead = await prisma.lead.findFirst({
+          where: { id: leadId, businessId: req.business.id }
+        });
+        if (lead) {
+          if (lead.name || lead.email) {
+            await prisma.customerContact.create({
+              data: {
+                businessId: req.business.id,
+                customerId: customer.id,
+                fullName: lead.name,
+                email: lead.email,
+                phone: lead.phone,
+                position: lead.position,
+                isPrimary: true,
+              }
+            }).catch(() => {});
+          }
+          await prisma.lead.update({
+            where: { id: leadId },
+            data: {
+              status: "CONVERTED",
+              customerId: customer.id
+            }
+          });
+          await prisma.leadConversionLog.create({
+            data: {
+              businessId: req.business.id,
+              leadId,
+              customerId: customer.id,
+              convertedById: req.user.userId,
+            }
+          }).catch(() => {});
+        }
+      } catch (e) {
+        console.error("Error linking lead to created customer:", e);
+      }
+    }
 
     // Logging audit trail
     await logAudit(req.business.id, {

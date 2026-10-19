@@ -30,6 +30,7 @@ exports.createDeal = async (req, res) => {
       campaignId,
       status = "OPEN",
       lostReason,
+      leadId,
     } = req.body;
 
     //////////////////////////////////////////////////////
@@ -153,6 +154,30 @@ exports.createDeal = async (req, res) => {
       recordId: deal.id,
       details: { name: deal.name, amount: deal.amount, stage: deal.stage },
     });
+
+    if (leadId) {
+      try {
+        await prisma.lead.update({
+          where: { id: leadId, businessId: req.business.id },
+          data: {
+            status: "CONVERTED",
+            customerId: customerId,
+          }
+        });
+        await prisma.leadConversionLog.create({
+          data: {
+            businessId: req.business.id,
+            leadId,
+            customerId: customerId,
+            contactId: contactId || null,
+            dealId: deal.id,
+            convertedById: req.user.userId,
+          }
+        }).catch(() => {});
+      } catch (err) {
+        console.error("Error linking lead to deal:", err);
+      }
+    }
 
     res.status(201).json({
       success: true,
