@@ -20,13 +20,25 @@ const createBill = async (businessId, userId, userEmail, data) => {
     });
     if (!vendor) throw new Error("Vendor not found");
 
-    // Check if billNumber is unique for this vendor/business
-    const existing = await tx.bill.findFirst({
-      where: { billNumber: data.billNumber, businessId }
-    });
-    if (existing) {
-      throw new Error(`Bill number "${data.billNumber}" already exists.`);
+    let finalBillNumber = data.billNumber ? String(data.billNumber).trim() : '';
+    if (!finalBillNumber) {
+      const count = await tx.bill.count({ where: { businessId } });
+      finalBillNumber = `BILL-${(count + 1).toString().padStart(3, "0")}`;
+    } else {
+      const existing = await tx.bill.findFirst({
+        where: { billNumber: finalBillNumber, businessId }
+      });
+      if (existing) {
+        throw new Error(`Bill number "${finalBillNumber}" already exists.`);
+      }
     }
+
+    const businessRecord = await tx.business.findUnique({
+      where: { id: businessId },
+      include: { baseCurrency: true }
+    });
+    const defaultCurrency = businessRecord?.baseCurrency?.code || businessRecord?.currency || 'INR';
+    const effectiveCurrency = data.currency || defaultCurrency;
 
     const transactionDate = data.billDate ? new Date(data.billDate) : new Date();
     const discount = data.discount ? parseFloat(data.discount) : 0;
@@ -39,7 +51,7 @@ const createBill = async (businessId, userId, userEmail, data) => {
     const financials = await TransactionHelper.processTransactionFinancials({
       businessId,
       transactionDate,
-      currencyCode: data.currency || "AED",
+      currencyCode: effectiveCurrency,
       items: data.items || [],
       customerId: null, // Bill doesn't use customer state
       vendorId: vendor.id,
@@ -50,8 +62,8 @@ const createBill = async (businessId, userId, userEmail, data) => {
     });
 
     const itemsData = await Promise.all(data.items.map(async (item) => {
-      const qty = parseFloat(item.quantity);
-      const price = parseFloat(item.price);
+      const qty = parseFloat(item.quantity) || 0;
+      const price = parseFloat(item.price !== undefined ? item.price : (item.unitPrice !== undefined ? item.unitPrice : 0)) || 0;
       const total = qty * price;
       subtotal += total;
 
@@ -75,10 +87,11 @@ const createBill = async (businessId, userId, userEmail, data) => {
       return {
         productId: item.productId || null,
         warehouseId: item.warehouseId || null,
-        name: item.name || (product ? product.name : "Unknown Item"),
+        name: item.name || item.description || (product ? product.name : "Unknown Item"),
         quantity: qty,
         price,
-        total
+        total,
+        taxPercent: item.taxPercent ? parseFloat(item.taxPercent) : null
       };
     }));
 
@@ -87,7 +100,7 @@ const createBill = async (businessId, userId, userEmail, data) => {
     const bill = await tx.bill.create({
       data: {
         businessId,
-        billNumber: data.billNumber,
+        billNumber: finalBillNumber,
         status: "UNPAID",
         vendorId: data.vendorId,
         purchaseOrderId: data.purchaseOrderId || null,
@@ -97,7 +110,7 @@ const createBill = async (businessId, userId, userEmail, data) => {
         discount: discount,
         totalAmount: grandTotal,
         outstandingAmount: grandTotal,
-        currency: data.currency || "AED",
+        currency: effectiveCurrency,
 
         // Currency engine fields
         transactionCurrencyId: financials.currencyData.transactionCurrencyId,

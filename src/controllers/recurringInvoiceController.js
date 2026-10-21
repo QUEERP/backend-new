@@ -37,7 +37,12 @@ exports.getProfiles = async (req, res) => {
       orderBy: { createdAt: "desc" }
     });
 
-    return successResponse(res, profiles, "Recurring profiles fetched successfully");
+    const mapped = profiles.map(p => ({
+      ...p,
+      nextBillingDate: p.nextBillingDate || p.nextInvoiceDate
+    }));
+
+    return successResponse(res, mapped, "Recurring profiles fetched successfully");
   } catch (error) {
     console.error("getProfiles controller error:", error);
     return errorResponse(res, error.message, 500);
@@ -69,7 +74,12 @@ exports.getProfile = async (req, res) => {
 
     if (!profile) return errorResponse(res, "Recurring profile not found", 404);
 
-    return successResponse(res, profile, "Recurring profile fetched successfully");
+    const mapped = {
+      ...profile,
+      nextBillingDate: profile.nextBillingDate || profile.nextInvoiceDate
+    };
+
+    return successResponse(res, mapped, "Recurring profile fetched successfully");
   } catch (error) {
     console.error("getProfile error:", error);
     return errorResponse(res, error.message, 500);
@@ -83,45 +93,100 @@ exports.updateProfile = async (req, res) => {
     const data = req.body;
 
     const profile = await prisma.recurringInvoice.findFirst({
-      where: { id, businessId }
+      where: { id, businessId },
+      include: { items: true }
     });
 
     if (!profile) return errorResponse(res, "Recurring profile not found", 404);
 
-    // Simplistic update for demonstration
-    // Since recurring invoice items are complex, we could delete old items and create new ones,
-    // or just update top level fields for now. 
-    // Here we will do a basic update.
+    let subtotal = 0;
+    let totalTax = 0;
+    let grandTotal = 0;
+
+    if (data.items && Array.isArray(data.items) && data.items.length > 0) {
+      for (const item of data.items) {
+        const itemQty = Number(item.quantity !== undefined ? item.quantity : 1);
+        const itemPrice = Number(item.price !== undefined ? item.price : (item.rate !== undefined ? item.rate : (item.amount || 0)));
+        const itemSubtotal = itemQty * itemPrice;
+        subtotal += itemSubtotal;
+
+        let itemTax = 0;
+        if (Array.isArray(item.taxDetails)) {
+          for (const td of item.taxDetails) {
+            itemTax += Number(td.amount !== undefined ? td.amount : (itemSubtotal * (Number(td.rate || 0) / 100)));
+          }
+        }
+        totalTax += itemTax;
+      }
+      grandTotal = subtotal + totalTax;
+    } else if (data.amount !== undefined || data.grandTotal !== undefined) {
+      grandTotal = Number(data.amount !== undefined ? data.amount : data.grandTotal);
+      subtotal = grandTotal;
+    } else {
+      grandTotal = Number(profile.grandTotal || 0);
+      subtotal = Number(profile.subtotal || 0);
+      totalTax = Number(profile.totalTax || 0);
+    }
+
+    const newStartDate = data.startDate ? new Date(data.startDate) : profile.startDate;
+    const frequency = data.frequency || profile.frequency || "MONTHLY";
+    let nextInvoiceDate = profile.nextInvoiceDate;
+    if (data.startDate || !nextInvoiceDate) {
+      nextInvoiceDate = new Date(newStartDate);
+    }
+
+    let updatedProfile;
     await prisma.$transaction(async (tx) => {
+      const updateData = {
+        profileName: data.profileName !== undefined ? data.profileName : profile.profileName,
+        frequency: frequency,
+        startDate: newStartDate,
+        endDate: data.endDate !== undefined ? (data.endDate ? new Date(data.endDate) : null) : profile.endDate,
+        status: data.status || profile.status,
+        subtotal,
+        totalTax,
+        grandTotal,
+        nextInvoiceDate
+      };
+
       await tx.recurringInvoice.update({
         where: { id },
-        data: {
-          profileName: data.profileName,
-          frequency: data.frequency,
-          startDate: new Date(data.startDate),
-          endDate: data.endDate ? new Date(data.endDate) : null,
-          status: data.status || profile.status
-        }
+        data: updateData,
       });
       
-      if (data.items && data.items.length > 0) {
+      if (data.items && Array.isArray(data.items) && data.items.length > 0) {
         await tx.recurringInvoiceItem.deleteMany({ where: { recurringInvoiceId: id } });
         for (const item of data.items) {
+          const itemQty = Number(item.quantity !== undefined ? item.quantity : 1);
+          const itemPrice = Number(item.price !== undefined ? item.price : (item.rate !== undefined ? item.rate : 0));
           await tx.recurringInvoiceItem.create({
             data: {
               recurringInvoiceId: id,
               description: item.description || "",
-              quantity: item.quantity,
-              price: item.price !== undefined ? item.price : (item.rate || 0),
-              total: item.total || ((item.price || item.rate || 0) * item.quantity),
+              quantity: itemQty,
+              price: itemPrice,
+              total: item.total || (itemPrice * itemQty),
               taxDetails: item.taxDetails || []
             }
           });
         }
       }
+
+      updatedProfile = await tx.recurringInvoice.findUnique({
+        where: { id },
+        include: {
+          customer: { select: { id: true, company: true } },
+          items: true
+        }
+      });
     });
 
-    return successResponse(res, {}, "Recurring profile updated successfully");
+    const mapped = {
+      ...updatedProfile,
+      nextBillingDate: updatedProfile?.nextBillingDate || updatedProfile?.nextInvoiceDate
+    };
+
+    return successResponse(res, mapped, "Recurring profile updated successfully");
   } catch (error) {
     console.error("updateProfile error:", error);
     return errorResponse(res, error.message, 500);

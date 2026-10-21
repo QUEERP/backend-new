@@ -36,10 +36,38 @@ class CurrencyService {
       ? business.baseCurrency.decimals
       : getCurrencyDecimals(baseCurrencyCode);
 
-    // 2. Fetch Transaction Currency by Code (Never upsert silently)
-    const transactionCurrency = await txClient.currency.findUnique({
-      where: { code: transactionCurrencyCode }
+    const normalizedCurrencyCode = (transactionCurrencyCode || '').trim().toUpperCase();
+
+    // 2. Fetch Transaction Currency by Code (Auto-provision standard ISO currencies if missing)
+    let transactionCurrency = await txClient.currency.findUnique({
+      where: { code: normalizedCurrencyCode }
     });
+
+    if (!transactionCurrency && normalizedCurrencyCode.length === 3) {
+      try {
+        const { STANDARD_CURRENCIES } = require('../../prisma/seedCurrencies');
+        const standard = STANDARD_CURRENCIES.find(c => c.code === normalizedCurrencyCode);
+        const dec = standard ? standard.decimals : getCurrencyDecimals(normalizedCurrencyCode);
+        const sym = standard ? standard.symbol : normalizedCurrencyCode;
+        const nm = standard ? standard.name : normalizedCurrencyCode;
+
+        transactionCurrency = await txClient.currency.upsert({
+          where: { code: normalizedCurrencyCode },
+          update: {},
+          create: {
+            code: normalizedCurrencyCode,
+            name: nm,
+            symbol: sym,
+            decimals: dec,
+            decimalPrecision: dec
+          }
+        });
+      } catch (upsertErr) {
+        transactionCurrency = await txClient.currency.findUnique({
+          where: { code: normalizedCurrencyCode }
+        });
+      }
+    }
 
     if (!transactionCurrency) {
       throw new RateResolutionError(`Unsupported or unknown currency code: "${transactionCurrencyCode}". Currencies must be configured in system currency master before use.`);

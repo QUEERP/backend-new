@@ -9,7 +9,7 @@ const requireSubscriptionAdmin = (req, res, next) => {
     //////////////////////////////////////////////////////
     // ONLY SUBSCRIPTION ADMIN CAN ACCESS
     //////////////////////////////////////////////////////
-    if (req.user.role !== "SUPER_ADMIN") {
+    if (req.user.role !== "SUPER_ADMIN" && req.user.userId !== "subscription-admin" && !req.user.isSubscriptionAdmin) {
       return errorResponse(
         res,
         "Access denied. Subscription admin only.",

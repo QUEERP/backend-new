@@ -96,10 +96,11 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
       }
 
       return {
-        productId: item.productId,
+        productId: item.productId || null,
         description: item.description,
         quantity: qty,
         price: prc,
+        taxPercent: Number(item.taxPercent || 0),
         total,
         warehouseId: item.warehouseId || null,
         isStockReturned: item.isStockReturned || false
@@ -108,13 +109,30 @@ const createSalesReturn = async (businessId, userId, userEmail, data) => {
 
     const totalAmount = financials.subtotal + financials.totalTax;
 
+    // Resolve salesOrderId if provided (support UUID or orderNumber, fallback to null if not found to prevent FK crashes)
+    let resolvedSalesOrderId = null;
+    if (data.salesOrderId) {
+      const so = await tx.salesOrder.findFirst({
+        where: {
+          businessId,
+          OR: [
+            { id: data.salesOrderId },
+            { orderNumber: data.salesOrderId }
+          ]
+        }
+      });
+      if (so) {
+        resolvedSalesOrderId = so.id;
+      }
+    }
+
     // 3. Create Sales Return
     const salesReturn = await tx.salesReturn.create({
       data: {
         businessId,
         customerId: data.customerId,
         invoiceId: data.invoiceId || null,
-        salesOrderId: data.salesOrderId || null,
+        salesOrderId: resolvedSalesOrderId,
         returnNumber,
         status: "RECEIVED",
         reason: data.reason || null,

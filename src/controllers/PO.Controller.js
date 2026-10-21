@@ -343,20 +343,29 @@ exports.markReceived = async (req, res) => {
       const billCount = await tx.bill.count({ where: { businessId } });
       const billNumber = `BILL-${(billCount + 1).toString().padStart(3, "0")}`;
 
-      // Create Bill
+      // Resolve currency
+      const businessRec = await tx.business.findUnique({
+        where: { id: businessId },
+        include: { baseCurrency: true }
+      });
+      const billCurrency = po.currencyCode || po.currency || businessRec?.baseCurrency?.code || businessRec?.currency || 'INR';
+
+      // Create Bill (UNPAID with full outstanding amount so user pays it manually like an invoice)
       await tx.bill.create({
         data: {
           businessId,
           billNumber,
+          status: "UNPAID",
           vendorId: po.vendorId,
           purchaseOrderId: po.id,
           subtotal: po.subtotal,
           tax: po.tax || 0,
           discount: po.discount || 0,
           totalAmount: po.totalAmount,
-          currency: po.currencyCode || 'AED',
+          outstandingAmount: po.totalAmount,
+          currency: billCurrency,
           billDate: new Date(),
-          dueDate: new Date(),
+          dueDate: po.expectedDeliveryDate ? new Date(po.expectedDeliveryDate) : new Date(),
           items: {
             create: po.items.map(i => ({
               name: i.description || i.name || 'Item',
@@ -369,6 +378,16 @@ exports.markReceived = async (req, res) => {
           }
         }
       });
+
+      // Update Vendor liability balance
+      await tx.vendor.update({
+        where: { id: po.vendorId },
+        data: {
+          balance: {
+            increment: po.totalAmount
+          }
+        }
+      }).catch(err => console.error("Vendor balance update failed:", err.message));
       
       // We skip stock increase since PurchaseWorkflow.receiveGoods was used in new-grn-page for manual
       // Actually let's increase stock directly here just in case!

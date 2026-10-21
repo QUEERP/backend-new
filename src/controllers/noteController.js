@@ -4,9 +4,16 @@ exports.getNotes = async (req, res) => {
   try {
     const notes = await prisma.note.findMany({
       where: { businessId: req.business.id },
+      include: {
+        lead: true,
+        deal: true,
+        customer: true,
+        contact: true,
+        createdBy: { include: { user: true } },
+      },
       orderBy: { createdAt: "desc" },
     });
-    res.json({ success: true, notes });
+    res.json({ success: true, notes, data: notes });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -20,8 +27,15 @@ exports.createNote = async (req, res) => {
         ...req.body,
         businessId: req.business.id,
       },
+      include: {
+        lead: true,
+        deal: true,
+        customer: true,
+        contact: true,
+        createdBy: { include: { user: true } },
+      },
     });
-    res.status(201).json({ success: true, data: note });
+    res.status(201).json({ success: true, data: note, note });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

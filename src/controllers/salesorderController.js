@@ -164,6 +164,15 @@ exports.changeStatus = async (req, res) => {
     return successResponse(res, order, "Sales Order status updated successfully");
   } catch (error) {
     console.error("changeStatus controller error:", error);
-    return errorResponse(res, error.message, 400);
+    const isPrismaError = error.message && (
+      error.message.includes("Invalid `") ||
+      error.message.includes("invocation") ||
+      error.message.includes("prisma") ||
+      error.message.includes("SalesOrderStatus")
+    );
+    const friendlyMessage = isPrismaError
+      ? "Failed to update sales order status. Please verify the order status and try again."
+      : (error.message || "Failed to update sales order status");
+    return errorResponse(res, friendlyMessage, 400);
   }
 };

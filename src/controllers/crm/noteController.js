@@ -52,6 +52,10 @@ exports.createNote = async (req, res) => {
         attachments: attachments || null,
       },
       include: {
+        lead: true,
+        deal: true,
+        customer: true,
+        contact: true,
         createdBy: { include: { user: true } },
       },
     });
@@ -66,6 +70,7 @@ exports.createNote = async (req, res) => {
     res.status(201).json({
       success: true,
       note,
+      data: note,
     });
   } catch (error) {
     console.error("createNote error:", error);
@@ -88,6 +93,10 @@ exports.getNotes = async (req, res) => {
         createdById: "createdById",
       },
       relations: {
+        lead: true,
+        deal: true,
+        customer: true,
+        contact: true,
         createdBy: { select: { id: true, user: { select: { name: true, email: true } } } },
       },
     });
@@ -98,6 +107,7 @@ exports.getNotes = async (req, res) => {
     res.json({
       success: true,
       data: notes,
+      notes,
       pagination: getPaginationMeta(totalCount, pagination.page, pagination.limit),
     });
   } catch (error) {

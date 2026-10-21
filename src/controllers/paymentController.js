@@ -527,9 +527,23 @@ exports.getBillPayments = async (req, res) => {
 exports.getPayments = async (req, res) => {
   try {
     const businessId = req.business.id;
-    const { limit, customerId } = req.query;
+    const { limit, customerId, fromDate, toDate, search } = req.query;
 
     const where = { businessId };
+
+    if (fromDate || toDate) {
+      where.paymentDate = {};
+      if (fromDate) {
+        const from = new Date(fromDate);
+        from.setUTCHours(0, 0, 0, 0);
+        where.paymentDate.gte = from;
+      }
+      if (toDate) {
+        const to = new Date(toDate);
+        to.setUTCHours(23, 59, 59, 999);
+        where.paymentDate.lte = to;
+      }
+    }
 
     if (customerId) {
       where.OR = [
@@ -537,6 +551,28 @@ exports.getPayments = async (req, res) => {
         { invoice: { customerId } },
         { quotation: { customerId } },
       ];
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim();
+      const searchConditions = [
+        { paymentNumber: { contains: q, mode: "insensitive" } },
+        { transactionId: { contains: q, mode: "insensitive" } },
+        { note: { contains: q, mode: "insensitive" } },
+        { paymentMode: { contains: q, mode: "insensitive" } },
+        { invoice: { invoiceNumber: { contains: q, mode: "insensitive" } } },
+        { quotation: { quoteNumber: { contains: q, mode: "insensitive" } } },
+        { customer: { company: { contains: q, mode: "insensitive" } } },
+      ];
+      if (where.OR) {
+        where.AND = [
+          { OR: where.OR },
+          { OR: searchConditions }
+        ];
+        delete where.OR;
+      } else {
+        where.OR = searchConditions;
+      }
     }
 
     let takeLimit = limit ? parseInt(limit) : 500;

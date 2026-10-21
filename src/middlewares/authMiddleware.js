@@ -48,6 +48,7 @@ const authMiddleware = async (req, res, next) => {
         email: payload.email,
         role: payload.role,
         isActive: true,
+        isSubscriptionAdmin: true,
         activeBusinessId: null,
         employeeId: null
       };

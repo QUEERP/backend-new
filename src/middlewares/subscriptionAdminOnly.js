@@ -13,7 +13,7 @@ const subscriptionAdminOnly = (req, res, next) => {
   //////////////////////////////////////////////////////
   // CHECK ENV ADMIN LOGIN
   //////////////////////////////////////////////////////
-  if (req.user.userId !== "subscription-admin") {
+  if (req.user.userId !== "subscription-admin" && req.user.role !== "SUPER_ADMIN" && !req.user.isSubscriptionAdmin) {
     return res.status(403).json({
       success: false,
       message: "Only Subscription Admin allowed",
