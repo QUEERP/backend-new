@@ -63,6 +63,15 @@ exports.login = async (req, res) => {
       return res.json({
         success: true,
         token,
+        isSubscriptionAdmin: true,
+        role: "SUPER_ADMIN",
+        user: {
+          id: "subscription-admin",
+          name: "Subscription Administrator",
+          email,
+          role: "SUPER_ADMIN",
+          isSubscriptionAdmin: true,
+        },
         businesses: [],
         activeBusinessId: null,
       });
@@ -188,6 +197,20 @@ exports.getAllUsers = async (req, res) => {
 exports.getLoggedInUser = async (req, res) => {
   try {
     const userId = req.user.userId;
+
+    //////////////////////////////////////////////////////
+    // SUBSCRIPTION ADMIN
+    //////////////////////////////////////////////////////
+    if (userId === "subscription-admin" || req.user.isSubscriptionAdmin) {
+      return successResponse(res, {
+        id: "subscription-admin",
+        name: "Subscription Administrator",
+        email: req.user.email || process.env.SUBSCRIPTION_ADMIN_EMAIL || "admin@admin.com",
+        role: "SUPER_ADMIN",
+        isActive: true,
+        isSubscriptionAdmin: true,
+      }, "User fetched successfully");
+    }
 
     //////////////////////////////////////////////////////
     // FETCH USER + BUSINESSES

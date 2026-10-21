@@ -256,6 +256,7 @@ exports.getActivityById = async (req, res) => {
 
     res.json({
       success: true,
+      data: activity,
       activity,
     });
   } catch (error) {

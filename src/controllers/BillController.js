@@ -42,7 +42,8 @@ exports.createBill = async (req, res) => {
     let finalItems = items.map(i => ({
       name: i.name || i.description || 'Item',
       quantity: Number(i.quantity || 0),
-      price: Number(i.price !== undefined ? i.price : (i.unitPrice || 0))
+      price: Number(i.price !== undefined ? i.price : (i.unitPrice !== undefined ? i.unitPrice : 0)),
+      taxPercent: Number(i.taxPercent || 0)
     }));
     let finalVendorId = vendorId;
 
@@ -57,6 +58,7 @@ exports.createBill = async (req, res) => {
         name: i.name || i.description || 'Item',
         quantity: i.quantity,
         price: i.price,
+        taxPercent: Number(i.taxPercent || 0)
       }));
     }
 
@@ -65,27 +67,30 @@ exports.createBill = async (req, res) => {
     });
     if (!vendor) return res.status(400).json({ success: false, message: "Vendor not found" });
 
-    const subtotal = req.body.subtotal !== undefined ? Number(req.body.subtotal) : finalItems.reduce((sum, i) => sum + i.quantity * i.price, 0);
-    const totalAmount = req.body.totalAmount !== undefined ? Number(req.body.totalAmount) : (subtotal + taxValue - discount);
-
     const business = await prisma.business.findUnique({
       where: { id: req.business.id },
       include: { baseCurrency: true }
     });
+
+    const defaultCurrency = business?.baseCurrency?.code || business?.currency || 'INR';
+    const effectiveCurrency = req.body.currency || defaultCurrency;
+
+    const subtotal = req.body.subtotal !== undefined ? Number(req.body.subtotal) : finalItems.reduce((sum, i) => sum + i.quantity * i.price, 0);
+    let totalAmount = req.body.totalAmount !== undefined ? Number(req.body.totalAmount) : (subtotal + taxValue - discount);
 
     let transactionCurrencyId = null;
     let baseCurrencyId = business?.baseCurrencyId || null;
     let exchangeRate = req.body.exchangeRate !== undefined ? Number(req.body.exchangeRate) : null;
     let baseCurrencyAmount = null;
 
-    if (currency) {
+    if (effectiveCurrency) {
       const ccy = await prisma.currency.upsert({
-        where: { code: currency },
+        where: { code: effectiveCurrency },
         update: {},
         create: {
-          code: currency,
-          name: currency,
-          symbol: currency,
+          code: effectiveCurrency,
+          name: effectiveCurrency,
+          symbol: effectiveCurrency,
           decimals: 2,
           decimalPrecision: 2
         }
@@ -117,14 +122,26 @@ exports.createBill = async (req, res) => {
       exchangeRate = exchangeRate || 1.0;
     }
 
-    const billDecimals = getCurrencyDecimals(currency);
+    const billDecimals = getCurrencyDecimals(effectiveCurrency);
     totalAmount = roundHalfUp(subtotal + taxValue - discount, billDecimals);
     baseCurrencyAmount = roundHalfUp(totalAmount * exchangeRate, billDecimals);
+
+    let finalBillNumber = req.body.billNumber ? String(req.body.billNumber).trim() : '';
+    if (!finalBillNumber) {
+      finalBillNumber = await generateBillNumber(req.business.id);
+    } else {
+      const existing = await prisma.bill.findFirst({
+        where: { billNumber: finalBillNumber, businessId: req.business.id }
+      });
+      if (existing) {
+        return res.status(400).json({ success: false, message: `Bill number "${finalBillNumber}" already exists.` });
+      }
+    }
 
     const bill = await prisma.bill.create({
       data: {
         businessId: req.business.id,
-        billNumber: await generateBillNumber(req.business.id),
+        billNumber: finalBillNumber,
         vendorId: finalVendorId,
         purchaseOrderId,
         subtotal,
@@ -132,7 +149,7 @@ exports.createBill = async (req, res) => {
         discount,
         totalAmount,
         outstandingAmount: totalAmount,
-        currency,
+        currency: effectiveCurrency,
         transactionCurrencyId,
         baseCurrencyId,
         exchangeRate,
@@ -148,11 +165,22 @@ exports.createBill = async (req, res) => {
             quantity: i.quantity,
             price: i.price,
             total: i.quantity * i.price,
+            taxPercent: i.taxPercent || null,
           })),
         },
       },
       include: { vendor: true, items: true, purchaseOrder: true },
     });
+
+    // Update vendor balance
+    await prisma.vendor.update({
+      where: { id: finalVendorId },
+      data: {
+        balance: {
+          increment: totalAmount
+        }
+      }
+    }).catch(err => console.error("Vendor balance update failed:", err.message));
 
     if (taxValue > 0) {
       const isIndia = business?.country === 'INDIA' || business?.countryCode === 'IN';

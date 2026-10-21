@@ -68,11 +68,14 @@ class BusinessSetupService {
         }
       });
 
-      // 2. Create Subscription
+      // 2. Create Subscription (Inactive until Subscription Admin activates it)
       await tx.subscription.create({
         data: {
           businessId: newBusiness.id,
-          status: "ACTIVE" // Assuming active to let them configure it immediately
+          status: "INACTIVE",
+          startDate: null,
+          expiresAt: null,
+          planName: "Standard",
         }
       });
 

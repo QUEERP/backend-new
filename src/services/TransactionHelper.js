@@ -44,7 +44,7 @@ class TransactionHelper {
      let grossSubtotal = 0;
      const processedItems = items.map(item => {
        const qty = Number(item.quantity || 0);
-       const price = Number(item.price || item.rate || 0);
+       const price = Number(item.price !== undefined ? item.price : (item.unitPrice !== undefined ? item.unitPrice : (item.rate || 0)));
        const disc = Number(item.discount || 0);
        const itemSubtotal = Math.max((qty * price) - disc, 0);
        grossSubtotal += itemSubtotal;

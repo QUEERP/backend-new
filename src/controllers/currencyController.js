@@ -180,3 +180,21 @@ exports.saveStatutoryRate = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+exports.getCurrenciesMaster = async (req, res) => {
+  try {
+    const currencies = await prisma.currency.findMany({
+      orderBy: { code: 'asc' }
+    });
+    return res.json({
+      success: true,
+      data: currencies
+    });
+  } catch (error) {
+    console.error('getCurrenciesMaster error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch currencies master'
+    });
+  }
+};

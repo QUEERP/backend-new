@@ -183,18 +183,19 @@ const updatePaymentSchema = z.object({
 
 // 5. Sales Return Schema
 const createSalesReturnSchema = z.object({
-  invoiceId: z.string().uuid("Invalid invoice ID").optional().nullable(),
-  salesOrderId: z.string().uuid("Invalid sales order ID").optional().nullable(),
+  invoiceId: z.union([z.string().uuid("Invalid invoice ID"), z.literal(""), z.null()]).optional().transform(v => (!v || (typeof v === "string" && v.trim() === "")) ? null : v),
+  salesOrderId: z.string().optional().nullable().transform(v => (!v || (typeof v === "string" && v.trim() === "")) ? null : (typeof v === "string" ? v.trim() : v)),
   customerId: z.string().uuid("Invalid customer ID"),
   reason: z.string().optional().nullable(),
+  currency: z.string().optional().nullable(),
   items: z.array(
     z.object({
-      productId: z.string().uuid(),
-      description: z.string().min(1),
-      quantity: z.number().positive(),
-      price: z.number().nonnegative(),
-      
-      warehouseId: z.string().uuid().optional().nullable(),
+      productId: z.union([z.string().uuid("Invalid product ID"), z.literal(""), z.null()]).optional().transform(v => (!v || (typeof v === "string" && v.trim() === "")) ? null : v),
+      description: z.string().min(1, "Description is required"),
+      quantity: z.coerce.number().positive("Quantity must be greater than 0"),
+      price: z.coerce.number().nonnegative("Price cannot be negative"),
+      taxPercent: z.coerce.number().optional().default(0),
+      warehouseId: z.union([z.string().uuid("Invalid warehouse ID"), z.literal(""), z.null()]).optional().transform(v => (!v || (typeof v === "string" && v.trim() === "")) ? null : v),
       isStockReturned: z.boolean().default(false)
     })
   ).min(1, "At least one line item is required")
