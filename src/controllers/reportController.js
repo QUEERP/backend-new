@@ -1650,16 +1650,34 @@ exports.getAccountsPayable = async (req, res) => {
 };
 
 //////////////////////////////////////////////////////
-// OTHER EXISTING ENDPOINTS (Preserved for compatibility)
+// OTHER EXISTING ENDPOINTS (Delegated to inventoryReportService)
 //////////////////////////////////////////////////////
+const inventoryReportService = require("../services/inventory/inventoryReport.service");
+
 exports.getStockValuation = async (req, res) => {
-  res.json({ success: true, stockValuation: { totalValue: 0, totalItems: 0, items: [] } });
+  try {
+    const data = await inventoryReportService.getStockValuation(req.business.id, req.query);
+    res.json({ success: true, ...data });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 
 exports.getLowStockAlerts = async (req, res) => {
-  res.json({ success: true, alerts: [] });
+  try {
+    const alerts = await inventoryReportService.getLowStockAlerts(req.business.id, req.query);
+    res.json({ success: true, alerts, count: alerts.length });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 
 exports.getMovementSummary = async (req, res) => {
-  res.json({ success: true, summary: [] });
+  try {
+    const summary = await inventoryReportService.getMovementSummary(req.business.id, req.query);
+    res.json({ success: true, summary });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
+

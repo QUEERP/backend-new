@@ -72,19 +72,33 @@ const getLowStockAlerts = async (businessId, query = {}) => {
       const minimumStock = Number(product.minimumStock) || 0;
 
       if (available <= reorderLevel) {
+        const suggestedReorderQty = Math.max(0, Math.ceil(reorderLevel - available));
         alerts.push({
           productId: product.id,
           productName: product.name,
           sku: product.sku,
           warehouseId: s.warehouseId,
-          warehouseName: s.warehouse.name,
+          warehouseName: s.warehouse?.name || "Unassigned",
           currentStock: s.quantity,
           reservedQty: s.reservedQty,
           availableQty: available,
           reorderLevel,
           minimumStock,
+          reorderQty: suggestedReorderQty,
           incomingQty: s.incomingQty,
-          severity: available <= minimumStock ? "CRITICAL" : "WARNING"
+          severity: available <= minimumStock ? "CRITICAL" : "WARNING",
+          product: {
+            id: product.id,
+            name: product.name,
+            sku: product.sku,
+            reorderLevel,
+            reorderQty: suggestedReorderQty
+          },
+          warehouse: {
+            id: s.warehouseId,
+            name: s.warehouse?.name || "Unassigned"
+          },
+          quantity: s.quantity
         });
       }
     }
