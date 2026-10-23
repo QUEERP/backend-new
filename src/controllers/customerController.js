@@ -388,14 +388,28 @@ exports.createCustomer = async (req, res) => {
               customerId: customer.id
             }
           });
-          await prisma.leadConversionLog.create({
-            data: {
+
+          let bUserId = null;
+          if (req.user?.userId) {
+            const bUser = await prisma.businessUser.findFirst({
+              where: { userId: req.user.userId, businessId: req.business.id }
+            });
+            if (bUser) bUserId = bUser.id;
+          }
+
+          await prisma.leadConversionLog.upsert({
+            where: { leadId },
+            update: {
+              customerId: customer.id,
+              ...(bUserId ? { convertedById: bUserId } : {}),
+            },
+            create: {
               businessId: req.business.id,
               leadId,
               customerId: customer.id,
-              convertedById: req.user.userId,
+              convertedById: bUserId,
             }
-          }).catch(() => {});
+          }).catch((err) => console.error("Error upserting leadConversionLog in customerController:", err));
         }
       } catch (e) {
         console.error("Error linking lead to created customer:", e);

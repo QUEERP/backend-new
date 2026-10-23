@@ -245,6 +245,8 @@ exports.getAllLeads = async (req, res) => {
         stage: true,
         campaign: true,
         assignedTo: { include: { user: true } },
+        conversionLog: true,
+        customer: true,
       },
     });
 
@@ -289,6 +291,7 @@ exports.getLeadDetails = async (req, res) => {
         emailLogs: { orderBy: { sentAt: "desc" } },
         assignedTo: { include: { user: true } },
         conversionLog: true,
+        customer: true,
       },
     });
 

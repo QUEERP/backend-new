@@ -66,4 +66,12 @@ router.post(
   Controller.changeStatus
 );
 
+router.get(
+  "/:id/download-pdf",
+  auth,
+  business,
+  checkPermission("sales_order", "read"),
+  Controller.downloadSalesOrderPdf
+);
+
 module.exports = router;
