@@ -148,7 +148,13 @@ exports.downloadQuotationPdf = async (req, res) => {
     const prisma = require("../config/prisma");
     const quotation = await prisma.quotation.findFirst({
       where: { id, businessId },
-      include: { customer: true, items: true }
+      include: {
+        customer: true,
+        contact: true,
+        items: { include: { product: true } },
+        assignedTo: { include: { user: true } },
+        deal: true,
+      }
     });
 
     if (!quotation) {
@@ -157,11 +163,21 @@ exports.downloadQuotationPdf = async (req, res) => {
 
     const generateQuotationPdf = require("../utils/generateQuotationPdf");
     
-    const settings = await prisma.settings.findUnique({
-      where: { businessId: req.business.id }
-    });
+    const [settings, business] = await Promise.all([
+      prisma.settings.findUnique({ where: { businessId: req.business.id } }),
+      prisma.business.findUnique({ where: { id: req.business.id } }),
+    ]);
     
-    const pdfSettings = settings || { companyName: "Your Company", signatureUrl: null };
+    const pdfSettings = {
+      ...(settings || {}),
+      businessType: business?.businessType || 'Trading',
+      companyName: settings?.companyName || business?.name || "Company",
+      address: settings?.address || [business?.address, business?.city, business?.country].filter(Boolean).join(", "),
+      phone: settings?.phone || business?.phone || "",
+      email: settings?.email || business?.email || "",
+      trn: settings?.trn || business?.vatNumber || business?.taxNumber || "",
+      signatureUrl: settings?.signatureUrl || null,
+    };
     const pdfBuffer = await generateQuotationPdf(quotation, pdfSettings);
 
     res.setHeader('Content-Type', 'application/pdf');

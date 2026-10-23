@@ -164,16 +164,32 @@ exports.createDeal = async (req, res) => {
             customerId: customerId,
           }
         });
-        await prisma.leadConversionLog.create({
-          data: {
+
+        let bUserId = null;
+        if (req.user?.userId) {
+          const bUser = await prisma.businessUser.findFirst({
+            where: { userId: req.user.userId, businessId: req.business.id }
+          });
+          if (bUser) bUserId = bUser.id;
+        }
+
+        await prisma.leadConversionLog.upsert({
+          where: { leadId },
+          update: {
+            dealId: deal.id,
+            customerId: customerId,
+            ...(contactId ? { contactId } : {}),
+            ...(bUserId ? { convertedById: bUserId } : {}),
+          },
+          create: {
             businessId: req.business.id,
             leadId,
             customerId: customerId,
             contactId: contactId || null,
             dealId: deal.id,
-            convertedById: req.user.userId,
+            convertedById: bUserId,
           }
-        }).catch(() => {});
+        });
       } catch (err) {
         console.error("Error linking lead to deal:", err);
       }
@@ -357,6 +373,8 @@ exports.updateDeal = async (req, res) => {
 
     const updatedData = {
       ...rest,
+      ...(rest.amount !== undefined && { amount: Number(rest.amount) }),
+      ...(rest.currency && { currency: String(rest.currency).trim().toUpperCase() }),
       ...(stage && { stage }),
       ...(assignedToId !== undefined && { assignedToId }),
       ...(expectedCloseDate && { expectedCloseDate: new Date(expectedCloseDate) }),

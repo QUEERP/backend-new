@@ -203,7 +203,7 @@ const convertQuotationToSalesOrder = async (businessId, userId, userEmail, quota
       hsnSacCode: item.hsnSacCode,
       quantity: item.quantity,
       price: item.price,
-      
+      unit: item.unit || (item.itemType === 'SERVICE' ? 'hr' : 'pcs'),
       taxDetails: item.taxDetails || [],
       discount: item.discount || 0,
       total: item.total

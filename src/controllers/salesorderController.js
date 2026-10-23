@@ -176,3 +176,60 @@ exports.changeStatus = async (req, res) => {
     return errorResponse(res, friendlyMessage, 400);
   }
 };
+
+//////////////////////////////////////////////////////
+// DOWNLOAD PDF
+//////////////////////////////////////////////////////
+exports.downloadSalesOrderPdf = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const { id } = req.params;
+
+    const prisma = require("../config/prisma");
+    const order = await prisma.salesOrder.findFirst({
+      where: { id, businessId, isDeleted: false },
+      include: {
+        customer: true,
+        contact: true,
+        items: { include: { product: true } },
+        assignedTo: { include: { user: true } },
+        quotation: true,
+        deal: true,
+      }
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Sales Order not found" });
+    }
+
+    const generateSalesOrderPdf = require("../utils/generateSalesOrderPdf");
+    const [settings, business] = await Promise.all([
+      prisma.settings.findUnique({ where: { businessId: req.business.id } }),
+      prisma.business.findUnique({ where: { id: req.business.id } }),
+    ]);
+
+    const pdfSettings = {
+      ...(settings || {}),
+      businessType: business?.businessType || 'Trading',
+      companyName: settings?.companyName || business?.name || "Company",
+      address: settings?.address || [business?.address, business?.city, business?.country].filter(Boolean).join(", "),
+      phone: settings?.phone || business?.phone || "",
+      email: settings?.email || business?.email || "",
+      trn: settings?.trn || business?.vatNumber || business?.taxNumber || "",
+      signatureUrl: settings?.signatureUrl || null,
+    };
+
+    const pdfBuffer = await generateSalesOrderPdf(order, pdfSettings);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="SalesOrder_${order.orderNumber || id}.pdf"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    
+    return res.end(pdfBuffer);
+  } catch (err) {
+    console.error("downloadSalesOrderPdf controller error:", err);
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+};
