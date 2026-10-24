@@ -466,6 +466,7 @@ exports.getCustomers = async (req, res) => {
       prisma.customer.findMany({
         ...queryOptions,
         include: {
+          customerContacts: true,
           bankAccounts: {
             select: {
               id: true,
