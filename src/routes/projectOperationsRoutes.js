@@ -24,6 +24,7 @@ router.put("/requirements/:id", Controller.updateRequirement);
 router.post("/estimations", Controller.createEstimation);
 router.get("/estimations", Controller.getEstimations);
 router.get("/estimations/:id", Controller.getEstimationById);
+router.put("/estimations/:id", Controller.updateEstimation);
 
 // Meetings
 router.post("/meetings", Controller.createMeeting);
@@ -131,9 +132,11 @@ router.post("/templates", Controller.createTemplate);
 router.get("/templates", Controller.getTemplates);
 router.get("/portfolio", Controller.getPortfolioDashboard);
 router.get("/resources", Controller.getResourceUtilization);
+router.get("/resources/allocations", Controller.getAllResourceAllocations);
 router.get("/resources/export/excel", Controller.exportResourceExcel);
 router.get("/resources/export/pdf", Controller.exportResourcePDF);
 router.post("/resources/allocate", Controller.createResourceAllocation);
+router.get("/:projectId/resources", Controller.getProjectResourceAllocations);
 
 // Masters (lookup values / config)
 router.get("/masters", Controller.getMasters);

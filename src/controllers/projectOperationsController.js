@@ -4,6 +4,87 @@ const purchaseRequestService = require("../services/purchase/purchaseRequest.ser
 const { generateDocNumber } = require("../services/sales/quotation.service");
 const generateInvoiceNumber = require("../utils/generateInvoiceNumber");
 
+/**
+ * Safely resolves a candidate ID (User ID, BusinessUser ID, or Employee ID) to a valid User ID
+ */
+async function resolveUserId(prismaClient, candidateId, fallbackUserId = null) {
+  const idsToCheck = [candidateId, fallbackUserId].filter(Boolean);
+  for (const id of idsToCheck) {
+    if (typeof id !== 'string' || !id.trim()) continue;
+    // 1. Direct User check
+    const user = await prismaClient.user.findUnique({ where: { id } });
+    if (user) return user.id;
+
+    // 2. BusinessUser check
+    const bu = await prismaClient.businessUser.findUnique({ where: { id } });
+    if (bu?.userId) {
+      const u = await prismaClient.user.findUnique({ where: { id: bu.userId } });
+      if (u) return u.id;
+    }
+
+    // 3. Employee check
+    const emp = await prismaClient.employee.findUnique({ where: { id } });
+    if (emp?.userId) {
+      const u = await prismaClient.user.findUnique({ where: { id: emp.userId } });
+      if (u) return u.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Safely resolves employeeId and businessUserId for TimeEntry
+ */
+async function resolveEmployeeAndBusinessUser(prismaClient, businessId, { employeeId, businessUserId, userId } = {}) {
+  let resolvedEmployeeId = null;
+  let resolvedBusinessUserId = null;
+
+  if (employeeId && typeof employeeId === 'string' && employeeId.trim()) {
+    const directEmp = await prismaClient.employee.findFirst({
+      where: { id: employeeId, businessId }
+    });
+    if (directEmp) {
+      resolvedEmployeeId = directEmp.id;
+    } else {
+      const empByUser = await prismaClient.employee.findFirst({
+        where: { userId: employeeId, businessId }
+      });
+      if (empByUser) resolvedEmployeeId = empByUser.id;
+    }
+  }
+
+  const buCandidate = businessUserId || employeeId;
+  if (buCandidate && typeof buCandidate === 'string' && buCandidate.trim()) {
+    const directBu = await prismaClient.businessUser.findFirst({
+      where: { id: buCandidate, businessId }
+    });
+    if (directBu) {
+      resolvedBusinessUserId = directBu.id;
+    } else {
+      const buByUser = await prismaClient.businessUser.findFirst({
+        where: { userId: buCandidate, businessId }
+      });
+      if (buByUser) resolvedBusinessUserId = buByUser.id;
+    }
+  }
+
+  if (!resolvedEmployeeId && userId) {
+    const empByAuth = await prismaClient.employee.findFirst({
+      where: { userId, businessId }
+    });
+    if (empByAuth) resolvedEmployeeId = empByAuth.id;
+  }
+
+  if (!resolvedBusinessUserId && userId) {
+    const buByAuth = await prismaClient.businessUser.findFirst({
+      where: { userId, businessId }
+    });
+    if (buByAuth) resolvedBusinessUserId = buByAuth.id;
+  }
+
+  return { resolvedEmployeeId, resolvedBusinessUserId };
+}
+
 // ==========================================
 // PROJECT REQUIREMENTS
 // ==========================================
@@ -233,7 +314,7 @@ exports.getEstimations = async (req, res) => {
 exports.getEstimationById = async (req, res) => {
   try {
     const { id } = req.params;
-    const estimation = await prisma.projectEstimation.findUnique({
+    const estimation = await prisma.projectEstimation.findFirst({
       where: { id, businessId: req.business.id },
       include: { requirement: { include: { customer: true } } }
     });
@@ -245,6 +326,25 @@ exports.getEstimationById = async (req, res) => {
     res.json({ success: true, estimation });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.updateEstimation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = req.body;
+    const { customerId, inquiry, estNumber, estName, projectType, executionType, version, preparedBy, preparedDate, currency, projPriority, projDuration, projSize, expStart, expEnd, labour, material, software, thirdParty, expenses, riskBufferPct, discountPct, markupPct, taxPct, exchangeRate, reviewedBy, approvedBy, approvalStatus, approvalNotes, linkedReq, customer, ...validData } = data;
+
+    const estimation = await prisma.projectEstimation.update({
+      where: { id },
+      data: {
+        ...validData,
+        ...(data.totalCost !== undefined ? { totalCost: data.totalCost } : {})
+      }
+    });
+    res.json({ success: true, estimation });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
   }
 };
 
@@ -389,9 +489,27 @@ exports.getProjects = async (req, res) => {
       include: {
         customer: true,
         projectManager: true,
-        tasks: true,
-        milestones: true
+        tasks: { include: { assignedTo: true, milestone: true } },
+        milestones: true,
+        resourceAllocations: {
+          include: { employee: true, task: true }
+        },
+        timeEntries: {
+          include: { employee: true, businessUser: { include: { user: true } } }
+        },
+        issues: {
+          include: { assignee: true, reporter: true }
+        },
+        changeRequests: {
+          include: { requestedBy: true, assignedTo: true }
+        },
+        invoices: true,
+        expenses: true,
+        documents: true,
+        risks: true,
+        plannings: true
       },
+      orderBy: { createdAt: 'desc' }
     });
     res.json({ success: true, projects });
   } catch (err) {
@@ -408,10 +526,17 @@ exports.getProjectDetails = async (req, res) => {
         projectManager: true,
         tasks: { include: { assignedTo: true, milestone: true } },
         milestones: true,
-        timeEntries: true,
+        resourceAllocations: { include: { employee: true, task: true } },
+        timeEntries: { include: { employee: true, businessUser: { include: { user: true } } } },
+        issues: { include: { assignee: true, reporter: true } },
+        changeRequests: { include: { requestedBy: true, assignedTo: true } },
         expenses: true,
         invoices: true,
-        projectItems: true
+        projectItems: true,
+        documents: true,
+        risks: true,
+        meetings: true,
+        plannings: true
       },
     });
     res.json({ success: true, project });
@@ -601,26 +726,48 @@ exports.updateTask = async (req, res) => {
 
 exports.createIssue = async (req, res) => {
   try {
-    const issueCount = await prisma.projectIssue.count({ where: { businessId: req.business.id } });
-    const issueCode = `ISS-${String(issueCount + 1).padStart(5, '0')}`;
-
     const { projectId, title, description, module, severity, priority, impact, rootCause, reporterId, assigneeId, dueDate } = req.body;
+    const effectiveProjectId = projectId || req.params.projectId;
+
+    if (!effectiveProjectId) {
+      return res.status(400).json({ success: false, message: "Project ID is required." });
+    }
+
+    const project = await prisma.project.findFirst({
+      where: { id: effectiveProjectId, businessId: req.business.id }
+    });
+    if (!project) {
+      return res.status(404).json({ success: false, message: "Project not found." });
+    }
+
+    const issueCount = await prisma.projectIssue.count({ where: { businessId: req.business.id } });
+    const issueCode = req.body.issueCode || `ISS-${String(issueCount + 1).padStart(5, '0')}`;
+
+    const validReporterId = await resolveUserId(prisma, reporterId, req.user?.id);
+    const validAssigneeId = await resolveUserId(prisma, assigneeId, null);
+
+    let parsedDueDate = null;
+    if (dueDate) {
+      const d = new Date(dueDate);
+      if (!isNaN(d.getTime())) parsedDueDate = d;
+    }
 
     const issue = await prisma.projectIssue.create({
       data: {
         businessId: req.business.id,
-        projectId,
+        projectId: effectiveProjectId,
         issueCode,
-        title,
-        description,
-        module,
-        severity,
-        priority,
-        impact,
-        rootCause,
-        reporterId,
-        assigneeId,
-        dueDate: dueDate ? new Date(dueDate) : null,
+        title: title || "Untitled Issue",
+        description: description || null,
+        module: module || null,
+        severity: severity || null,
+        priority: priority || null,
+        impact: impact || null,
+        rootCause: rootCause || null,
+        reporterId: validReporterId,
+        assigneeId: validAssigneeId,
+        status: req.body.status || 'Open',
+        dueDate: parsedDueDate,
       },
     });
     res.json({ success: true, issue });
@@ -646,7 +793,7 @@ exports.getIssues = async (req, res) => {
   try {
     const issues = await prisma.projectIssue.findMany({
       where: { projectId: req.params.projectId, businessId: req.business.id },
-      include: { assignedTo: true, reporter: true }
+      include: { assignee: true, reporter: true }
     });
     res.json({ success: true, issues });
   } catch (err) {
@@ -656,9 +803,44 @@ exports.getIssues = async (req, res) => {
 
 exports.updateIssue = async (req, res) => {
   try {
+    const existing = await prisma.projectIssue.findFirst({
+      where: { id: req.params.id, businessId: req.business.id }
+    });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Issue not found." });
+    }
+
+    const updateData = {};
+    const { title, description, module, severity, priority, impact, rootCause, reporterId, assigneeId, resolution, status, dueDate } = req.body;
+
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (module !== undefined) updateData.module = module;
+    if (severity !== undefined) updateData.severity = severity;
+    if (priority !== undefined) updateData.priority = priority;
+    if (impact !== undefined) updateData.impact = impact;
+    if (rootCause !== undefined) updateData.rootCause = rootCause;
+    if (resolution !== undefined) updateData.resolution = resolution;
+    if (status !== undefined) updateData.status = status;
+
+    if (dueDate !== undefined) {
+      if (!dueDate) updateData.dueDate = null;
+      else {
+        const d = new Date(dueDate);
+        updateData.dueDate = !isNaN(d.getTime()) ? d : null;
+      }
+    }
+
+    if (reporterId !== undefined) {
+      updateData.reporterId = await resolveUserId(prisma, reporterId, null);
+    }
+    if (assigneeId !== undefined) {
+      updateData.assigneeId = await resolveUserId(prisma, assigneeId, null);
+    }
+
     const issue = await prisma.projectIssue.update({
       where: { id: req.params.id },
-      data: req.body,
+      data: updateData,
     });
     res.json({ success: true, issue });
   } catch (err) {
@@ -672,14 +854,42 @@ exports.updateIssue = async (req, res) => {
 
 exports.createChangeRequest = async (req, res) => {
   try {
+    const { projectId, title, requestedById, assignedToId, reason, scopeChange, timelineImpact, costImpact, priority, impact, status, approvalStatus } = req.body;
+    const effectiveProjectId = projectId || req.params.projectId;
+
+    if (!effectiveProjectId) {
+      return res.status(400).json({ success: false, message: "Project ID is required." });
+    }
+
+    const project = await prisma.project.findFirst({
+      where: { id: effectiveProjectId, businessId: req.business.id }
+    });
+    if (!project) {
+      return res.status(404).json({ success: false, message: "Project not found." });
+    }
+
     const crCount = await prisma.projectChangeRequest.count({ where: { businessId: req.business.id } });
-    const requestNumber = `CR-${String(crCount + 1).padStart(5, '0')}`;
+    const requestNumber = req.body.requestNumber || `CR-${String(crCount + 1).padStart(5, '0')}`;
+
+    const validRequestedById = await resolveUserId(prisma, requestedById, req.user?.id);
+    const validAssignedToId = await resolveUserId(prisma, assignedToId, null);
 
     const changeRequest = await prisma.projectChangeRequest.create({
       data: {
-        ...req.body,
-        requestNumber,
         businessId: req.business.id,
+        projectId: effectiveProjectId,
+        requestNumber,
+        title: title || 'Untitled Change Request',
+        requestedById: validRequestedById,
+        assignedToId: validAssignedToId,
+        reason: reason || null,
+        scopeChange: scopeChange || null,
+        timelineImpact: timelineImpact || null,
+        costImpact: typeof costImpact !== 'undefined' && costImpact !== null ? (parseFloat(costImpact) || 0) : null,
+        priority: priority || 'Medium',
+        impact: impact || 'Medium',
+        status: status || 'Draft',
+        approvalStatus: approvalStatus || 'Pending Approval',
       },
     });
     res.json({ success: true, changeRequest });
@@ -715,9 +925,36 @@ exports.getChangeRequests = async (req, res) => {
 
 exports.updateChangeRequest = async (req, res) => {
   try {
+    const existing = await prisma.projectChangeRequest.findFirst({
+      where: { id: req.params.id, businessId: req.business.id }
+    });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Change request not found." });
+    }
+
+    const updateData = {};
+    const { title, requestedById, assignedToId, reason, scopeChange, timelineImpact, costImpact, priority, impact, status, approvalStatus } = req.body;
+
+    if (title !== undefined) updateData.title = title;
+    if (reason !== undefined) updateData.reason = reason;
+    if (scopeChange !== undefined) updateData.scopeChange = scopeChange;
+    if (timelineImpact !== undefined) updateData.timelineImpact = timelineImpact;
+    if (costImpact !== undefined) updateData.costImpact = costImpact !== null ? (parseFloat(costImpact) || 0) : null;
+    if (priority !== undefined) updateData.priority = priority;
+    if (impact !== undefined) updateData.impact = impact;
+    if (status !== undefined) updateData.status = status;
+    if (approvalStatus !== undefined) updateData.approvalStatus = approvalStatus;
+
+    if (requestedById !== undefined) {
+      updateData.requestedById = await resolveUserId(prisma, requestedById, null);
+    }
+    if (assignedToId !== undefined) {
+      updateData.assignedToId = await resolveUserId(prisma, assignedToId, null);
+    }
+
     const changeRequest = await prisma.projectChangeRequest.update({
       where: { id: req.params.id },
-      data: req.body,
+      data: updateData,
     });
 
     // If approved, dynamically update project budget
@@ -1027,21 +1264,44 @@ exports.updateGlobalExpenseWorkflow = async (req, res) => {
 
 exports.createGlobalInvoice = async (req, res) => {
   try {
-    const { customerId, projectId, dueDate, amount, status } = req.body;
+    let { customerId, projectId, dueDate, amount, status } = req.body;
     
     // Auto-generate invoice number (simple format)
     const invoiceNumber = await generateInvoiceNumber(req.business.id, prisma);
     
+    // If customerId is not directly passed, try to get customerId from projectId
+    if (!customerId && projectId) {
+      const proj = await prisma.project.findFirst({
+        where: { id: projectId, businessId: req.business.id },
+        select: { customerId: true }
+      });
+      if (proj && proj.customerId) {
+        customerId = proj.customerId;
+      }
+    }
+
+    if (!customerId) {
+      return res.status(400).json({ success: false, message: "Customer ID is required to create an invoice." });
+    }
+
+    const numericAmount = isNaN(parseFloat(amount)) ? 0 : parseFloat(amount);
+
+    let parsedDueDate = new Date();
+    if (dueDate) {
+      const d = new Date(dueDate);
+      if (!isNaN(d.getTime())) parsedDueDate = d;
+    }
+
     const invoice = await prisma.invoice.create({
       data: {
         businessId: req.business.id,
         invoiceNumber,
-        customerId: customerId || null,
+        customerId,
         projectId: projectId || null,
         invoiceDate: new Date(),
-        dueDate: dueDate ? new Date(dueDate) : new Date(),
-        grandTotal: parseFloat(amount),
-        subTotal: parseFloat(amount),
+        dueDate: parsedDueDate,
+        grandTotal: numericAmount,
+        subtotal: numericAmount,
         totalTax: 0,
         status: status || 'DRAFT',
         terms: "Created from Global Billing",
@@ -1238,33 +1498,53 @@ exports.getGlobalProfitability = async (req, res) => {
 exports.createTimeEntry = async (req, res) => {
   try {
     const data = req.body;
+    const effectiveProjectId = data.projectId || req.params.projectId;
+
+    if (!effectiveProjectId) {
+      return res.status(400).json({ success: false, message: "Project ID is required." });
+    }
+
+    const { resolvedEmployeeId, resolvedBusinessUserId } = await resolveEmployeeAndBusinessUser(
+      prisma,
+      req.business.id,
+      { employeeId: data.employeeId, businessUserId: data.businessUserId, userId: req.user?.id }
+    );
+
+    const hours = Number(data.hours) || 0;
 
     // Validate Employee Hourly Rate if employee is assigned
     let cost = 0;
-    if (data.employeeId) {
-      const emp = await prisma.employee.findUnique({ where: { id: data.employeeId } });
-      if (emp && emp.hourlyRate) {
-        cost = emp.hourlyRate * (data.hours || 0);
+    if (resolvedEmployeeId) {
+      const emp = await prisma.employee.findUnique({ where: { id: resolvedEmployeeId } });
+      if (emp) {
+        const hourlyRate = emp.hourlyRate || (emp.basicSalary ? emp.basicSalary / 160 : 0);
+        cost = hourlyRate * hours;
       }
+    }
+
+    let parsedDate = new Date();
+    if (data.date) {
+      const d = new Date(data.date);
+      if (!isNaN(d.getTime())) parsedDate = d;
     }
 
     const timeEntry = await prisma.timeEntry.create({
       data: {
         businessId: req.business.id,
-        projectId: data.projectId,
-        taskId: data.taskId,
-        employeeId: data.employeeId,
-        businessUserId: data.businessUserId,
-        description: data.description,
-        hours: data.hours,
-        date: data.date ? new Date(data.date) : new Date()
+        projectId: effectiveProjectId,
+        taskId: data.taskId || null,
+        employeeId: resolvedEmployeeId,
+        businessUserId: resolvedBusinessUserId,
+        description: data.description || null,
+        hours: hours,
+        date: parsedDate
       },
     });
 
     // Automate Project Cost Update if cost could be calculated
     if (cost > 0) {
       await prisma.project.update({
-        where: { id: data.projectId },
+        where: { id: effectiveProjectId },
         data: {
           actualCost: { increment: cost },
           laborCost: { increment: cost }
@@ -1488,8 +1768,8 @@ const getResourceList = async (businessId) => {
         include: {
           employees: true,
           resourceAllocations: {
-            where: { businessId: businessId, status: 'Active' },
-            include: { project: { select: { id: true, projectName: true, status: true } } }
+            where: { businessId: businessId },
+            include: { project: { select: { id: true, projectName: true, status: true } }, task: true }
           }
         }
       },
@@ -1497,12 +1777,27 @@ const getResourceList = async (businessId) => {
     }
   });
 
-  return businessUsers.map(bu => {
+  const allAllocations = await prisma.resourceAllocation.findMany({
+    where: { businessId: businessId },
+    include: {
+      project: { select: { id: true, projectName: true, status: true } },
+      employee: true,
+      task: true
+    }
+  });
+
+  const resultUsers = businessUsers.map(bu => {
     const u = bu.user;
     if (!u) return null;
     const emp = u.employees;
 
-    const allocations = u.resourceAllocations || [];
+    // Combine allocations directly on User or matched by employeeId
+    const userAllocs = u.resourceAllocations || [];
+    const directAllocs = allAllocations.filter(a => a.employeeId === u.id || (emp && a.employeeId === emp.id));
+    const combinedMap = new Map();
+    [...userAllocs, ...directAllocs].forEach(a => combinedMap.set(a.id, a));
+    const allocations = Array.from(combinedMap.values());
+
     const totalAssignedHours = allocations.reduce((sum, alloc) => sum + (alloc.estimatedHours || 0), 0);
 
     const availableHours = 160;
@@ -1515,7 +1810,7 @@ const getResourceList = async (businessId) => {
 
     const activeProjectsSet = new Set();
     allocations.forEach(alloc => {
-      if (alloc.project && alloc.project.status === 'ACTIVE') {
+      if (alloc.project) {
         activeProjectsSet.add(alloc.project.projectName);
       }
     });
@@ -1525,16 +1820,65 @@ const getResourceList = async (businessId) => {
       businessUserId: bu.id,
       name: u.name,
       code: emp?.Code || '-',
-      department: emp?.department || '-',
+      department: emp?.department || allocDepartment(allocations) || '-',
       designation: emp?.designation || '-',
-      role: bu.role?.name || '-',
+      role: bu.role?.name || allocRole(allocations) || '-',
       currentWorkload: totalAssignedHours,
       projects: activeProjectsSet.size,
       projectNames: Array.from(activeProjectsSet),
       utilization: Math.round(utilization),
       availability: availability,
+      allocations: allocations
     };
   }).filter(Boolean);
+
+  function allocDepartment(allocs) {
+    for (const a of allocs) { if (a.department) return a.department; }
+    return null;
+  }
+  function allocRole(allocs) {
+    for (const a of allocs) { if (a.role) return a.role; }
+    return null;
+  }
+
+  const seenUserIds = new Set(resultUsers.map(r => r.id));
+  for (const alloc of allAllocations) {
+    if (alloc.employee && !seenUserIds.has(alloc.employee.id)) {
+      seenUserIds.add(alloc.employee.id);
+      const u = alloc.employee;
+      const userAllocs = allAllocations.filter(a => a.employeeId === u.id);
+      const totalAssignedHours = userAllocs.reduce((sum, a) => sum + (a.estimatedHours || 0), 0);
+      const availableHours = 160;
+      const utilization = (totalAssignedHours / availableHours) * 100;
+      let availability = "Available";
+      if (utilization > 100) availability = "Overallocated";
+      else if (utilization >= 81) availability = "Busy";
+      else if (utilization < 40) availability = "Underutilized";
+
+      const activeProjectsSet = new Set();
+      userAllocs.forEach(a => {
+        if (a.project) activeProjectsSet.add(a.project.projectName);
+      });
+
+      resultUsers.push({
+        id: u.id,
+        businessUserId: u.id,
+        name: u.name,
+        code: '-',
+        department: alloc.department || '-',
+        designation: '-',
+        role: alloc.role || 'Member',
+        currentWorkload: totalAssignedHours,
+        projects: activeProjectsSet.size,
+        projectNames: Array.from(activeProjectsSet),
+        utilization: Math.round(utilization),
+        availability: availability,
+        allocations: userAllocs
+      });
+    }
+  }
+
+  return resultUsers;
 };
 
 exports.getResourceUtilization = async (req, res) => {
@@ -1546,32 +1890,96 @@ exports.getResourceUtilization = async (req, res) => {
   }
 };
 
+exports.getAllResourceAllocations = async (req, res) => {
+  try {
+    const allocations = await prisma.resourceAllocation.findMany({
+      where: { businessId: req.business.id },
+      include: {
+        project: true,
+        employee: true,
+        task: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ success: true, allocations });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getProjectResourceAllocations = async (req, res) => {
+  try {
+    const allocations = await prisma.resourceAllocation.findMany({
+      where: {
+        projectId: req.params.projectId,
+        businessId: req.business.id
+      },
+      include: {
+        project: true,
+        employee: true,
+        task: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json({ success: true, allocations });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.createResourceAllocation = async (req, res) => {
   try {
     const data = req.body;
+    const effectiveProjectId = data.projectId || req.params.projectId;
+
+    if (!effectiveProjectId) {
+      return res.status(400).json({ success: false, message: "Project ID is required." });
+    }
+
+    const validUserId = await resolveUserId(prisma, data.employeeId, req.user?.id);
+    if (!validUserId) {
+      return res.status(400).json({ success: false, message: "Valid employee or user is required." });
+    }
+
+    let parsedStartDate = null;
+    if (data.startDate) {
+      const d = new Date(data.startDate);
+      if (!isNaN(d.getTime())) parsedStartDate = d;
+    }
+
+    let parsedEndDate = null;
+    if (data.endDate) {
+      const d = new Date(data.endDate);
+      if (!isNaN(d.getTime())) parsedEndDate = d;
+    }
 
     const allocation = await prisma.resourceAllocation.create({
       data: {
         businessId: req.business.id,
-        projectId: data.projectId,
+        projectId: effectiveProjectId,
         taskId: data.taskId || null,
-        employeeId: data.employeeId,
-        department: data.department,
-        role: data.role,
-        startDate: data.startDate ? new Date(data.startDate) : null,
-        endDate: data.endDate ? new Date(data.endDate) : null,
-        estimatedHours: parseFloat(data.estimatedHours || 0),
-        allocationPercent: parseFloat(data.allocationPercent || 100),
-        priority: data.priority,
-        notes: data.notes,
-        status: 'Active'
+        employeeId: validUserId,
+        department: data.department || null,
+        role: data.role || null,
+        startDate: parsedStartDate,
+        endDate: parsedEndDate,
+        estimatedHours: parseFloat(data.estimatedHours || 0) || 0,
+        allocationPercent: parseFloat(data.allocationPercent || 100) || 100,
+        priority: data.priority || 'Normal',
+        notes: data.notes || null,
+        status: data.status || 'Active'
+      },
+      include: {
+        project: true,
+        employee: true,
+        task: true
       }
     });
 
-    if (data.taskId && data.employeeId) {
+    if (data.taskId) {
       await prisma.projectTask.update({
         where: { id: data.taskId },
-        data: { assignedToId: data.employeeId }
+        data: { assignedToId: validUserId }
       });
     }
 
