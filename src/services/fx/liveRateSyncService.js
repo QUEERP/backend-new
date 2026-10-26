@@ -247,8 +247,36 @@ class LiveRateSyncService {
     }
 
     // Lookup currency in master
-    const foreignCcy = await txClient.currency.findUnique({ where: { code: ccyUpper } });
-    const baseCcy = await txClient.currency.findUnique({ where: { code: baseCode } });
+    let foreignCcy = await txClient.currency.findUnique({ where: { code: ccyUpper } });
+    let baseCcy = await txClient.currency.findUnique({ where: { code: baseCode } });
+
+    if (!baseCcy) {
+      try {
+        baseCcy = await txClient.currency.create({
+          data: {
+            code: baseCode,
+            name: baseCode,
+            symbol: baseCode === 'INR' ? '₹' : baseCode === 'AED' ? 'AED' : '$'
+          }
+        });
+      } catch (e) {
+        baseCcy = await txClient.currency.findUnique({ where: { code: baseCode } });
+      }
+    }
+
+    if (!foreignCcy) {
+      try {
+        foreignCcy = await txClient.currency.create({
+          data: {
+            code: ccyUpper,
+            name: ccyUpper,
+            symbol: ccyUpper === 'CAD' ? 'C$' : ccyUpper === 'USD' ? '$' : ccyUpper === 'AED' ? 'AED' : ccyUpper
+          }
+        });
+      } catch (e) {
+        foreignCcy = await txClient.currency.findUnique({ where: { code: ccyUpper } });
+      }
+    }
 
     if (!foreignCcy || !baseCcy) {
       // Currency not in system master
