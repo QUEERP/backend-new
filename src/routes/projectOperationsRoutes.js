@@ -26,6 +26,11 @@ router.get("/estimations", Controller.getEstimations);
 router.get("/estimations/:id", Controller.getEstimationById);
 router.put("/estimations/:id", Controller.updateEstimation);
 
+// Proposals
+router.post("/proposals", Controller.createProposal);
+router.post("/proposals/:id/submit-approval", Controller.submitProposalApproval);
+router.post("/proposals/:id/send", Controller.sendProposal);
+
 // Meetings
 router.post("/meetings", Controller.createMeeting);
 router.get("/meetings", Controller.getMeetings);
