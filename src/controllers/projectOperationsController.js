@@ -294,9 +294,12 @@ exports.getEstimations = async (req, res) => {
       where.requirementId = requirementId;
     }
     if (customerId) {
-      where.customerId = customerId;
+      where.requirement = {
+        ...(where.requirement || {}),
+        customerId: customerId
+      };
     }
-    if (status) {
+    if (status && status.toLowerCase() !== 'saved' && status.toLowerCase() !== 'all') {
       where.status = { contains: status, mode: 'insensitive' };
     }
 
