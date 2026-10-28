@@ -34,7 +34,10 @@ exports.getQuotations = async (req, res) => {
         businessId,
         isDeleted: false,
         customerId: customerId || undefined,
-        status: status || undefined
+        status: status || undefined,
+        NOT: {
+          quoteNumber: { startsWith: 'PRP-' }
+        }
       },
       include: {
         customer: {
@@ -79,7 +82,10 @@ exports.updateQuotation = async (req, res) => {
 
     const quotation = await quotationService.updateQuotation(businessId, userId, userEmail, id, validatedData);
 
-    return successResponse(res, quotation, "Quotation updated successfully");
+    const isApproved = (validatedData?.status || quotation?.status) === 'ACCEPTED' || (validatedData?.status || quotation?.status) === 'APPROVED';
+    const isRejected = (validatedData?.status || quotation?.status) === 'REJECTED';
+    const actionVerb = isApproved ? 'approved' : isRejected ? 'rejected' : 'updated';
+    return successResponse(res, quotation, `Quotation ${actionVerb} successfully`);
   } catch (error) {
     console.error("updateQuotation controller error:", error);
     if (error.name === "ZodError") {
@@ -162,12 +168,12 @@ exports.downloadQuotationPdf = async (req, res) => {
     }
 
     const generateQuotationPdf = require("../utils/generateQuotationPdf");
-    
+
     const [settings, business] = await Promise.all([
       prisma.settings.findUnique({ where: { businessId: req.business.id } }),
       prisma.business.findUnique({ where: { id: req.business.id } }),
     ]);
-    
+
     const pdfSettings = {
       ...(settings || {}),
       businessType: business?.businessType || 'Trading',
@@ -183,7 +189,7 @@ exports.downloadQuotationPdf = async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="Quotation_${quotation.quoteNumber || id}.pdf"`);
     res.setHeader('Content-Length', pdfBuffer.length);
-    
+
     return res.end(pdfBuffer);
   } catch (err) {
     console.error("downloadQuotationPdf controller error:", err);
