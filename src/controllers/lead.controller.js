@@ -419,17 +419,25 @@ exports.updateLead = async (req, res) => {
       },
     });
 
+    const isTypeInquiry = Boolean(
+      lead.inquiryNumber ||
+      existing.inquiryNumber ||
+      type === "INQUIRY" ||
+      req.body.type === "INQUIRY" ||
+      req.query.type === "INQUIRY"
+    );
+
     await logAudit(req.business.id, {
       userId: req.user.userId,
       action: "UPDATE",
-      moduleName: "Lead",
+      moduleName: isTypeInquiry ? "Inquiry" : "Lead",
       recordId: id,
       details: updatedData,
     });
 
     res.json({
       success: true,
-      message: "Lead updated successfully",
+      message: isTypeInquiry ? "Inquiry updated successfully" : "Lead updated successfully",
       data: lead,
     });
   } catch (error) {
@@ -444,6 +452,11 @@ exports.updateLead = async (req, res) => {
 exports.deleteLead = async (req, res) => {
   try {
     const { id } = req.params;
+
+    const existing = await prisma.lead.findFirst({
+      where: { id, businessId: req.business.id, isDeleted: false },
+      select: { inquiryNumber: true },
+    });
 
     const deleted = await prisma.lead.updateMany({
       where: {
@@ -460,20 +473,22 @@ exports.deleteLead = async (req, res) => {
     if (deleted.count === 0) {
       return res.status(404).json({
         success: false,
-        message: "Lead not found or already deleted",
+        message: existing?.inquiryNumber ? "Inquiry not found or already deleted" : "Lead not found or already deleted",
       });
     }
+
+    const isTypeInquiry = Boolean(existing?.inquiryNumber);
 
     await logAudit(req.business.id, {
       userId: req.user.userId,
       action: "DELETE_SOFT",
-      moduleName: "Lead",
+      moduleName: isTypeInquiry ? "Inquiry" : "Lead",
       recordId: id,
     });
 
     res.json({
       success: true,
-      message: "Lead soft-deleted successfully",
+      message: isTypeInquiry ? "Inquiry deleted successfully" : "Lead soft-deleted successfully",
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

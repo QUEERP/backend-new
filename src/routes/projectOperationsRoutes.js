@@ -2,6 +2,8 @@ const router = require("express").Router();
 const auth = require("../middlewares/authMiddleware");
 const business = require("../middlewares/business.middleware");
 const Controller = require("../controllers/projectOperationsController");
+const ProposalController = require("../controllers/proposalController");
+const NegotiationController = require("../controllers/negotiationController");
 const ExportController = require("../controllers/exportController");
 
 
@@ -25,11 +27,26 @@ router.post("/estimations", Controller.createEstimation);
 router.get("/estimations", Controller.getEstimations);
 router.get("/estimations/:id", Controller.getEstimationById);
 router.put("/estimations/:id", Controller.updateEstimation);
+router.delete("/estimations/:id", Controller.deleteEstimation);
 
-// Proposals
-router.post("/proposals", Controller.createProposal);
-router.post("/proposals/:id/submit-approval", Controller.submitProposalApproval);
-router.post("/proposals/:id/send", Controller.sendProposal);
+// Proposals (Dedicated Proposal Controller)
+router.post("/proposals", ProposalController.createProposal);
+router.get("/proposals", ProposalController.getProposals);
+router.get("/proposals/:id", ProposalController.getProposalById);
+router.put("/proposals/:id", ProposalController.updateProposal);
+router.delete("/proposals/:id", ProposalController.deleteProposal);
+router.post("/proposals/:id/approve", ProposalController.approveProposal);
+router.post("/proposals/:id/reject", ProposalController.rejectProposal);
+router.post("/proposals/:id/submit-approval", ProposalController.submitProposalApproval);
+router.post("/proposals/:id/send", ProposalController.sendProposal);
+router.get("/proposals/:id/download-pdf", ProposalController.downloadProposalPdf);
+
+// Negotiations
+router.get("/negotiations", NegotiationController.getNegotiations);
+router.post("/negotiations", NegotiationController.createNegotiation);
+router.get("/negotiations/:id", NegotiationController.getNegotiationById);
+router.put("/negotiations/:id", NegotiationController.updateNegotiation);
+router.delete("/negotiations/:id", NegotiationController.deleteNegotiation);
 
 // Meetings
 router.post("/meetings", Controller.createMeeting);
