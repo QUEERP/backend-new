@@ -20,9 +20,71 @@ function normalizeLeadExecutionType(val) {
   return 'AUTO_DETECT';
 }
 
+const VALID_PRISMA_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+function normalizeLeadPriority(val) {
+  if (!val) return 'MEDIUM';
+  const upper = String(val).trim().toUpperCase();
+  if (VALID_PRISMA_PRIORITIES.includes(upper)) {
+    return upper;
+  }
+  if (upper === 'URGENT') return 'CRITICAL';
+  return 'MEDIUM';
+}
+
+const VALID_PRISMA_SOURCES = [
+  'WEBSITE', 'SOCIAL_MEDIA', 'LINKEDIN', 'REFERRAL', 'CALL', 'OTHER',
+  'EXISTING_CUSTOMER', 'FACEBOOK', 'GOOGLE', 'COLD_CALL', 'WALK_IN',
+  'EMAIL', 'PARTNER', 'TRADE_SHOW', 'TENDER'
+];
+function normalizeLeadSource(val) {
+  if (!val) return 'OTHER';
+  const upper = String(val).trim().toUpperCase().replace(/[\s-]+/g, '_');
+  if (VALID_PRISMA_SOURCES.includes(upper)) {
+    return upper;
+  }
+  if (upper.includes('WEB')) return 'WEBSITE';
+  if (upper.includes('LINKEDIN')) return 'LINKEDIN';
+  if (upper.includes('FACEBOOK')) return 'FACEBOOK';
+  if (upper.includes('GOOGLE')) return 'GOOGLE';
+  if (upper.includes('CUSTOMER')) return 'EXISTING_CUSTOMER';
+  if (upper.includes('PARTNER')) return 'PARTNER';
+  if (upper.includes('EMAIL')) return 'EMAIL';
+  if (upper.includes('CALL')) return 'CALL';
+  if (upper.includes('REFER')) return 'REFERRAL';
+  return 'OTHER';
+}
+
+const VALID_PRISMA_STATUSES = [
+  'NEW', 'CONTACTED', 'QUALIFIED', 'LOST', 'CONVERTED', 'UNDER_REVIEW',
+  'REQUIREMENT_GATHERING', 'PROPOSAL_PENDING', 'PROPOSAL_SENT',
+  'NEGOTIATION', 'WON', 'CANCELLED'
+];
+function normalizeLeadStatus(val) {
+  if (!val) return 'NEW';
+  let upper = String(val).trim().toUpperCase().replace(/[\s-]+/g, '_');
+  if (upper === 'PROPOSAL') return 'PROPOSAL_PENDING';
+  if (VALID_PRISMA_STATUSES.includes(upper)) {
+    return upper;
+  }
+  return 'NEW';
+}
+
+function safeDate(val) {
+  if (!val) return null;
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function safeNumber(val) {
+  if (val === undefined || val === null || val === '') return null;
+  const n = Number(val);
+  return isNaN(n) ? null : n;
+}
+
 const prisma = require("../config/prisma");
 const { buildPrismaQuery, getPaginationMeta, logAudit } = require("../utils/crmHelper");
 const { convertLead } = require("../services/crm/leadConversionService");
+const { formatPrismaError } = require("../utils/formatError");
 
 //////////////////////////////////////////////////////
 // CREATE LEAD
@@ -158,70 +220,69 @@ exports.createLead = async (req, res) => {
       data: {
         businessId: req.business.id,
         name,
-        email,
-        phone,
-        company,
-        customerId,
-        website,
-        position,
-        city,
-        state,
-        country,
-        zipCode,
-        status: (status === "PROPOSAL" ? "PROPOSAL_PENDING" : status) || "NEW",
-        source,
+        email: email || null,
+        phone: phone || null,
+        company: company || null,
+        customerId: customerId || null,
+        website: website || null,
+        position: position || null,
+        city: city || null,
+        state: state || null,
+        country: country || null,
+        zipCode: zipCode || null,
+        status: normalizeLeadStatus(status),
+        source: normalizeLeadSource(source),
         assignedToId,
         tags: formattedTags,
         leadValue: Number(leadValue) || 0,
-        description,
+        description: description || null,
         isPublic: Boolean(isPublic),
         contactedToday: Boolean(contactedToday),
-        defaultLanguage,
+        defaultLanguage: defaultLanguage || "SYSTEM",
         score: parseInt(score) || 0,
-        campaignId,
+        campaignId: campaignId || null,
         inquiryNumber: finalInquiryNumber,
-        inquiryTitle,
-        inquiryType,
-        priority,
-        department,
-        businessUnit,
-        currency,
-        budgetRange,
-        expectedRevenue: expectedRevenue ? Number(expectedRevenue) : null,
-        probability: probability ? Number(probability) : null,
-        expectedDecisionDate: expectedDecisionDate ? new Date(expectedDecisionDate) : null,
-        projectType,
+        inquiryTitle: inquiryTitle || null,
+        inquiryType: inquiryType || (executionType && !VALID_PRISMA_EXECUTION_TYPES.includes(String(executionType).toUpperCase()) ? executionType : null),
+        priority: normalizeLeadPriority(priority),
+        department: department || null,
+        businessUnit: businessUnit || null,
+        currency: currency || null,
+        budgetRange: budgetRange || null,
+        expectedRevenue: safeNumber(expectedRevenue),
+        probability: safeNumber(probability),
+        expectedDecisionDate: safeDate(expectedDecisionDate),
+        projectType: projectType || null,
         executionType: normalizeLeadExecutionType(executionType),
-        inquiryType: inquiryType || (executionType && !VALID_PRISMA_EXECUTION_TYPES.includes(String(executionType).toUpperCase()) ? executionType : undefined),
-        expectedStartDate: expectedStartDate ? new Date(expectedStartDate) : null,
-        expectedCompletionDate: expectedCompletionDate ? new Date(expectedCompletionDate) : null,
-        expectedDuration,
-        businessRequirement,
-        currentBusinessProblem,
-        expectedSolution,
-        scopeSummary,
-        deliverables,
-        estimatedTeamSize: estimatedTeamSize ? Number(estimatedTeamSize) : null,
-        timezone,
-        internalNotes,
-        salesStrategy,
-        competitors,
-        competitorName,
-        riskLevel,
-        winProbability: winProbability ? Number(winProbability) : null,
-        expectedProfit: expectedProfit ? Number(expectedProfit) : null,
-        expectedMargin: expectedMargin ? Number(expectedMargin) : null,
-        managementNotes,
-        nextFollowUpDate: nextFollowUpDate ? new Date(nextFollowUpDate) : null,
+        expectedStartDate: safeDate(expectedStartDate),
+        expectedCompletionDate: safeDate(expectedCompletionDate),
+        expectedDuration: expectedDuration || null,
+        businessRequirement: businessRequirement || null,
+        currentBusinessProblem: currentBusinessProblem || null,
+        expectedSolution: expectedSolution || null,
+        scopeSummary: scopeSummary || null,
+        deliverables: deliverables || null,
+        estimatedTeamSize: safeNumber(estimatedTeamSize),
+        timezone: timezone || null,
+        internalNotes: internalNotes || null,
+        salesStrategy: salesStrategy || null,
+        competitors: competitors || null,
+        competitorName: competitorName || null,
+        riskLevel: riskLevel || null,
+        winProbability: safeNumber(winProbability),
+        expectedProfit: safeNumber(expectedProfit),
+        expectedMargin: safeNumber(expectedMargin),
+        managementNotes: managementNotes || null,
+        nextFollowUpDate: safeDate(nextFollowUpDate),
         reminder: Boolean(reminder),
-        meetingDate: meetingDate ? new Date(meetingDate) : null,
-        meetingType,
-        meetingLocation,
-        followUpNotes,
-        companySize,
-        preferredCommunication,
-        industry,
-        gstVatNumber,
+        meetingDate: safeDate(meetingDate),
+        meetingType: meetingType || null,
+        meetingLocation: meetingLocation || null,
+        followUpNotes: followUpNotes || null,
+        companySize: companySize || null,
+        preferredCommunication: preferredCommunication || null,
+        industry: industry || null,
+        gstVatNumber: gstVatNumber || null,
       },
       include: {
         assignedTo: { include: { user: true } },
@@ -246,7 +307,7 @@ exports.createLead = async (req, res) => {
     console.error("createLead error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: formatPrismaError(error),
     });
   }
 };
@@ -407,6 +468,35 @@ exports.updateLead = async (req, res) => {
       }
       actualRest.executionType = normalizeLeadExecutionType(actualRest.executionType);
     }
+
+    if (actualRest.priority !== undefined) {
+      actualRest.priority = normalizeLeadPriority(actualRest.priority);
+    }
+
+    if (actualRest.source !== undefined) {
+      actualRest.source = normalizeLeadSource(actualRest.source);
+    }
+
+    if (actualRest.status !== undefined) {
+      actualRest.status = normalizeLeadStatus(actualRest.status);
+    }
+
+    // Sanitize dates to prevent Prisma DateTime errors
+    const dateFields = ['expectedDecisionDate', 'expectedStartDate', 'expectedCompletionDate', 'nextFollowUpDate', 'meetingDate'];
+    dateFields.forEach(f => {
+      if (actualRest[f] !== undefined) {
+        actualRest[f] = safeDate(actualRest[f]);
+      }
+    });
+
+    // Sanitize numbers to prevent Prisma Float/Int errors
+    const numberFields = ['expectedRevenue', 'probability', 'estimatedTeamSize', 'winProbability', 'expectedProfit', 'expectedMargin', 'leadValue'];
+    numberFields.forEach(f => {
+      if (actualRest[f] !== undefined) {
+        actualRest[f] = safeNumber(actualRest[f]);
+      }
+    });
+
     const updatedData = {
       ...actualRest,
       ...(formattedTags && { tags: formattedTags }),
@@ -471,7 +561,7 @@ exports.updateLead = async (req, res) => {
     });
   } catch (error) {
     console.error("updateLead error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: formatPrismaError(error) });
   }
 };
 

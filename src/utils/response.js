@@ -2,6 +2,8 @@
 // RESPONSE UTILITIES
 //////////////////////////////////////////////////////
 
+const { formatPrismaError } = require("./formatError");
+
 exports.successResponse = (res, data, message = "Success", statusCode = 200) => {
   return res.status(statusCode).json({
     success: true,
@@ -11,9 +13,10 @@ exports.successResponse = (res, data, message = "Success", statusCode = 200) => 
 };
 
 exports.errorResponse = (res, message = "Error", statusCode = 500, data = null) => {
+  const cleanMessage = formatPrismaError(message);
   return res.status(statusCode).json({
     success: false,
-    message,
+    message: cleanMessage,
     data,
   });
 };

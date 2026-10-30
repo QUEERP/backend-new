@@ -226,11 +226,13 @@ app.get("/", (req, res) => {
   res.send("QUE Accounting Backend Running...");
 });
 
+const { formatPrismaError } = require("./utils/formatError");
+
 app.use((err, req, res, next) => {
   console.error("GLOBAL ERROR:", err);
-  res.status(500).json({
+  res.status(err.status || 500).json({
     success: false,
-    message: err.message || "Internal server error",
+    message: formatPrismaError(err),
   });
 });
 
