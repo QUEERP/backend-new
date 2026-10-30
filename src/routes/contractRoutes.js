@@ -7,6 +7,7 @@ const checkPermission = require("../middlewares/checkPermission");
 const {
   createContract,
   getContracts,
+  getContractById,
   updateContract,
   deleteContract
 } = require("../controllers/contractController");
@@ -36,6 +37,18 @@ router.get(
 //////////////////////////////////////////////////////
 // UPDATE
 //////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////
+// GET BY ID
+//////////////////////////////////////////////////////
+router.get(
+  "/:id",
+  authMiddleware,
+  businessMiddleware,
+  checkPermission("contract", "read"),
+  getContractById
+);
+
 router.put(
   "/:id",
   authMiddleware,

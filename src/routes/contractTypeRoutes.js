@@ -17,7 +17,7 @@ router.post(
   "/",
   authMiddleware,
   businessMiddleware,
-  checkPermission("contract_type", "create"),
+  checkPermission("contract", "create"),
   createContractType
 );
 
@@ -28,7 +28,7 @@ router.get(
   "/",
   authMiddleware,
   businessMiddleware,
-  checkPermission("contract_type", "read"),
+  checkPermission("contract", "read"),
   getContractTypes
 );
 
@@ -39,7 +39,7 @@ router.delete(
   "/:id",
   authMiddleware,
   businessMiddleware,
-  checkPermission("contract_type", "delete"),
+  checkPermission("contract", "delete"),
   deleteContractType
 );
 

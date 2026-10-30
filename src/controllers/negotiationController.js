@@ -1,6 +1,28 @@
 const prisma = require("../config/prisma");
 const { successResponse, errorResponse } = require("../utils/response");
 
+const customerSelect = {
+  id: true,
+  company: true,
+  phone: true,
+  customerContacts: {
+    where: { isActive: true },
+    select: { email: true, fullName: true },
+    take: 1
+  }
+};
+
+const mapCustomer = (c) => {
+  if (!c) return null;
+  return {
+    id: c.id,
+    company: c.company,
+    name: c.company,
+    phone: c.phone || '',
+    email: c.customerContacts?.[0]?.email || ''
+  };
+};
+
 // Helper to format a ProjectMaster record as a Negotiation object
 const formatNegotiation = (m, customerMap = {}) => {
   const cfg = (typeof m.config === 'object' && m.config !== null) ? m.config : {};
@@ -68,10 +90,10 @@ exports.getNegotiations = async (req, res) => {
     if (customerIds.length > 0) {
       const customers = await prisma.customer.findMany({
         where: { id: { in: customerIds }, businessId },
-        select: { id: true, company: true, phone: true, email: true }
+        select: customerSelect
       });
       customers.forEach(c => {
-        customerMap[c.id] = c;
+        customerMap[c.id] = mapCustomer(c);
       });
     }
 
@@ -85,8 +107,8 @@ exports.getNegotiations = async (req, res) => {
     }
     if (search) {
       const s = String(search).toLowerCase();
-      negotiations = negotiations.filter(n => 
-        (n.name || '').toLowerCase().includes(s) || 
+      negotiations = negotiations.filter(n =>
+        (n.name || '').toLowerCase().includes(s) ||
         (n.negNumber || '').toLowerCase().includes(s) ||
         (n.customer?.company || '').toLowerCase().includes(s)
       );
@@ -111,7 +133,7 @@ exports.getNegotiationById = async (req, res) => {
     const businessId = req.business.id;
     const { id } = req.params;
 
-    const master = await prisma.projectMaster.findFirst({
+    let master = await prisma.projectMaster.findFirst({
       where: {
         id,
         businessId,
@@ -119,6 +141,16 @@ exports.getNegotiationById = async (req, res) => {
         isActive: true
       }
     });
+
+    if (!master) {
+      const allMasters = await prisma.projectMaster.findMany({
+        where: { businessId, type: 'NEGOTIATION', isActive: true }
+      });
+      master = allMasters.find(m => {
+        const cfg = (typeof m.config === 'object' && m.config !== null) ? m.config : {};
+        return cfg.negNumber === id || m.name === id;
+      }) || null;
+    }
 
     if (!master) {
       return errorResponse(res, "Negotiation not found", 404);
@@ -130,9 +162,9 @@ exports.getNegotiationById = async (req, res) => {
     if (custId) {
       const customer = await prisma.customer.findFirst({
         where: { id: custId, businessId },
-        select: { id: true, company: true, phone: true, email: true }
+        select: customerSelect
       });
-      if (customer) customerMap[customer.id] = customer;
+      if (customer) customerMap[customer.id] = mapCustomer(customer);
     }
 
     const negotiation = formatNegotiation(master, customerMap);
@@ -180,9 +212,9 @@ exports.createNegotiation = async (req, res) => {
     if (custId) {
       const customer = await prisma.customer.findFirst({
         where: { id: custId, businessId },
-        select: { id: true, company: true, phone: true, email: true }
+        select: customerSelect
       });
-      if (customer) customerMap[customer.id] = customer;
+      if (customer) customerMap[customer.id] = mapCustomer(customer);
     }
 
     const negotiation = formatNegotiation(master, customerMap);
@@ -208,9 +240,19 @@ exports.updateNegotiation = async (req, res) => {
     const { id } = req.params;
     const body = req.body;
 
-    const existing = await prisma.projectMaster.findFirst({
+    let existing = await prisma.projectMaster.findFirst({
       where: { id, businessId, type: 'NEGOTIATION' }
     });
+
+    if (!existing) {
+      const allMasters = await prisma.projectMaster.findMany({
+        where: { businessId, type: 'NEGOTIATION', isActive: true }
+      });
+      existing = allMasters.find(m => {
+        const cfg = (typeof m.config === 'object' && m.config !== null) ? m.config : {};
+        return cfg.negNumber === id || m.name === id;
+      }) || null;
+    }
 
     if (!existing) {
       return errorResponse(res, "Negotiation not found", 404);
@@ -238,9 +280,9 @@ exports.updateNegotiation = async (req, res) => {
     if (custId) {
       const customer = await prisma.customer.findFirst({
         where: { id: custId, businessId },
-        select: { id: true, company: true, phone: true, email: true }
+        select: customerSelect
       });
-      if (customer) customerMap[customer.id] = customer;
+      if (customer) customerMap[customer.id] = mapCustomer(customer);
     }
 
     const negotiation = formatNegotiation(updated, customerMap);
@@ -265,9 +307,19 @@ exports.deleteNegotiation = async (req, res) => {
     const businessId = req.business.id;
     const { id } = req.params;
 
-    const existing = await prisma.projectMaster.findFirst({
+    let existing = await prisma.projectMaster.findFirst({
       where: { id, businessId, type: 'NEGOTIATION' }
     });
+
+    if (!existing) {
+      const allMasters = await prisma.projectMaster.findMany({
+        where: { businessId, type: 'NEGOTIATION', isActive: true }
+      });
+      existing = allMasters.find(m => {
+        const cfg = (typeof m.config === 'object' && m.config !== null) ? m.config : {};
+        return cfg.negNumber === id || m.name === id;
+      }) || null;
+    }
 
     if (!existing) {
       return errorResponse(res, "Negotiation not found", 404);
