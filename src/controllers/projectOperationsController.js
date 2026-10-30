@@ -92,7 +92,7 @@ async function resolveEmployeeAndBusinessUser(prismaClient, businessId, { employ
 exports.getInquiriesByCustomer = async (req, res) => {
   try {
     const { customerId, status } = req.query;
-    
+
     console.log("=== LINKED INQUIRIES API CALLED ===");
     console.log({
       customerId,
@@ -206,7 +206,7 @@ exports.getRequirements = async (req, res) => {
   try {
     const { customerId, status } = req.query;
     const where = { businessId: req.business.id };
-    
+
     if (customerId) {
       where.customerId = customerId;
     }
@@ -289,7 +289,7 @@ exports.getEstimations = async (req, res) => {
   try {
     const { requirementId, customerId, status } = req.query;
     const where = { businessId: req.business.id };
-    
+
     if (requirementId) {
       where.requirementId = requirementId;
     }
@@ -321,11 +321,11 @@ exports.getEstimationById = async (req, res) => {
       where: { id, businessId: req.business.id },
       include: { requirement: { include: { customer: true } } }
     });
-    
+
     if (!estimation) {
       return res.status(404).json({ success: false, message: 'Estimation not found' });
     }
-    
+
     res.json({ success: true, estimation });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -367,7 +367,7 @@ exports.createMeeting = async (req, res) => {
   try {
     const data = req.body;
     console.log("Create Meeting Request Body:", data);
-    
+
     const meeting = await prisma.projectMeeting.create({
       data: {
         title: data.title || "Meeting",
@@ -446,23 +446,49 @@ exports.createProject = async (req, res) => {
     if (budget !== undefined && budget !== null) {
       data.budget = parseFloat(budget) || 0;
     }
-    
+
     if (startDate) {
       data.startDate = new Date(startDate);
     }
-    
+
     if (endDate) {
       data.endDate = new Date(endDate);
     }
 
     const projectCode = data.projectCode || await generateDocNumber(prisma, req.business.id, 'PRJ', 'project', 'projectCode');
 
+    // Handle ProjectStatus safely (Prisma enum: ACTIVE, COMPLETED, ON_HOLD)
+    let projectStatus = data.status || "ACTIVE";
+    if (projectStatus === "DRAFT" || projectStatus === "Draft") {
+      projectStatus = "ON_HOLD";
+    } else if (!["ACTIVE", "COMPLETED", "ON_HOLD"].includes(projectStatus)) {
+      projectStatus = "ACTIVE";
+    }
+
+    // Only pass fields that belong to the Project schema to prevent Prisma validation crashes
+    const allowedFields = [
+      'projectCode', 'projectName', 'customerId', 'projectManagerId', 'department',
+      'categoryId', 'typeId', 'priority', 'budget', 'revenue', 'expectedProfit',
+      'actualCost', 'committedCost', 'laborCost', 'materialCost', 'invoicedRevenue',
+      'collectedRevenue', 'estimatedHours', 'startDate', 'endDate', 'completionPercentage',
+      'quotationId', 'salesOrderId', 'executionType', 'billingMethod', 'templateId',
+      'note', 'exchangeRate'
+    ];
+
+    const cleanData = {};
+    for (const key of allowedFields) {
+      if (data[key] !== undefined && data[key] !== '' && data[key] !== null) {
+        cleanData[key] = data[key];
+      }
+    }
+    cleanData.status = projectStatus;
+    cleanData.projectCode = projectCode;
+    cleanData.executionType = executionType || cleanData.executionType || "SERVICE";
+    cleanData.businessId = req.business.id;
+
     const project = await prisma.project.create({
       data: {
-        ...data,
-        projectCode,
-        executionType: executionType || "SERVICE",
-        businessId: req.business.id,
+        ...cleanData,
         ...(items && items.length > 0 && {
           projectItems: {
             create: items.map(item => ({
@@ -483,11 +509,11 @@ exports.createProject = async (req, res) => {
     if (err.code === 'P2002') {
       errorMessage = `A project with this project number already exists.`;
     } else if (err.message && err.message.includes('Invalid `prisma')) {
-       const match = err.message.match(/argument `.*?`: (.*)/i);
-       if (match) errorMessage = match[0];
-       else errorMessage = err.message; // Fallback to full message
+      const match = err.message.match(/argument `.*?`: (.*)/i);
+      if (match) errorMessage = match[0];
+      else errorMessage = err.message; // Fallback to full message
     } else if (err.message) {
-       errorMessage = err.message;
+      errorMessage = err.message;
     }
     res.status(400).json({ success: false, message: errorMessage });
   }
@@ -563,10 +589,10 @@ exports.getProjectDetails = async (req, res) => {
 exports.updateProject = async (req, res) => {
   try {
     const { items, startDate, endDate, ...data } = req.body;
-    
+
     if (startDate) data.startDate = new Date(startDate);
     if (endDate) data.endDate = new Date(endDate);
-    
+
     // Convert budget if present
     if (data.budget) data.budget = Number(data.budget) || 0;
 
@@ -601,7 +627,7 @@ exports.updateProject = async (req, res) => {
 exports.createMilestone = async (req, res) => {
   try {
     const { title, description, targetDate, completionPercentage, status, paymentWeight, ownerId } = req.body;
-    
+
     if (!req.params.projectId) {
       return res.status(400).json({ success: false, message: 'projectId is required in URL.' });
     }
@@ -1006,12 +1032,12 @@ exports.getGlobalBudgets = async (req, res) => {
     const enrichedBudgets = projects.filter(p => p.budget > 0).map(p => {
       const actualCost = p.expenses?.filter(e => e.status === 'APPROVED' || e.status === 'PAID').reduce((sum, e) => sum + (e.amount || 0), 0) || 0;
       const committedCost = p.purchaseOrders?.filter(po => po.status !== 'CANCELLED').reduce((sum, po) => sum + (po.totalAmount || 0), 0) || 0;
-      
+
       const utilized = actualCost + committedCost;
       const remaining = (p.budget || 0) - utilized;
       const variance = remaining;
       const utilizationPercent = p.budget > 0 ? (utilized / p.budget) * 100 : 0;
-      
+
       let computedStatus = p.status || "ACTIVE";
       if (p.budget > 0 && computedStatus !== 'COMPLETED') {
         if (utilizationPercent > 100) computedStatus = "OVER_BUDGET";
@@ -1021,7 +1047,7 @@ exports.getGlobalBudgets = async (req, res) => {
 
       return {
         id: p.id,
-        budgetCode: `BUD-${p.projectCode || p.id.substring(0,6)}`,
+        budgetCode: `BUD-${p.projectCode || p.id.substring(0, 6)}`,
         projectId: p.id,
         project: p,
         customer: p.customer,
@@ -1047,7 +1073,7 @@ exports.getGlobalBudgets = async (req, res) => {
 exports.reallocateBudget = async (req, res) => {
   try {
     const { fromProjectId, toProjectId, amount, reason, effectiveDate, remarks, projectId, additionalBudget } = req.body;
-    
+
     // Legacy support for single project addition/subtraction
     if (projectId && additionalBudget !== undefined) {
       const project = await prisma.project.findFirst({
@@ -1092,10 +1118,10 @@ exports.reallocateBudget = async (req, res) => {
     if (!fromProject || !toProject) return res.status(404).json({ success: false, message: "Project not found." });
 
     const transferAmount = parseFloat(amount);
-    
+
     const fromOldBudget = fromProject.budget || 0;
     const fromNewBudget = fromOldBudget - transferAmount;
-    
+
     // Validation
     if (fromNewBudget < 0) {
       return res.status(400).json({ success: false, message: "Insufficient budget in source project." });
@@ -1198,7 +1224,7 @@ exports.getGlobalExpenses = async (req, res) => {
 
 exports.updateGlobalExpenseWorkflow = async (req, res) => {
   try {
-    const { expenseId, action, comments } = req.body; 
+    const { expenseId, action, comments } = req.body;
 
     if (!expenseId || !action) {
       return res.status(400).json({ success: false, message: "Expense ID and action are required." });
@@ -1225,7 +1251,7 @@ exports.updateGlobalExpenseWorkflow = async (req, res) => {
       updateProjectCost = true;
     } else if (action === "Reimburse") newStatus = "Reimbursed";
     else if (action === "Reject") newStatus = "Rejected";
-    
+
     await prisma.$transaction(async (tx) => {
       // 1. Update Expense
       await tx.expense.update({
@@ -1250,11 +1276,11 @@ exports.updateGlobalExpenseWorkflow = async (req, res) => {
           where: { id: expense.projectId },
           data: { actualCost: { increment: expense.amount } }
         });
-        
+
         const projBudget = await tx.projectBudget.findUnique({
           where: { projectId: expense.projectId }
         });
-        
+
         if (projBudget) {
           await tx.projectBudget.update({
             where: { id: projBudget.id },
@@ -1280,10 +1306,10 @@ exports.updateGlobalExpenseWorkflow = async (req, res) => {
 exports.createGlobalInvoice = async (req, res) => {
   try {
     let { customerId, projectId, dueDate, amount, status } = req.body;
-    
+
     // Auto-generate invoice number (simple format)
     const invoiceNumber = await generateInvoiceNumber(req.business.id, prisma);
-    
+
     // If customerId is not directly passed, try to get customerId from projectId
     if (!customerId && projectId) {
       const proj = await prisma.project.findFirst({
@@ -1349,7 +1375,7 @@ exports.getGlobalBilling = async (req, res) => {
 
 exports.updateGlobalInvoiceWorkflow = async (req, res) => {
   try {
-    const { invoiceId, action, comments } = req.body; 
+    const { invoiceId, action, comments } = req.body;
 
     if (!invoiceId || !action) {
       return res.status(400).json({ success: false, message: "Invoice ID and action are required." });
@@ -1365,7 +1391,7 @@ exports.updateGlobalInvoiceWorkflow = async (req, res) => {
 
     if (action === "Send") newStatus = "SENT";
     else if (action === "Cancel") newStatus = "CANCELLED";
-    
+
     await prisma.$transaction(async (tx) => {
       await tx.invoice.update({
         where: { id: invoice.id },
@@ -1391,7 +1417,7 @@ exports.updateGlobalInvoiceWorkflow = async (req, res) => {
 
 exports.addGlobalInvoicePayment = async (req, res) => {
   try {
-    const { invoiceId, amount, paymentMode, note } = req.body; 
+    const { invoiceId, amount, paymentMode, note } = req.body;
 
     if (!invoiceId || !amount) {
       return res.status(400).json({ success: false, message: "Invoice ID and amount are required." });
@@ -1406,19 +1432,19 @@ exports.addGlobalInvoicePayment = async (req, res) => {
 
     const totalPaidBefore = invoice.payments.reduce((sum, p) => sum + p.amount, 0);
     const newTotalPaid = totalPaidBefore + parseFloat(amount);
-    
+
     let newStatus = invoice.status;
     if (newTotalPaid >= invoice.grandTotal) {
       newStatus = "PAID";
     } else {
       newStatus = "PARTIALLY_PAID";
     }
-    
+
     await prisma.$transaction(async (tx) => {
       // Create Payment
       const pCount = await tx.payment.count({ where: { businessId: req.business.id } });
       const payNum = `PAY-${String(pCount + 1).padStart(5, '0')}`;
-      
+
       await tx.payment.create({
         data: {
           businessId: req.business.id,
@@ -1484,7 +1510,7 @@ exports.getGlobalProfitability = async (req, res) => {
       const cost = p.actualCost || 0;
       const profit = revenue - cost;
       const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
-      
+
       let health = "Healthy";
       if (margin < 0) health = "Loss";
       else if (margin <= 15) health = "Critical";
@@ -2237,15 +2263,15 @@ exports.getDocuments = async (req, res) => {
       },
       orderBy: { createdAt: 'desc' }
     });
-    
+
     const totalDocs = await prisma.projectDocument.count({ where: { businessId: req.business.id, isArchived: false } });
     const totalSize = await prisma.projectDocument.aggregate({
       where: { businessId: req.business.id, isArchived: false },
       _sum: { fileSize: true }
     });
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       documents,
       stats: { totalDocs, totalSize: totalSize._sum.fileSize || 0 }
     });
