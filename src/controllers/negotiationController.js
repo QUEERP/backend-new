@@ -167,6 +167,7 @@ exports.getNegotiationById = async (req, res) => {
       if (customer) customerMap[customer.id] = mapCustomer(customer);
     }
 
+    await syncProposalFromNegotiation(businessId, config);
     const negotiation = formatNegotiation(master, customerMap);
 
     return res.status(200).json({
@@ -183,6 +184,76 @@ exports.getNegotiationById = async (req, res) => {
 // ==========================================
 // CREATE NEGOTIATION
 // ==========================================
+
+// Helper to keep linked Proposal in sync with Negotiation
+async function syncProposalFromNegotiation(businessId, config) {
+  try {
+    const proposalRef = config?.linkedProposal;
+    if (!proposalRef) return;
+
+    const quotation = await prisma.quotation.findFirst({
+      where: {
+        businessId,
+        isDeleted: false,
+        OR: [{ id: proposalRef }, { quoteNumber: proposalRef }]
+      },
+      include: { items: true }
+    });
+
+    if (!quotation) return;
+
+    const finalVal = Number(
+      config.finalAmount !== undefined && config.finalAmount !== null && Number(config.finalAmount) > 0
+        ? config.finalAmount
+        : (config.negAmount || config.amount || 0)
+    );
+
+    const stage = String(config.stage || config.status || '').toLowerCase();
+    let updateData = {};
+
+    if (stage === 'won' || stage === 'closed won') {
+      updateData.status = 'APPROVED';
+    } else if (stage === 'lost' || stage === 'closed lost') {
+      updateData.status = 'REJECTED';
+    }
+
+    if (finalVal > 0) {
+      updateData.totalAmount = finalVal;
+      updateData.subtotal = finalVal;
+    }
+
+    if (Object.keys(updateData).length > 0) {
+      await prisma.quotation.update({
+        where: { id: quotation.id },
+        data: updateData
+      });
+
+      if (finalVal > 0) {
+        if (quotation.items && quotation.items.length > 0) {
+          await prisma.quotationItem.update({
+            where: { id: quotation.items[0].id },
+            data: { price: finalVal, total: finalVal }
+          });
+        } else {
+          await prisma.quotationItem.create({
+            data: {
+              quotationId: quotation.id,
+              description: `${quotation.title || 'Proposal'} - Agreed Scope`,
+              quantity: 1,
+              price: finalVal,
+              total: finalVal,
+              unit: 'lot',
+              itemType: 'SERVICE'
+            }
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('syncProposalFromNegotiation error:', err);
+  }
+}
+
 exports.createNegotiation = async (req, res) => {
   try {
     const businessId = req.business.id;
@@ -285,6 +356,7 @@ exports.updateNegotiation = async (req, res) => {
       if (customer) customerMap[customer.id] = mapCustomer(customer);
     }
 
+    await syncProposalFromNegotiation(businessId, updatedConfig);
     const negotiation = formatNegotiation(updated, customerMap);
 
     return res.status(200).json({

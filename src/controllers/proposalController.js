@@ -109,6 +109,7 @@ exports.createProposal = async (req, res) => {
           issueDate,
           expiryDate,
           notes,
+          termsConditions: body.termsConditions ? (typeof body.termsConditions === "object" ? JSON.stringify(body.termsConditions) : body.termsConditions) : undefined,
           items: {
             create: itemsData
           }
@@ -132,6 +133,7 @@ exports.createProposal = async (req, res) => {
           issueDate,
           expiryDate,
           notes,
+          termsConditions: body.termsConditions ? (typeof body.termsConditions === "object" ? JSON.stringify(body.termsConditions) : body.termsConditions) : undefined,
           dealId: body.dealId || null,
           assignedToId: body.assignedToId || null,
           items: {
@@ -204,7 +206,7 @@ exports.getProposals = async (req, res) => {
       }
     }
 
-    const proposals = await prisma.quotation.findMany({
+        const proposals = await prisma.quotation.findMany({
       where,
       include: {
         customer: true,
@@ -219,6 +221,34 @@ exports.getProposals = async (req, res) => {
       orderBy: { createdAt: "desc" },
       take: 500
     });
+
+    try {
+      const negs = await prisma.projectMaster.findMany({
+        where: { businessId, type: 'NEGOTIATION', isActive: true }
+      });
+      for (const p of proposals) {
+        const linkedNeg = negs.find(n => {
+          const cfg = (typeof n.config === 'object' && n.config !== null) ? n.config : {};
+          return cfg.linkedProposal === p.id || cfg.linkedProposal === p.quoteNumber;
+        });
+        if (linkedNeg) {
+          const cfg = (typeof linkedNeg.config === 'object' && linkedNeg.config !== null) ? linkedNeg.config : {};
+          const negAmt = Number(cfg.finalAmount || cfg.negAmount || cfg.amount || 0);
+          const stage = String(cfg.stage || cfg.status || '').toLowerCase();
+          if (negAmt > 0 && p.totalAmount !== negAmt) {
+            p.totalAmount = negAmt;
+            p.subtotal = negAmt;
+            prisma.quotation.update({ where: { id: p.id }, data: { totalAmount: negAmt, subtotal: negAmt } }).catch(console.error);
+          }
+          if ((stage === 'won' || stage === 'closed won') && p.status !== 'APPROVED') {
+            p.status = 'APPROVED';
+            prisma.quotation.update({ where: { id: p.id }, data: { status: 'APPROVED' } }).catch(console.error);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Self-heal negotiation-proposal sync error:", e);
+    }
 
     return res.status(200).json({
       success: true,
@@ -255,8 +285,34 @@ exports.getProposalById = async (req, res) => {
       }
     });
 
-    if (!proposal) {
+        if (!proposal) {
       return errorResponse(res, "Proposal not found", 404);
+    }
+
+    try {
+      const negs = await prisma.projectMaster.findMany({
+        where: { businessId, type: 'NEGOTIATION', isActive: true }
+      });
+      const linkedNeg = negs.find(n => {
+        const cfg = (typeof n.config === 'object' && n.config !== null) ? n.config : {};
+        return cfg.linkedProposal === proposal.id || cfg.linkedProposal === proposal.quoteNumber;
+      });
+      if (linkedNeg) {
+        const cfg = (typeof linkedNeg.config === 'object' && linkedNeg.config !== null) ? linkedNeg.config : {};
+        const negAmt = Number(cfg.finalAmount || cfg.negAmount || cfg.amount || 0);
+        const stage = String(cfg.stage || cfg.status || '').toLowerCase();
+        if (negAmt > 0 && proposal.totalAmount !== negAmt) {
+          proposal.totalAmount = negAmt;
+          proposal.subtotal = negAmt;
+          prisma.quotation.update({ where: { id: proposal.id }, data: { totalAmount: negAmt, subtotal: negAmt } }).catch(console.error);
+        }
+        if ((stage === 'won' || stage === 'closed won') && proposal.status !== 'APPROVED') {
+          proposal.status = 'APPROVED';
+          prisma.quotation.update({ where: { id: proposal.id }, data: { status: 'APPROVED' } }).catch(console.error);
+        }
+      }
+    } catch (e) {
+      console.error("Self-heal getProposalById error:", e);
     }
 
     return res.status(200).json({
@@ -301,6 +357,9 @@ exports.updateProposal = async (req, res) => {
       status = mapToProposalStatus(body.status);
     }
 
+        if (body.termsConditions !== undefined) {
+      updateData.termsConditions = typeof body.termsConditions === 'object' ? JSON.stringify(body.termsConditions) : body.termsConditions;
+    }
     const updateData = {
       status,
       title: body.title || body.propName || existing.title,
@@ -326,7 +385,7 @@ exports.updateProposal = async (req, res) => {
     if (body.discount !== undefined) updateData.discount = Number(body.discount);
     if (body.tax !== undefined) updateData.tax = Number(body.tax);
 
-    if (body.items && Array.isArray(body.items)) {
+        if (body.items && Array.isArray(body.items)) {
       await prisma.quotationItem.deleteMany({ where: { quotationId: existing.id } });
       updateData.items = {
         create: body.items.map(item => ({
@@ -340,6 +399,14 @@ exports.updateProposal = async (req, res) => {
           itemType: item.itemType || 'SERVICE'
         }))
       };
+    } else if (updateData.totalAmount !== undefined && existing.items && existing.items.length === 1) {
+      await prisma.quotationItem.update({
+        where: { id: existing.items[0].id },
+        data: {
+          price: updateData.totalAmount,
+          total: updateData.totalAmount
+        }
+      });
     }
 
     const updated = await prisma.quotation.update({
@@ -358,6 +425,7 @@ exports.updateProposal = async (req, res) => {
     const actionVerb = isApproved ? 'approved' : isRejected ? 'rejected' : 'updated';
     const action = isApproved ? 'PROPOSAL_APPROVED' : isRejected ? 'PROPOSAL_REJECTED' : 'PROPOSAL_UPDATED';
 
+    // Log Activity as Proposal
     await logAction(prisma, {
       businessId,
       userId,
@@ -365,20 +433,19 @@ exports.updateProposal = async (req, res) => {
       action,
       entityType: "Proposal",
       entityId: updated.id,
-      details: { oldStatus: existing.status, newStatus: status, proposalNumber: updated.quoteNumber }
+      details: { proposalNumber: updated.quoteNumber, action: actionVerb }
     });
 
-    if (isApproved || isRejected || status !== existing.status) {
-      await triggerNotification(prisma, {
-        businessId,
-        userId,
-        title: `Proposal ${actionVerb.charAt(0).toUpperCase() + actionVerb.slice(1)}`,
-        message: `Proposal ${updated.quoteNumber} has been ${actionVerb}.`,
-        type: isApproved ? "SUCCESS" : isRejected ? "WARNING" : "INFO",
-        entityType: "Proposal",
-        entityId: updated.id
-      });
-    }
+    // Trigger Notification for Proposal
+    await triggerNotification(prisma, {
+      businessId,
+      userId,
+      title: `Proposal ${actionVerb.charAt(0).toUpperCase() + actionVerb.slice(1)}`,
+      message: `Proposal ${updated.quoteNumber} has been ${actionVerb} successfully.`,
+      type: "SUCCESS",
+      entityType: "Proposal",
+      entityId: updated.id
+    });
 
     return res.status(200).json({
       success: true,
