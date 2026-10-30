@@ -1,3 +1,25 @@
+
+const VALID_PRISMA_EXECUTION_TYPES = ['AUTO_DETECT', 'SERVICE', 'PRODUCT', 'HYBRID'];
+
+function normalizeLeadExecutionType(val) {
+  if (!val) return 'AUTO_DETECT';
+  const clean = String(val).trim();
+  const upper = clean.toUpperCase();
+  if (VALID_PRISMA_EXECUTION_TYPES.includes(upper)) {
+    return upper;
+  }
+  if (upper === 'TURNKEY' || upper.includes('TURNKEY') || upper.includes('FIXED') || upper.includes('TIME') || upper.includes('RETAINER') || upper.includes('SERVICE') || upper.includes('SUPPORT') || upper.includes('WATERFALL')) {
+    return 'SERVICE';
+  }
+  if (upper === 'PRODUCT' || upper.includes('PRODUCT') || upper.includes('MATERIAL') || upper.includes('GOODS')) {
+    return 'PRODUCT';
+  }
+  if (upper === 'HYBRID' || upper.includes('HYBRID') || upper.includes('AGILE') || upper.includes('MILESTONE') || upper.includes('BOT') || upper.includes('DEDICATED')) {
+    return 'HYBRID';
+  }
+  return 'AUTO_DETECT';
+}
+
 const prisma = require("../config/prisma");
 const { buildPrismaQuery, getPaginationMeta, logAudit } = require("../utils/crmHelper");
 const { convertLead } = require("../services/crm/leadConversionService");
@@ -169,7 +191,8 @@ exports.createLead = async (req, res) => {
         probability: probability ? Number(probability) : null,
         expectedDecisionDate: expectedDecisionDate ? new Date(expectedDecisionDate) : null,
         projectType,
-        executionType,
+        executionType: normalizeLeadExecutionType(executionType),
+        inquiryType: inquiryType || (executionType && !VALID_PRISMA_EXECUTION_TYPES.includes(String(executionType).toUpperCase()) ? executionType : undefined),
         expectedStartDate: expectedStartDate ? new Date(expectedStartDate) : null,
         expectedCompletionDate: expectedCompletionDate ? new Date(expectedCompletionDate) : null,
         expectedDuration,
@@ -378,6 +401,12 @@ exports.updateLead = async (req, res) => {
     // Extract relation scalars so we can convert them to `connect` / `disconnect`
     const { assignedToId: reqAssignedToId, customerId, requirementId, type, ...actualRest } = rest;
 
+    if (actualRest.executionType !== undefined) {
+      if (!actualRest.inquiryType && actualRest.executionType) {
+        actualRest.inquiryType = actualRest.executionType;
+      }
+      actualRest.executionType = normalizeLeadExecutionType(actualRest.executionType);
+    }
     const updatedData = {
       ...actualRest,
       ...(formattedTags && { tags: formattedTags }),

@@ -11,6 +11,7 @@ exports.createContract = async (req, res) => {
       title,
       description,
       value,
+      currency,
       startDate,
       endDate,
       isDeleted = false,
@@ -108,7 +109,7 @@ exports.createContract = async (req, res) => {
         title,
         description,
         value,
-        currency: settings.currency, // ✅ FROM SETTINGS
+        currency: currency || settings.currency || "USD",
         startDate: new Date(startDate),
         endDate: endDate ? new Date(endDate) : null,
         isDeleted,
@@ -176,17 +177,76 @@ exports.getContracts = async (req, res) => {
 };
 
 //////////////////////////////////////////////////////
+// GET CONTRACT BY ID
+//////////////////////////////////////////////////////
+exports.getContractById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const contract = await prisma.contract.findFirst({
+      where: {
+        id,
+        businessId: req.business.id,
+        isDeleted: false,
+      },
+      include: {
+        customer: true,
+        type: true,
+      },
+    });
+
+    if (!contract) {
+      return res.status(404).json({
+        success: false,
+        message: "Contract not found",
+      });
+    }
+
+    const today = new Date();
+    const updatedContract = {
+      ...contract,
+      status: contract.endDate && new Date(contract.endDate) < today ? "COMPLETED" : contract.status,
+    };
+
+    res.json({
+      success: true,
+      contract: updatedContract,
+      data: updatedContract,
+    });
+
+  } catch (error) {
+    console.error("getContractById error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+//////////////////////////////////////////////////////
 // UPDATE CONTRACT
 //////////////////////////////////////////////////////
 exports.updateContract = async (req, res) => {
   try {
     const { id } = req.params;
+    const {
+      customerId,
+      typeId,
+      title,
+      description,
+      value,
+      currency,
+      startDate,
+      endDate,
+      status,
+      isDeleted,
+      isHidden
+    } = req.body;
 
     //////////////////////////////////////////////////////
     // OPTIONAL DATE VALIDATION
     //////////////////////////////////////////////////////
-    if (req.body.startDate && req.body.endDate) {
-      if (new Date(req.body.endDate) < new Date(req.body.startDate)) {
+    if (startDate && endDate) {
+      if (new Date(endDate) < new Date(startDate)) {
         return res.status(400).json({
           success: false,
           message: "End date must be after start date",
@@ -194,12 +254,25 @@ exports.updateContract = async (req, res) => {
       }
     }
 
+    const dataToUpdate = {};
+    if (customerId !== undefined) dataToUpdate.customerId = customerId;
+    if (typeId !== undefined) dataToUpdate.typeId = typeId || null;
+    if (title !== undefined) dataToUpdate.title = title;
+    if (description !== undefined) dataToUpdate.description = description;
+    if (value !== undefined) dataToUpdate.value = parseFloat(value) || 0;
+    if (currency !== undefined) dataToUpdate.currency = currency;
+    if (startDate !== undefined) dataToUpdate.startDate = new Date(startDate);
+    if (endDate !== undefined) dataToUpdate.endDate = endDate ? new Date(endDate) : null;
+    if (status !== undefined) dataToUpdate.status = status;
+    if (isDeleted !== undefined) dataToUpdate.isDeleted = Boolean(isDeleted);
+    if (isHidden !== undefined) dataToUpdate.isHidden = Boolean(isHidden);
+
     const updated = await prisma.contract.updateMany({
       where: {
         id,
         businessId: req.business.id,
       },
-      data: req.body,
+      data: dataToUpdate,
     });
 
     if (updated.count === 0) {
