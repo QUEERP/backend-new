@@ -530,7 +530,7 @@ exports.getProjects = async (req, res) => {
       include: {
         customer: true,
         projectManager: true,
-        tasks: { include: { assignedTo: true, milestone: true } },
+        tasks: { include: { assignedTo: true, milestone: true, planning: true } },
         milestones: true,
         resourceAllocations: {
           include: { employee: true, task: true }
@@ -565,7 +565,7 @@ exports.getProjectDetails = async (req, res) => {
       include: {
         customer: true,
         projectManager: true,
-        tasks: { include: { assignedTo: true, milestone: true } },
+        tasks: { include: { assignedTo: true, milestone: true, planning: true } },
         milestones: true,
         resourceAllocations: { include: { employee: true, task: true } },
         timeEntries: { include: { employee: true, businessUser: { include: { user: true } } } },
@@ -686,19 +686,21 @@ exports.createTask = async (req, res) => {
     const taskNumber = `TSK-${String(taskCount + 1).padStart(5, '0')}`;
 
     const {
-      projectId, milestoneId, title, description, priority, status,
+      projectId, planningId, milestoneId, title, description, priority, status,
       assignedToId, startDate, dueDate, estimatedHours, actualHours,
       completionPercentage, checklist, dependencies, assignedTeam
     } = req.body;
 
-    if (!projectId) {
+    const effectiveProjectId = projectId || req.params.projectId;
+    if (!effectiveProjectId) {
       return res.status(400).json({ success: false, message: 'projectId is required.' });
     }
 
     const task = await prisma.projectTask.create({
       data: {
         businessId: req.business.id,
-        projectId,
+        projectId: effectiveProjectId,
+        planningId: planningId || null,
         taskNumber,
         title: title || 'Untitled Task',
         description: description || null,
@@ -715,6 +717,12 @@ exports.createTask = async (req, res) => {
         dependencies: dependencies || null,
         assignedTeam: assignedTeam || null,
       },
+      include: {
+        assignedTo: true,
+        project: true,
+        planning: true,
+        milestone: true,
+      }
     });
     res.json({ success: true, task });
   } catch (err) {
@@ -728,7 +736,7 @@ exports.getTasks = async (req, res) => {
   try {
     const tasks = await prisma.projectTask.findMany({
       where: { projectId: req.params.projectId, businessId: req.business.id },
-      include: { assignedTo: true, milestone: true }
+      include: { assignedTo: true, milestone: true, planning: true }
     });
     res.json({ success: true, tasks });
   } catch (err) {
@@ -740,7 +748,7 @@ exports.getGlobalTasks = async (req, res) => {
   try {
     const tasks = await prisma.projectTask.findMany({
       where: { businessId: req.business.id },
-      include: { assignedTo: true, project: true, milestone: true },
+      include: { assignedTo: true, project: true, milestone: true, planning: true },
       orderBy: { createdAt: 'desc' }
     });
     res.json({ success: true, tasks });
@@ -751,9 +759,34 @@ exports.getGlobalTasks = async (req, res) => {
 
 exports.updateTask = async (req, res) => {
   try {
+    const {
+      projectId, planningId, milestoneId, title, description, priority, status,
+      assignedToId, startDate, dueDate, estimatedHours, actualHours,
+      completionPercentage, checklist, dependencies, assignedTeam
+    } = req.body;
+
+    const data = {};
+    if (projectId !== undefined) data.projectId = projectId;
+    if (planningId !== undefined) data.planningId = planningId || null;
+    if (milestoneId !== undefined) data.milestoneId = milestoneId || null;
+    if (title !== undefined) data.title = title;
+    if (description !== undefined) data.description = description;
+    if (priority !== undefined) data.priority = priority;
+    if (status !== undefined) data.status = status;
+    if (assignedToId !== undefined) data.assignedToId = assignedToId || null;
+    if (startDate !== undefined) data.startDate = startDate ? new Date(startDate) : null;
+    if (dueDate !== undefined) data.dueDate = dueDate ? new Date(dueDate) : null;
+    if (estimatedHours !== undefined) data.estimatedHours = parseFloat(estimatedHours) || 0;
+    if (actualHours !== undefined) data.actualHours = parseFloat(actualHours) || 0;
+    if (completionPercentage !== undefined) data.completionPercentage = parseFloat(completionPercentage) || 0;
+    if (checklist !== undefined) data.checklist = checklist;
+    if (dependencies !== undefined) data.dependencies = dependencies;
+    if (assignedTeam !== undefined) data.assignedTeam = assignedTeam;
+
     const task = await prisma.projectTask.update({
       where: { id: req.params.id },
-      data: req.body,
+      data,
+      include: { assignedTo: true, project: true, milestone: true, planning: true }
     });
     res.json({ success: true, task });
   } catch (err) {
@@ -2285,6 +2318,12 @@ exports.createDocument = async (req, res) => {
     const { title, fileUrl, fileType, fileSize, mimeType, folder, entityType, entityId, projectId, description, tags, permission } = req.body;
     if (!title || !fileUrl) return res.status(400).json({ success: false, message: 'title and fileUrl are required' });
 
+    let validUploaderId = null;
+    if (req.user?.id) {
+      const u = await prisma.user.findUnique({ where: { id: req.user.id } });
+      if (u) validUploaderId = u.id;
+    }
+
     const doc = await prisma.projectDocument.create({
       data: {
         businessId: req.business.id,
@@ -2294,7 +2333,7 @@ exports.createDocument = async (req, res) => {
         description,
         tags: tags || [],
         permission: permission || 'Owner',
-        uploadedById: req.user?.id
+        uploadedById: validUploaderId
       }
     });
 
@@ -2586,10 +2625,36 @@ exports.getPlanningById = async (req, res) => {
   try {
     const planning = await prisma.projectPlanning.findFirst({
       where: { id: req.params.id, businessId: req.business.id },
-      include: { project: true }
+      include: {
+        project: {
+          include: {
+            projectManager: true,
+            resourceAllocations: {
+              include: { employee: true }
+            }
+          }
+        },
+        tasks: {
+          include: { assignedTo: true }
+        }
+      }
     });
     if (!planning) return res.status(404).json({ success: false, message: 'Planning not found.' });
-    res.json({ success: true, planning });
+
+    // Fetch documents attached to this planning schedule or project's planning folder
+    const documents = await prisma.projectDocument.findMany({
+      where: {
+        businessId: req.business.id,
+        isArchived: false,
+        OR: [
+          { entityType: 'PLANNING', entityId: planning.id },
+          ...(planning.projectId ? [{ projectId: planning.projectId, folder: 'Planning' }] : [])
+        ]
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json({ success: true, planning: { ...planning, documents } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -2597,18 +2662,84 @@ exports.getPlanningById = async (req, res) => {
 
 exports.updatePlanning = async (req, res) => {
   try {
+    const {
+      projectId, planName, phase, sprint, execType, status, priority, description,
+      startDate, endDate, expectedCompletion, duration, workingDays, milestone, dependency,
+      projectManagerId, taskOwnerId, department, resources, estimatedHours, billableHours, resourceCost,
+      taskTitle, subTask, sequence, criticalTask, recurring, reminder,
+      initialProgress, currentProgress, completionPercentage, progressStatus, riskLevel,
+      estimatedCost, actualCost, variance, currency,
+      comments, privateNotes, approvals
+    } = req.body;
+
+    const data = {};
+    if (projectId !== undefined) data.projectId = projectId;
+    if (planName !== undefined) data.planName = planName;
+    if (phase !== undefined) data.phase = phase || null;
+    if (sprint !== undefined) data.sprint = sprint || null;
+    if (execType !== undefined) data.execType = execType || null;
+    if (status !== undefined) data.status = status;
+    if (priority !== undefined) data.priority = priority || null;
+    if (description !== undefined) data.description = description || null;
+    if (startDate !== undefined) data.startDate = startDate ? new Date(startDate) : null;
+    if (endDate !== undefined) data.endDate = endDate ? new Date(endDate) : null;
+    if (expectedCompletion !== undefined) data.expectedCompletion = expectedCompletion ? new Date(expectedCompletion) : null;
+    if (duration !== undefined) data.duration = duration != null && duration !== '' ? parseInt(duration) : null;
+    if (workingDays !== undefined) data.workingDays = workingDays != null && workingDays !== '' ? parseInt(workingDays) : null;
+    if (milestone !== undefined) data.milestone = milestone || null;
+    if (dependency !== undefined) data.dependency = dependency || null;
+    if (projectManagerId !== undefined) data.projectManagerId = projectManagerId || null;
+    if (department !== undefined) data.department = department || null;
+    if (taskOwnerId !== undefined) data.taskOwnerId = taskOwnerId || null;
+    if (resources !== undefined) data.resources = resources != null && resources !== '' ? parseInt(resources) : null;
+    if (estimatedHours !== undefined) data.estimatedHours = parseFloat(estimatedHours) || 0;
+    if (billableHours !== undefined) data.billableHours = parseFloat(billableHours) || 0;
+    if (resourceCost !== undefined) data.resourceCost = parseFloat(resourceCost) || 0;
+    if (taskTitle !== undefined) data.taskTitle = taskTitle || null;
+    if (subTask !== undefined) data.subTask = subTask || null;
+    if (sequence !== undefined) data.sequence = sequence != null && sequence !== '' ? parseInt(sequence) : null;
+    if (criticalTask !== undefined) data.criticalTask = criticalTask === true || criticalTask === 'true';
+    if (recurring !== undefined) data.recurring = recurring === true || recurring === 'true';
+    if (reminder !== undefined) data.reminder = reminder != null && reminder !== '' ? parseInt(reminder) : null;
+    if (initialProgress !== undefined) data.initialProgress = parseFloat(initialProgress) || 0;
+    if (currentProgress !== undefined) data.currentProgress = parseFloat(currentProgress) || 0;
+    if (completionPercentage !== undefined) data.completionPercentage = parseFloat(completionPercentage) || 0;
+    if (progressStatus !== undefined) data.progressStatus = progressStatus || null;
+    if (riskLevel !== undefined) data.riskLevel = riskLevel || null;
+    if (estimatedCost !== undefined) data.estimatedCost = parseFloat(estimatedCost) || 0;
+    if (actualCost !== undefined) data.actualCost = parseFloat(actualCost) || 0;
+    if (variance !== undefined) data.variance = parseFloat(variance) || 0;
+    if (currency !== undefined) data.currency = currency || null;
+    if (comments !== undefined) data.comments = comments || null;
+    if (privateNotes !== undefined) data.privateNotes = privateNotes || null;
+    if (approvals !== undefined) data.approvals = approvals || null;
+
     const planning = await prisma.projectPlanning.update({
       where: { id: req.params.id },
-      data: req.body,
+      data,
+      include: {
+        project: {
+          include: {
+            projectManager: true,
+            resourceAllocations: {
+              include: { employee: true }
+            }
+          }
+        }
+      }
     });
     res.json({ success: true, planning });
   } catch (err) {
+    console.error('Update Planning Error:', err);
     res.status(400).json({ success: false, message: err.message });
   }
 };
 
 exports.deletePlanning = async (req, res) => {
   try {
+    await prisma.projectDocument.deleteMany({
+      where: { entityType: 'PLANNING', entityId: req.params.id }
+    }).catch(err => console.warn('Could not clean up planning documents:', err));
     await prisma.projectPlanning.delete({ where: { id: req.params.id } });
     res.json({ success: true, message: 'Planning deleted.' });
   } catch (err) {

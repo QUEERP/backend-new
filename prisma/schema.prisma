@@ -2760,6 +2760,7 @@ model ProjectTask {
   businessId           String
   projectId            String
   milestoneId          String?
+  planningId           String?
   taskNumber           String               @unique
   title                String
   description          String?
@@ -2781,9 +2782,12 @@ model ProjectTask {
   assignedTo           User?                @relation("TaskAssignedTo", fields: [assignedToId], references: [id])
   business             Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
   milestone            ProjectMilestone?    @relation(fields: [milestoneId], references: [id])
+  planning             ProjectPlanning?     @relation(fields: [planningId], references: [id])
   project              Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   resourceAllocations  ResourceAllocation[]
   timeEntries          TimeEntry[]
+
+  @@index([planningId])
 }
 
 model ProjectPlanning {
@@ -2832,8 +2836,9 @@ model ProjectPlanning {
   approvals            String?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
-  business             Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  project              Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  business             Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project              Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tasks                ProjectTask[]
 
   @@index([businessId])
   @@index([projectId])
