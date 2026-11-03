@@ -46,6 +46,7 @@ const accontRoutes = require("./routes/accountRoutes");
 const journalEntryRoutes = require("./routes/journalRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const projectOperationsRoutes = require("./routes/projectOperationsRoutes");
+const milestoneRoutes = require("./routes/milestoneRoutes");
 const taskRoutes = require("./routes/taskRoutes");
 const documentRoutes = require("./routes/documentRoutes");
 
@@ -184,6 +185,7 @@ app.use("/api/journal-entries", journalEntryRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/projects", projectOperationsRoutes);
 app.use("/api/project-operations", projectOperationsRoutes);
+app.use("/api/milestones", milestoneRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/employee-documents", documentRoutes);

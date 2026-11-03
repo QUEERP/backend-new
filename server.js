@@ -11,7 +11,7 @@ app.get("/health", (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`http://localhost:${PORT}`);
-  liveRateScheduler.start();
+  liveRateScheduler.start(); // Active
 });
 
 // Fixed: Correctly binding keepAliveTimeout to the server instance

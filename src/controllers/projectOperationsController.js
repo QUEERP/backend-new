@@ -3,6 +3,7 @@ const { createStockMovement } = require("../services/inventory/movement.service"
 const purchaseRequestService = require("../services/purchase/purchaseRequest.service");
 const { generateDocNumber } = require("../services/sales/quotation.service");
 const generateInvoiceNumber = require("../utils/generateInvoiceNumber");
+const { logAction, triggerNotification } = require("../services/sales/audit.service");
 
 /**
  * Safely resolves a candidate ID (User ID, BusinessUser ID, or Employee ID) to a valid User ID
@@ -621,64 +622,1230 @@ exports.updateProject = async (req, res) => {
 };
 
 // ==========================================
-// MILESTONES
+// MILESTONES HELPERS & VALIDATION
 // ==========================================
+
+function findDependencyCycle(allEdges, milestoneCodeMap) {
+  const adj = new Map();
+  for (const e of allEdges) {
+    if (!adj.has(e.from)) adj.set(e.from, []);
+    adj.get(e.from).push(e.to);
+  }
+
+  const visited = new Set();
+  const recStack = new Set();
+  const parent = new Map();
+  let cycleNodes = null;
+
+  function dfs(u) {
+    visited.add(u);
+    recStack.add(u);
+
+    const neighbors = adj.get(u) || [];
+    for (const v of neighbors) {
+      if (!visited.has(v)) {
+        parent.set(v, u);
+        if (dfs(v)) return true;
+      } else if (recStack.has(v)) {
+        const path = [v];
+        let curr = u;
+        while (curr && curr !== v) {
+          path.push(curr);
+          curr = parent.get(curr);
+        }
+        path.push(v);
+        path.reverse();
+        cycleNodes = path;
+        return true;
+      }
+    }
+
+    recStack.delete(u);
+    return false;
+  }
+
+  for (const [node] of adj) {
+    if (!visited.has(node)) {
+      if (dfs(node)) break;
+    }
+  }
+
+  if (cycleNodes) {
+    return cycleNodes.map(id => milestoneCodeMap[id] || id);
+  }
+  return null;
+}
+
+function computeMilestoneDuration(m) {
+  if (m && m.startDate && m.dueDate) {
+    const diff = new Date(m.dueDate).getTime() - new Date(m.startDate).getTime();
+    return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+  }
+  return null;
+}
+
+function formatMilestoneResponse(m) {
+  if (!m) return null;
+  const duration = computeMilestoneDuration(m);
+  return {
+    ...m,
+    duration
+  };
+}
+
+async function recalculateMilestoneProgress(milestoneId, tx) {
+  if (!milestoneId) return 0;
+  const client = tx || prisma;
+  try {
+    const milestone = await client.projectMilestone.findUnique({
+      where: { id: milestoneId },
+      include: {
+        tasks: { select: { id: true, completionPercentage: true, status: true } },
+        items: { select: { id: true, isDone: true } }
+      }
+    });
+    if (!milestone) return 0;
+
+    let calculatedProgress = 0;
+    if (milestone.tasks && milestone.tasks.length > 0) {
+      const sum = milestone.tasks.reduce((acc, t) => {
+        const isDone = t.status === 'DONE' || String(t.status).toUpperCase() === 'COMPLETED';
+        return acc + (isDone ? 100 : (Number(t.completionPercentage) || 0));
+      }, 0);
+      calculatedProgress = Math.min(100, Math.max(0, Math.round(sum / milestone.tasks.length)));
+    } else if (milestone.items && milestone.items.length > 0) {
+      const doneCount = milestone.items.filter(i => i.isDone).length;
+      calculatedProgress = Math.min(100, Math.max(0, Math.round((doneCount / milestone.items.length) * 100)));
+    }
+
+    const updateData = { completion: calculatedProgress };
+    if (calculatedProgress === 100 && milestone.status !== 'COMPLETED') {
+      updateData.status = 'COMPLETED';
+      if (!milestone.actualCompletion) updateData.actualCompletion = new Date();
+    } else if (calculatedProgress < 100 && milestone.status === 'COMPLETED') {
+      updateData.status = 'IN_PROGRESS';
+    }
+
+    await client.projectMilestone.update({
+      where: { id: milestoneId },
+      data: updateData
+    });
+
+    return calculatedProgress;
+  } catch (err) {
+    console.error(`recalculateMilestoneProgress error for ${milestoneId}:`, err);
+    return 0;
+  }
+}
+exports.recalculateMilestoneProgress = recalculateMilestoneProgress;
+
+async function validateMilestoneInput({ businessId, projectId, milestoneId, data, tx, isUpdate = false }) {
+  const client = tx || prisma;
+  const rawStatus = data.status || 'NOT_STARTED';
+  const isDraft = (rawStatus === 'DRAFT');
+
+  if (!isDraft && !isUpdate) {
+    if (!projectId) throw new Error('Project is required.');
+    if (!data.name && !data.title) throw new Error('Milestone Name is required.');
+    if (!data.dueDate && !data.targetDate) throw new Error('Due Date is required.');
+  }
+
+  if (isUpdate && (data.name !== undefined || data.title !== undefined)) {
+    const n = data.name || data.title;
+    if (!n || !String(n).trim()) throw new Error('Milestone Name cannot be empty.');
+  }
+
+  const startDate = data.startDate ? new Date(data.startDate) : null;
+  const dueDate = (data.dueDate || data.targetDate) ? new Date(data.dueDate || data.targetDate) : null;
+  if (startDate && dueDate && dueDate < startDate) {
+    throw new Error('Due date must be on or after start date.');
+  }
+
+  if (data.planningId) {
+    const plan = await client.projectPlanning.findFirst({
+      where: { id: data.planningId, projectId, businessId }
+    });
+    if (!plan) throw new Error('Selected planning schedule does not belong to this project and business.');
+  }
+
+  if (data.reminderEnabled || data.reminder) {
+    const days = parseInt(data.reminderDaysBefore, 10);
+    if (isNaN(days) || days < 1) {
+      throw new Error('Reminder days before must be at least 1 day.');
+    }
+  }
+
+  const risk = String(data.riskLevel || data.risk || '').toUpperCase();
+  if (['MEDIUM', 'HIGH', 'CRITICAL'].includes(risk)) {
+    const mitigation = data.riskMitigation || data.riskNotes;
+    if (!mitigation || !String(mitigation).trim()) {
+      throw new Error(`Risk mitigation notes are required when risk level is ${data.riskLevel || data.risk}.`);
+    }
+  }
+
+  // Billing & Payment Weight check
+  const isBilling = Boolean(data.isBilling || data.billingMilestone);
+  let finalWeight = 0;
+  if (!isBilling) {
+    finalWeight = 0;
+  } else {
+    finalWeight = parseFloat(data.weight !== undefined ? data.weight : data.paymentWeight) || 0;
+    if (finalWeight < 0 || finalWeight > 100) {
+      throw new Error('Payment weight must be between 0 and 100%.');
+    }
+    const otherMilestones = await client.projectMilestone.findMany({
+      where: {
+        projectId,
+        businessId,
+        isBilling: true,
+        ...(milestoneId ? { id: { not: milestoneId } } : {})
+      },
+      select: { weight: true }
+    });
+    const currentSum = otherMilestones.reduce((acc, m) => acc + (Number(m.weight) || 0), 0);
+    const remaining = Math.max(0, parseFloat((100 - currentSum).toFixed(2)));
+    if (currentSum + finalWeight > 100) {
+      throw new Error(`Payment weight exceeds remaining capacity of ${remaining}%. Current total would be ${(currentSum + finalWeight).toFixed(1)}%.`);
+    }
+  }
+
+  // Dependencies check and cycle check
+  const deps = data.dependencies || data.dependsOn;
+  if (deps && Array.isArray(deps) && deps.length > 0) {
+    const seenPreds = new Set();
+    for (const dep of deps) {
+      const predId = (typeof dep === 'string') ? dep : (dep.predecessorId || dep.id);
+      if (!predId) continue;
+      if (milestoneId && predId === milestoneId) {
+        throw new Error('A milestone cannot depend on itself.');
+      }
+      if (seenPreds.has(predId)) {
+        throw new Error('Duplicate predecessor milestone in dependencies.');
+      }
+      seenPreds.add(predId);
+    }
+
+    if (seenPreds.size > 0) {
+      const predMilestones = await client.projectMilestone.findMany({
+        where: { id: { in: Array.from(seenPreds) }, projectId, businessId },
+        select: { id: true, milestoneCode: true }
+      });
+      if (predMilestones.length !== seenPreds.size) {
+        throw new Error('All dependency predecessors must belong to the same project and business.');
+      }
+
+      const projectMilestones = await client.projectMilestone.findMany({
+        where: { projectId, businessId },
+        select: { id: true, milestoneCode: true }
+      });
+      const codeMap = {};
+      projectMilestones.forEach(m => { codeMap[m.id] = m.milestoneCode; });
+
+      const effectiveMilestoneId = milestoneId || 'NEW_MILESTONE';
+      codeMap[effectiveMilestoneId] = data.milestoneCode || 'New Milestone';
+
+      const existingDeps = await client.milestoneDependency.findMany({
+        where: { businessId, milestone: { projectId } },
+        select: { milestoneId: true, predecessorId: true }
+      });
+      const filteredDeps = milestoneId
+        ? existingDeps.filter(d => d.milestoneId !== milestoneId)
+        : existingDeps;
+
+      const allEdges = filteredDeps.map(d => ({ from: d.milestoneId, to: d.predecessorId }));
+      for (const predId of seenPreds) {
+        allEdges.push({ from: effectiveMilestoneId, to: predId });
+      }
+
+      const cycle = findDependencyCycle(allEdges, codeMap);
+      if (cycle) {
+        throw new Error(`Cyclic dependency detected: ${cycle.join(' -> ')}`);
+      }
+    }
+  }
+
+  return { isBilling, finalWeight, startDate, dueDate };
+}
+
+// ==========================================
+// MILESTONES CONTROLLERS
+// ==========================================
+
+exports.getNextMilestoneCode = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const milestones = await prisma.projectMilestone.findMany({
+      where: { businessId },
+      select: { milestoneCode: true }
+    });
+
+    let maxNum = 0;
+    for (const m of milestones) {
+      if (m.milestoneCode && m.milestoneCode.startsWith('MIL-')) {
+        const num = parseInt(m.milestoneCode.slice(4), 10);
+        if (!isNaN(num) && num > maxNum) maxNum = num;
+      }
+    }
+    const nextCode = `MIL-${String(maxNum + 1).padStart(4, '0')}`;
+    res.json({ success: true, nextCode });
+  } catch (err) {
+    console.error('getNextMilestoneCode error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.getMilestoneFormOptions = async (req, res) => {
+  try {
+    const businessId = req.business?.id;
+    const { projectId } = req.query;
+
+    const [
+      plans, 
+      projectMilestones, 
+      users, 
+      business, 
+      categories, 
+      types, 
+      terminology, 
+      projectBudget,
+      project
+    ] = await Promise.all([
+      projectId ? prisma.projectPlanning.findMany({
+        where: { businessId, projectId },
+        select: { 
+          id: true, 
+          planCode: true, 
+          planName: true, 
+          phase: true, 
+          sprint: true, 
+          startDate: true, 
+          endDate: true, 
+          status: true,
+          projectManagerId: true,
+          taskOwnerId: true
+        },
+        orderBy: { createdAt: 'asc' }
+      }) : [],
+      projectId ? prisma.projectMilestone.findMany({
+        where: { businessId, projectId },
+        select: { id: true, milestoneCode: true, name: true, dueDate: true, status: true, weight: true, isBilling: true },
+        orderBy: { createdAt: 'asc' }
+      }) : [],
+      prisma.user.findMany({
+        where: {
+          OR: [
+            { memberships: { some: { businessId, isActive: true } } },
+            { businessesOwned: { some: { id: businessId } } }
+          ]
+        },
+        select: { id: true, name: true, email: true, role: true }
+      }),
+
+      prisma.business.findUnique({
+        where: { id: businessId },
+        select: { currency: true }
+      }),
+      prisma.projectMaster.findMany({
+        where: { businessId, type: 'MILESTONE_CATEGORY', isActive: true },
+        select: { id: true, name: true }
+      }),
+      prisma.projectMaster.findMany({
+        where: { businessId, type: 'MILESTONE_TYPE', isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' }
+      }),
+      prisma.projectMaster.findMany({
+        where: { businessId, type: 'TERMINOLOGY', isActive: true },
+        select: { id: true, name: true, description: true, config: true }
+      }),
+      projectId ? prisma.projectBudget.findFirst({
+        where: { businessId, projectId },
+        select: { currency: true }
+      }) : null,
+      projectId ? prisma.project.findFirst({
+        where: { businessId, id: projectId },
+        include: {
+          projectManager: { select: { id: true, name: true, email: true, role: true } },
+          resourceAllocations: {
+            include: {
+              employee: { select: { id: true, name: true, email: true, role: true } }
+            }
+          },
+          plannings: {
+            select: {
+              id: true,
+              planCode: true,
+              planName: true,
+              projectManagerId: true,
+              taskOwnerId: true
+            }
+          },
+          tasks: {
+            select: {
+              assignedToId: true,
+              assignedTo: { select: { id: true, name: true, email: true, role: true } }
+            }
+          }
+        }
+      }) : null
+    ]);
+
+    // Build linkedUsers: ONLY users connected to this project or its plannings
+    const linkedMap = new Map();
+    if (project) {
+      if (project.projectManager) {
+        linkedMap.set(project.projectManager.id, {
+          id: project.projectManager.id,
+          name: project.projectManager.name,
+          email: project.projectManager.email,
+          role: project.projectManager.role || 'Project Manager',
+          badge: 'Project Manager'
+        });
+      }
+
+      if (Array.isArray(project.resourceAllocations)) {
+        project.resourceAllocations.forEach(ra => {
+          if (ra.employee) {
+            linkedMap.set(ra.employee.id, {
+              id: ra.employee.id,
+              name: ra.employee.name,
+              email: ra.employee.email,
+              role: ra.role || ra.employee.role || 'Project Team',
+              badge: ra.role || 'Allocated Resource'
+            });
+          }
+        });
+      }
+
+      const allPlannings = project.plannings?.length > 0 ? project.plannings : plans;
+      allPlannings.forEach(pl => {
+        if (pl.projectManagerId && !linkedMap.has(pl.projectManagerId)) {
+          linkedMap.set(pl.projectManagerId, { id: pl.projectManagerId, badge: 'Planning Manager' });
+        }
+        if (pl.taskOwnerId) {
+          let ownerIds = [];
+          try {
+            if (typeof pl.taskOwnerId === 'string' && pl.taskOwnerId.startsWith('[') && pl.taskOwnerId.endsWith(']')) {
+              ownerIds = JSON.parse(pl.taskOwnerId);
+            } else if (typeof pl.taskOwnerId === 'string') {
+              ownerIds = pl.taskOwnerId.split(',').map(s => s.trim()).filter(Boolean);
+            }
+          } catch (e) {
+            ownerIds = [pl.taskOwnerId];
+          }
+          ownerIds.forEach(id => {
+            if (id && !linkedMap.has(id)) {
+              linkedMap.set(id, { id, badge: 'Planning Task Owner' });
+            }
+          });
+        }
+      });
+
+      if (Array.isArray(project.tasks)) {
+        project.tasks.forEach(t => {
+          if (t.assignedTo && !linkedMap.has(t.assignedTo.id)) {
+            linkedMap.set(t.assignedTo.id, {
+              id: t.assignedTo.id,
+              name: t.assignedTo.name,
+              email: t.assignedTo.email,
+              role: t.assignedTo.role || 'Team Member',
+              badge: 'Task Assignee'
+            });
+          }
+        });
+      }
+
+      // Populate names and emails for any id-only entries in linkedMap
+      const missingIds = Array.from(linkedMap.entries()).filter(([_, u]) => !u.name).map(([id]) => id);
+      if (missingIds.length > 0) {
+        const resolvedUsers = await prisma.user.findMany({
+          where: { id: { in: missingIds } },
+          select: { id: true, name: true, email: true, role: true }
+        });
+        resolvedUsers.forEach(u => {
+          const existing = linkedMap.get(u.id);
+          linkedMap.set(u.id, {
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            role: u.role || 'User',
+            badge: existing?.badge || 'Project Linked'
+          });
+        });
+      }
+    }
+
+    const linkedUsers = Array.from(linkedMap.values());
+    const linkedUserIds = linkedUsers.map(u => u.id);
+
+    const defaultProjectManagerId = project?.projectManagerId || 
+      plans.find(p => p.projectManagerId)?.projectManagerId || 
+      (linkedUsers.find(u => u.badge === 'Project Manager' || u.badge === 'Planning Manager')?.id) || 
+      null;
+
+    const defaultProjectManager = project?.projectManager || 
+      linkedUsers.find(u => u.id === defaultProjectManagerId) || 
+      null;
+
+    const defaultDepts = ['Engineering', 'Operations', 'Consulting', 'Sales', 'Finance', 'Design', 'QA', 'Management'];
+    const deptSet = new Set(defaultDepts);
+
+    const defaultCurrency = projectBudget?.currency || business?.currency || 'USD';
+
+    let remainingPaymentWeight = 100;
+    if (projectMilestones && projectMilestones.length > 0) {
+      const usedWeight = projectMilestones.reduce((acc, m) => acc + (m.isBilling ? (Number(m.weight) || 0) : 0), 0);
+      remainingPaymentWeight = Math.max(0, parseFloat((100 - usedWeight).toFixed(2)));
+    }
+
+    // Comprehensive list of milestone types
+    const ALL_STANDARD_TYPES = [
+      'Contractual',
+      'Internal',
+      'Regulatory',
+      'Review Gate',
+      'Deliverable',
+      'Payment / Billing',
+      'Phase Gate',
+      'Technical / Architectural',
+      'Testing / QA',
+      'Go-Live / Deployment',
+      'Customer Sign-Off',
+      'Procurement',
+      'Operational',
+      'Maintenance & Support'
+    ];
+    const typesSet = new Set([...types.map(t => t.name), ...ALL_STANDARD_TYPES]);
+
+    res.json({
+      success: true,
+      options: {
+        plans,
+        projectMilestones,
+        users,
+        linkedUsers,
+        linkedUserIds,
+        defaultProjectManagerId,
+        defaultProjectManager,
+        departments: Array.from(deptSet),
+        categories: categories.map(c => c.name),
+        types: Array.from(typesSet),
+        terminology: terminology.reduce((acc, t) => {
+          acc[t.name] = (t.config && t.config.label) || t.description || t.name;
+          return acc;
+        }, {}),
+        defaultCurrency,
+        remainingPaymentWeight
+      }
+    });
+  } catch (err) {
+    console.error('getMilestoneFormOptions error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
 
 exports.createMilestone = async (req, res) => {
   try {
-    const { title, description, targetDate, completionPercentage, status, paymentWeight, ownerId } = req.body;
+    const businessId = req.business.id;
+    const userId = req.user?.id || req.user?.userId;
+    const userEmail = req.user?.email;
+    const effectiveProjectId = req.params.projectId || req.body.projectId;
 
-    if (!req.params.projectId) {
-      return res.status(400).json({ success: false, message: 'projectId is required in URL.' });
+    const { isBilling, finalWeight, startDate, dueDate } = await validateMilestoneInput({
+      businessId,
+      projectId: effectiveProjectId,
+      data: req.body
+    });
+
+    let milestoneCode = req.body.milestoneCode;
+    if (!milestoneCode) {
+      const milestones = await prisma.projectMilestone.findMany({
+        where: { businessId },
+        select: { milestoneCode: true }
+      });
+      let maxNum = 0;
+      for (const m of milestones) {
+        if (m.milestoneCode && m.milestoneCode.startsWith('MIL-')) {
+          const num = parseInt(m.milestoneCode.slice(4), 10);
+          if (!isNaN(num) && num > maxNum) maxNum = num;
+        }
+      }
+      milestoneCode = `MIL-${String(maxNum + 1).padStart(4, '0')}`;
     }
 
-    const milestone = await prisma.projectMilestone.create({
-      data: {
-        businessId: req.business.id,
-        projectId: req.params.projectId,
-        name: title || 'Untitled Milestone',
-        description: description || null,
-        ownerId: ownerId || null,
-        weight: parseFloat(paymentWeight) || 0,
-        dueDate: targetDate ? new Date(targetDate) : null,
-        status: status || 'Pending',
-        completion: parseFloat(completionPercentage) || 0,
-      },
-    });
-    res.json({ success: true, milestone });
+    const {
+      title, name, description, priority, categoryId, category, typeId, milestoneType,
+      planningId, tags, expectedCompletion, actualCompletion,
+      reminderEnabled, reminder, reminderDaysBefore,
+      projectManagerId, approverId, ownerId, department, watcherIds,
+      estimatedCost, currency, invoiceId, status,
+      riskLevel, riskMitigation, completionNotes, items, checklist, dependencies, dependsOn
+    } = req.body;
+
+    const milestoneName = name || title || 'Untitled Milestone';
+    const milestoneStatus = (status === 'DRAFT') ? 'DRAFT' : (status ? String(status).toUpperCase() : 'NOT_STARTED');
+
+    const createdMilestone = await prisma.$transaction(async (tx) => {
+      const m = await tx.projectMilestone.create({
+        data: {
+          businessId,
+          projectId: effectiveProjectId,
+          milestoneCode,
+          name: milestoneName,
+          description: description || null,
+          categoryId: categoryId || category || null,
+          typeId: typeId || milestoneType || null,
+          priority: priority ? String(priority).toUpperCase() : null,
+          planningId: planningId || null,
+          tags: Array.isArray(tags) ? tags : (tags ? [tags] : []),
+          startDate,
+          dueDate,
+          expectedCompletion: expectedCompletion ? new Date(expectedCompletion) : null,
+          actualCompletion: actualCompletion ? new Date(actualCompletion) : null,
+          reminderEnabled: Boolean(reminderEnabled || reminder),
+          reminderDaysBefore: reminderDaysBefore ? parseInt(reminderDaysBefore, 10) : (reminder ? 3 : null),
+          projectManagerId: projectManagerId || null,
+          approverId: approverId || null,
+          ownerId: ownerId || null,
+          department: department || null,
+          watcherIds: Array.isArray(watcherIds) ? watcherIds : [],
+          isBilling,
+          weight: finalWeight,
+          estimatedCost: parseFloat(estimatedCost) || 0,
+          currency: currency || null,
+          invoiceId: invoiceId || null,
+          status: milestoneStatus,
+          completion: 0,
+          riskLevel: riskLevel ? String(riskLevel).toUpperCase() : null,
+          riskMitigation: riskMitigation || null,
+          completionNotes: completionNotes || null,
+          createdById: userId || null,
+          updatedById: userId || null,
+        }
+      });
+
+      const rawItems = items || checklist || [];
+      const itemsToCreate = [];
+      if (Array.isArray(rawItems) && rawItems.length > 0) {
+        rawItems.forEach((it, idx) => {
+          if (it.title || typeof it === 'string') {
+            itemsToCreate.push({
+              businessId,
+              milestoneId: m.id,
+              kind: it.kind === 'ACCEPTANCE_CRITERIA' ? 'ACCEPTANCE_CRITERIA' : 'DELIVERABLE',
+              title: (typeof it === 'string' ? it : it.title).trim(),
+              ownerId: it.ownerId || null,
+              isDone: Boolean(it.isDone),
+              doneAt: it.isDone ? new Date() : null,
+              sortOrder: it.sortOrder !== undefined ? parseInt(it.sortOrder, 10) : idx,
+            });
+          }
+        });
+      } else {
+        if (req.body.deliverables && typeof req.body.deliverables === 'string') {
+          req.body.deliverables.split('\n').filter(s => s.trim()).forEach((d, idx) => {
+            itemsToCreate.push({
+              businessId,
+              milestoneId: m.id,
+              kind: 'DELIVERABLE',
+              title: d.trim(),
+              sortOrder: idx
+            });
+          });
+        }
+        if (req.body.acceptanceCriteria && typeof req.body.acceptanceCriteria === 'string') {
+          req.body.acceptanceCriteria.split('\n').filter(s => s.trim()).forEach((ac, idx) => {
+            itemsToCreate.push({
+              businessId,
+              milestoneId: m.id,
+              kind: 'ACCEPTANCE_CRITERIA',
+              title: ac.trim(),
+              sortOrder: idx
+            });
+          });
+        }
+      }
+
+      if (itemsToCreate.length > 0) {
+        await tx.milestoneItem.createMany({ data: itemsToCreate });
+      }
+
+      const rawDeps = dependencies || dependsOn || [];
+      if (Array.isArray(rawDeps) && rawDeps.length > 0) {
+        const depsToCreate = [];
+        for (const dep of rawDeps) {
+          const predId = (typeof dep === 'string') ? dep : (dep.predecessorId || dep.id);
+          if (predId) {
+            depsToCreate.push({
+              businessId,
+              milestoneId: m.id,
+              predecessorId: predId,
+              type: dep.type || 'FINISH_TO_START',
+              lagDays: parseInt(dep.lagDays, 10) || 0
+            });
+          }
+        }
+        if (depsToCreate.length > 0) {
+          await tx.milestoneDependency.createMany({ data: depsToCreate });
+        }
+      }
+
+      if (planningId) {
+        await tx.projectPlanning.updateMany({
+          where: { id: planningId, businessId },
+          data: { milestone: milestoneName }
+        });
+      }
+
+      await recalculateMilestoneProgress(m.id, tx);
+
+      await logAction(tx, {
+        businessId,
+        userId,
+        userEmail,
+        action: 'CREATE',
+        module: 'PROJECT_MILESTONE',
+        entityType: 'ProjectMilestone',
+        entityId: m.id,
+        details: { milestoneCode: m.milestoneCode, name: m.name, status: m.status }
+      });
+
+      return await tx.projectMilestone.findUnique({
+        where: { id: m.id },
+        include: {
+          project: { select: { id: true, projectName: true, projectCode: true } },
+          planning: { select: { id: true, planCode: true, planName: true, phase: true, sprint: true } },
+          owner: { select: { id: true, name: true, email: true } },
+          projectManager: { select: { id: true, name: true, email: true } },
+          approver: { select: { id: true, name: true, email: true } },
+          items: { orderBy: { sortOrder: 'asc' } },
+          dependsOn: { include: { predecessor: { select: { id: true, milestoneCode: true, name: true, status: true, dueDate: true } } } },
+          dependedOnBy: { include: { milestone: { select: { id: true, milestoneCode: true, name: true, status: true, dueDate: true } } } },
+          tasks: { select: { id: true, taskNumber: true, title: true, status: true, completionPercentage: true } }
+        }
+      });
+    }, { maxWait: 15000, timeout: 30000 });
+
+    res.status(201).json({ success: true, milestone: formatMilestoneResponse(createdMilestone) });
   } catch (err) {
-    console.error('Create Milestone Error:', err.message);
+    console.error('Create Milestone Error:', err);
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+exports.updateMilestone = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const userId = req.user?.id || req.user?.userId;
+    const userEmail = req.user?.email;
+    const milestoneId = req.params.id;
+
+    const existing = await prisma.projectMilestone.findFirst({
+      where: { id: milestoneId, businessId }
+    });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: 'Milestone not found.' });
+    }
+
+    const effectiveProjectId = existing.projectId;
+    const { isBilling, finalWeight, startDate, dueDate } = await validateMilestoneInput({
+      businessId,
+      projectId: effectiveProjectId,
+      milestoneId,
+      data: req.body,
+      isUpdate: true
+    });
+
+    const {
+      title, name, description, priority, categoryId, category, typeId, milestoneType,
+      planningId, tags, expectedCompletion, actualCompletion,
+      reminderEnabled, reminder, reminderDaysBefore,
+      projectManagerId, approverId, ownerId, department, watcherIds,
+      estimatedCost, currency, invoiceId, status,
+      riskLevel, riskMitigation, completionNotes, items, checklist, dependencies, dependsOn
+    } = req.body;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const updateData = {
+        updatedById: userId || null,
+        isBilling,
+        weight: finalWeight,
+      };
+
+      if (name !== undefined || title !== undefined) updateData.name = name || title;
+      if (description !== undefined) updateData.description = description || null;
+      if (categoryId !== undefined || category !== undefined) updateData.categoryId = categoryId || category || null;
+      if (typeId !== undefined || milestoneType !== undefined) updateData.typeId = typeId || milestoneType || null;
+      if (priority !== undefined) updateData.priority = priority ? String(priority).toUpperCase() : null;
+      if (planningId !== undefined) updateData.planningId = planningId || null;
+      if (tags !== undefined) updateData.tags = Array.isArray(tags) ? tags : (tags ? [tags] : []);
+      if (startDate !== undefined) updateData.startDate = startDate;
+      if (dueDate !== undefined) updateData.dueDate = dueDate;
+      if (expectedCompletion !== undefined) updateData.expectedCompletion = expectedCompletion ? new Date(expectedCompletion) : null;
+      if (actualCompletion !== undefined) updateData.actualCompletion = actualCompletion ? new Date(actualCompletion) : null;
+      if (reminderEnabled !== undefined || reminder !== undefined) updateData.reminderEnabled = Boolean(reminderEnabled ?? reminder);
+      if (reminderDaysBefore !== undefined) updateData.reminderDaysBefore = reminderDaysBefore ? parseInt(reminderDaysBefore, 10) : null;
+      if (projectManagerId !== undefined) updateData.projectManagerId = projectManagerId || null;
+      if (approverId !== undefined) updateData.approverId = approverId || null;
+      if (ownerId !== undefined) updateData.ownerId = ownerId || null;
+      if (department !== undefined) updateData.department = department || null;
+      if (watcherIds !== undefined) updateData.watcherIds = Array.isArray(watcherIds) ? watcherIds : [];
+      if (estimatedCost !== undefined) updateData.estimatedCost = parseFloat(estimatedCost) || 0;
+      if (currency !== undefined) updateData.currency = currency || null;
+      if (invoiceId !== undefined) updateData.invoiceId = invoiceId || null;
+      if (status !== undefined) updateData.status = String(status).toUpperCase();
+      if (riskLevel !== undefined) updateData.riskLevel = riskLevel ? String(riskLevel).toUpperCase() : null;
+      if (riskMitigation !== undefined) updateData.riskMitigation = riskMitigation || null;
+      if (completionNotes !== undefined) updateData.completionNotes = completionNotes || null;
+
+      const m = await tx.projectMilestone.update({
+        where: { id: milestoneId },
+        data: updateData
+      });
+
+      const rawItems = items || checklist;
+      if (rawItems !== undefined && Array.isArray(rawItems)) {
+        await tx.milestoneItem.deleteMany({ where: { milestoneId } });
+        const itemsToCreate = rawItems.filter(it => it.title || typeof it === 'string').map((it, idx) => ({
+          businessId,
+          milestoneId,
+          kind: it.kind === 'ACCEPTANCE_CRITERIA' ? 'ACCEPTANCE_CRITERIA' : 'DELIVERABLE',
+          title: (typeof it === 'string' ? it : it.title).trim(),
+          ownerId: it.ownerId || null,
+          isDone: Boolean(it.isDone),
+          doneAt: it.isDone ? (it.doneAt ? new Date(it.doneAt) : new Date()) : null,
+          sortOrder: it.sortOrder !== undefined ? parseInt(it.sortOrder, 10) : idx,
+        }));
+        if (itemsToCreate.length > 0) {
+          await tx.milestoneItem.createMany({ data: itemsToCreate });
+        }
+      }
+
+      const rawDeps = dependencies || dependsOn;
+      if (rawDeps !== undefined && Array.isArray(rawDeps)) {
+        await tx.milestoneDependency.deleteMany({ where: { milestoneId } });
+        const depsToCreate = [];
+        for (const dep of rawDeps) {
+          const predId = (typeof dep === 'string') ? dep : (dep.predecessorId || dep.id);
+          if (predId) {
+            depsToCreate.push({
+              businessId,
+              milestoneId,
+              predecessorId: predId,
+              type: dep.type || 'FINISH_TO_START',
+              lagDays: parseInt(dep.lagDays, 10) || 0
+            });
+          }
+        }
+        if (depsToCreate.length > 0) {
+          await tx.milestoneDependency.createMany({ data: depsToCreate });
+        }
+      }
+
+      if (existing.planningId && existing.planningId !== m.planningId) {
+        await tx.projectPlanning.updateMany({
+          where: { id: existing.planningId, businessId },
+          data: { milestone: null }
+        });
+      }
+      if (m.planningId) {
+        await tx.projectPlanning.updateMany({
+          where: { id: m.planningId, businessId },
+          data: { milestone: m.name }
+        });
+      }
+
+      await recalculateMilestoneProgress(milestoneId, tx);
+
+      await logAction(tx, {
+        businessId,
+        userId,
+        userEmail,
+        action: 'UPDATE',
+        module: 'PROJECT_MILESTONE',
+        entityType: 'ProjectMilestone',
+        entityId: milestoneId,
+        details: { oldStatus: existing.status, newStatus: m.status, name: m.name }
+      });
+
+      if (existing.status !== m.status) {
+        await triggerNotification(tx, {
+          businessId,
+          userId: m.ownerId || userId,
+          title: `Milestone Status Updated: ${m.name}`,
+          message: `Milestone ${m.milestoneCode} (${m.name}) status changed from ${existing.status} to ${m.status}.`,
+          type: 'INFO',
+          entityType: 'ProjectMilestone',
+          entityId: milestoneId
+        });
+      }
+
+      return await tx.projectMilestone.findUnique({
+        where: { id: milestoneId },
+        include: {
+          project: { select: { id: true, projectName: true, projectCode: true } },
+          planning: { select: { id: true, planCode: true, planName: true, phase: true, sprint: true } },
+          owner: { select: { id: true, name: true, email: true } },
+          projectManager: { select: { id: true, name: true, email: true } },
+          approver: { select: { id: true, name: true, email: true } },
+          items: { orderBy: { sortOrder: 'asc' } },
+          dependsOn: { include: { predecessor: { select: { id: true, milestoneCode: true, name: true, status: true, dueDate: true } } } },
+          dependedOnBy: { include: { milestone: { select: { id: true, milestoneCode: true, name: true, status: true, dueDate: true } } } },
+          tasks: { select: { id: true, taskNumber: true, title: true, status: true, completionPercentage: true } }
+        }
+      });
+    }, { maxWait: 15000, timeout: 30000 });
+
+    res.json({ success: true, milestone: formatMilestoneResponse(updated) });
+  } catch (err) {
+    console.error('Update Milestone Error:', err);
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+exports.getMilestoneById = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const milestone = await prisma.projectMilestone.findFirst({
+      where: { id: req.params.id, businessId },
+      include: {
+        project: { select: { id: true, projectName: true, projectCode: true } },
+        planning: { select: { id: true, planCode: true, planName: true, phase: true, sprint: true } },
+        owner: { select: { id: true, name: true, email: true } },
+        projectManager: { select: { id: true, name: true, email: true } },
+        approver: { select: { id: true, name: true, email: true } },
+        items: { orderBy: { sortOrder: 'asc' } },
+        dependsOn: { include: { predecessor: { select: { id: true, milestoneCode: true, name: true, status: true, dueDate: true } } } },
+        dependedOnBy: { include: { milestone: { select: { id: true, milestoneCode: true, name: true, status: true, dueDate: true } } } },
+        tasks: {
+          select: { id: true, taskNumber: true, title: true, status: true, completionPercentage: true, priority: true, dueDate: true, assignedTo: { select: { id: true, name: true } } }
+        }
+      }
+    });
+
+    if (!milestone) {
+      return res.status(404).json({ success: false, message: 'Milestone not found.' });
+    }
+
+    const documents = await prisma.projectDocument.findMany({
+      where: {
+        businessId,
+        entityType: 'MILESTONE',
+        entityId: milestone.id,
+        isArchived: false
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json({ success: true, milestone: { ...formatMilestoneResponse(milestone), documents } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.deleteMilestone = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const userId = req.user?.id || req.user?.userId;
+    const milestoneId = req.params.id;
+
+    const milestone = await prisma.projectMilestone.findFirst({
+      where: { id: milestoneId, businessId }
+    });
+    if (!milestone) {
+      return res.status(404).json({ success: false, message: 'Milestone not found.' });
+    }
+
+    await prisma.projectTask.updateMany({
+      where: { milestoneId },
+      data: { milestoneId: null }
+    });
+
+    await prisma.projectMilestone.delete({ where: { id: milestoneId } });
+
+    await logAction(null, {
+      businessId,
+      userId,
+      action: 'DELETE',
+      module: 'PROJECT_MILESTONE',
+      entityType: 'ProjectMilestone',
+      entityId: milestoneId,
+      details: { milestoneCode: milestone.milestoneCode, name: milestone.name }
+    });
+
+    res.json({ success: true, message: 'Milestone deleted successfully.' });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+exports.toggleMilestoneItem = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const { id, itemId } = req.params;
+    const { isDone } = req.body;
+
+    const item = await prisma.milestoneItem.findFirst({
+      where: { id: itemId, milestoneId: id, businessId }
+    });
+    if (!item) return res.status(404).json({ success: false, message: 'Item not found.' });
+
+    const newDone = isDone !== undefined ? Boolean(isDone) : !item.isDone;
+    const updatedItem = await prisma.milestoneItem.update({
+      where: { id: itemId },
+      data: {
+        isDone: newDone,
+        doneAt: newDone ? new Date() : null
+      }
+    });
+
+    const progress = await recalculateMilestoneProgress(id);
+
+    res.json({ success: true, item: updatedItem, milestoneProgress: progress });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+exports.approveMilestone = async (req, res) => {
+  try {
+    const businessId = req.business.id;
+    const userId = req.user?.id || req.user?.userId;
+    const userEmail = req.user?.email;
+    const milestoneId = req.params.id;
+
+    const milestone = await prisma.projectMilestone.findFirst({
+      where: { id: milestoneId, businessId }
+    });
+    if (!milestone) return res.status(404).json({ success: false, message: 'Milestone not found.' });
+
+    const updated = await prisma.projectMilestone.update({
+      where: { id: milestoneId },
+      data: {
+        status: 'COMPLETED',
+        actualCompletion: new Date(),
+        approverId: userId || milestone.approverId
+      }
+    });
+
+    await logAction(null, {
+      businessId,
+      userId,
+      userEmail,
+      action: 'APPROVE',
+      module: 'PROJECT_MILESTONE',
+      entityType: 'ProjectMilestone',
+      entityId: milestoneId,
+      details: { milestoneCode: milestone.milestoneCode, name: milestone.name }
+    });
+
+    res.json({ success: true, milestone: formatMilestoneResponse(updated) });
+  } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
 };
 
 exports.getMilestones = async (req, res) => {
   try {
+    const businessId = req.business.id;
+    const projectId = req.params.projectId || req.query.projectId;
+    const { status, priority, owner, ownerId, plan, planningId, type, typeId, isBilling, billing, startDate, dueDate, search } = req.query;
+
+    const where = { businessId };
+    if (projectId) where.projectId = projectId;
+    if (status) where.status = String(status).toUpperCase();
+    if (priority) where.priority = String(priority).toUpperCase();
+    if (ownerId || owner) where.ownerId = ownerId || owner;
+    if (planningId || plan) where.planningId = planningId || plan;
+    if (typeId || type) where.typeId = typeId || type;
+    if (isBilling !== undefined || billing !== undefined) {
+      where.isBilling = (isBilling === 'true' || billing === 'true' || isBilling === true);
+    }
+    if (startDate) {
+      where.startDate = { gte: new Date(startDate) };
+    }
+    if (dueDate) {
+      where.dueDate = { lte: new Date(dueDate) };
+    }
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { milestoneCode: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
     const milestones = await prisma.projectMilestone.findMany({
-      where: { projectId: req.params.projectId, businessId: req.business.id },
+      where,
+      include: {
+        owner: { select: { id: true, name: true, email: true } },
+        project: { select: { id: true, projectName: true, projectCode: true } },
+        planning: { select: { id: true, planCode: true, planName: true, phase: true, sprint: true } },
+        items: true,
+        dependsOn: { include: { predecessor: { select: { id: true, milestoneCode: true, name: true } } } },
+        tasks: { select: { id: true, completionPercentage: true, status: true } }
+      },
+      orderBy: { createdAt: 'desc' }
     });
-    res.json({ success: true, milestones });
+
+    res.json({ success: true, milestones: milestones.map(m => formatMilestoneResponse(m)) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 };
 
 exports.getGlobalMilestones = async (req, res) => {
-  try {
-    const milestones = await prisma.projectMilestone.findMany({
-      where: { businessId: req.business.id },
-      include: { owner: true, project: true },
-      orderBy: { createdAt: 'desc' }
-    });
-    res.json({ success: true, milestones });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+  return exports.getMilestones(req, res);
 };
 
 // ==========================================
 // TASKS
 // ==========================================
+
+/**
+ * Automatically recalculates and synchronizes progress and completion status
+ * across ProjectTasks, ProjectPlanning, and Project.
+ *
+ * Rules:
+ * 1. For a ProjectPlanning:
+ *    - All tasks linked to this planningId are gathered.
+ *    - Average completion percentage of all tasks is computed.
+ *    - If all tasks are completed (status === 'DONE' or completionPercentage >= 100),
+ *      planning status is set to 'COMPLETED', completionPercentage = 100, currentProgress = 100, progressStatus = 'Completed'.
+ *    - If some tasks are in progress or done, status is 'ACTIVE' / 'IN_PROGRESS', progressStatus = 'In Progress'.
+ *    - If no tasks are done yet, keeps existing progress or 0, progressStatus = 'Not Started'.
+ *
+ * 2. For a Project:
+ *    - All tasks linked to this projectId are gathered.
+ *    - All plannings linked to this projectId are gathered.
+ *    - If project has tasks, project progress is the average of task completion percentages.
+ *      If no tasks, project progress is the average of planning completion percentages.
+ *    - If all project tasks are completed AND all project plannings are completed:
+ *      Project status automatically becomes ProjectStatus.COMPLETED, completionPercentage = 100.
+ *    - If not all completed and project was previously COMPLETED, status reverts to ACTIVE.
+ */
+async function syncPlanningAndProjectProgress(prismaClient, { planningId, projectId, businessId }) {
+  try {
+    let effectiveProjectId = projectId;
+
+    // 1. Synchronize Planning if planningId is provided
+    if (planningId) {
+      const planning = await prismaClient.projectPlanning.findFirst({
+        where: { id: planningId, businessId }
+      });
+
+      if (planning) {
+        if (!effectiveProjectId && planning.projectId) {
+          effectiveProjectId = planning.projectId;
+        }
+
+        const planTasks = await prismaClient.projectTask.findMany({
+          where: { planningId, businessId }
+        });
+
+        if (planTasks.length > 0) {
+          const totalProgress = planTasks.reduce((sum, t) => {
+            const isDone = t.status === 'DONE' || String(t.status).toUpperCase() === 'COMPLETED';
+            const pct = isDone ? 100 : (Number(t.completionPercentage) || 0);
+            return sum + pct;
+          }, 0);
+
+          const avgProgress = Math.min(100, Math.max(0, Math.round(totalProgress / planTasks.length)));
+          const allTasksComplete = planTasks.every(t =>
+            t.status === 'DONE' || String(t.status).toUpperCase() === 'COMPLETED' || (Number(t.completionPercentage) || 0) >= 100
+          );
+          const anyTaskActive = planTasks.some(t =>
+            t.status === 'IN_PROGRESS' || t.status === 'DONE' || String(t.status).toUpperCase() === 'COMPLETED' || (Number(t.completionPercentage) || 0) > 0
+          );
+
+          let newPlanningStatus = planning.status;
+          let progressStatus = planning.progressStatus;
+
+          if (allTasksComplete) {
+            newPlanningStatus = 'COMPLETED';
+            progressStatus = 'Completed';
+          } else if (anyTaskActive) {
+            if (planning.status === 'COMPLETED' || planning.status === 'DRAFT') {
+              newPlanningStatus = 'ACTIVE';
+            }
+            progressStatus = 'In Progress';
+          }
+
+          await prismaClient.projectPlanning.update({
+            where: { id: planningId },
+            data: {
+              completionPercentage: allTasksComplete ? 100 : avgProgress,
+              currentProgress: allTasksComplete ? 100 : avgProgress,
+              status: newPlanningStatus,
+              progressStatus
+            }
+          });
+        }
+      }
+    }
+
+    // 2. Synchronize Project if effectiveProjectId is present
+    if (effectiveProjectId) {
+      const project = await prismaClient.project.findFirst({
+        where: { id: effectiveProjectId, businessId }
+      });
+
+      if (project) {
+        const [projectTasks, projectPlannings] = await Promise.all([
+          prismaClient.projectTask.findMany({
+            where: { projectId: effectiveProjectId, businessId }
+          }),
+          prismaClient.projectPlanning.findMany({
+            where: { projectId: effectiveProjectId, businessId }
+          })
+        ]);
+
+        let projectProgress = Number(project.completionPercentage) || 0;
+
+        if (projectTasks.length > 0) {
+          const totalTaskProgress = projectTasks.reduce((sum, t) => {
+            const isDone = t.status === 'DONE' || String(t.status).toUpperCase() === 'COMPLETED';
+            const pct = isDone ? 100 : (Number(t.completionPercentage) || 0);
+            return sum + pct;
+          }, 0);
+          projectProgress = Math.min(100, Math.max(0, Math.round(totalTaskProgress / projectTasks.length)));
+        } else if (projectPlannings.length > 0) {
+          const totalPlanProgress = projectPlannings.reduce((sum, p) => sum + (Number(p.completionPercentage) || 0), 0);
+          projectProgress = Math.min(100, Math.max(0, Math.round(totalPlanProgress / projectPlannings.length)));
+        }
+
+        const hasTasks = projectTasks.length > 0;
+        const allTasksDone = hasTasks && projectTasks.every(t =>
+          t.status === 'DONE' || String(t.status).toUpperCase() === 'COMPLETED' || (Number(t.completionPercentage) || 0) >= 100
+        );
+
+        const hasPlans = projectPlannings.length > 0;
+        const allPlansDone = !hasPlans || projectPlannings.every(p =>
+          p.status === 'COMPLETED' || (Number(p.completionPercentage) || 0) >= 100
+        );
+
+        let newProjectStatus = project.status;
+
+        if (allTasksDone && allPlansDone) {
+          newProjectStatus = 'COMPLETED';
+          projectProgress = 100;
+        } else if (project.status === 'COMPLETED' && (!allTasksDone || !allPlansDone)) {
+          newProjectStatus = 'ACTIVE';
+        }
+
+        await prismaClient.project.update({
+          where: { id: effectiveProjectId },
+          data: {
+            completionPercentage: projectProgress,
+            status: newProjectStatus
+          }
+        });
+      }
+    }
+  } catch (syncErr) {
+    console.error("Error in syncPlanningAndProjectProgress:", syncErr);
+  }
+}
 
 exports.createTask = async (req, res) => {
   try {
@@ -696,6 +1863,15 @@ exports.createTask = async (req, res) => {
       return res.status(400).json({ success: false, message: 'projectId is required.' });
     }
 
+    let finalStatus = status || 'TODO';
+    let finalProgress = parseFloat(completionPercentage) || 0;
+    if (finalStatus === 'DONE' || String(finalStatus).toUpperCase() === 'COMPLETED') {
+      finalStatus = 'DONE';
+      finalProgress = 100;
+    } else if (finalProgress >= 100) {
+      finalStatus = 'DONE';
+    }
+
     const task = await prisma.projectTask.create({
       data: {
         businessId: req.business.id,
@@ -705,14 +1881,14 @@ exports.createTask = async (req, res) => {
         title: title || 'Untitled Task',
         description: description || null,
         priority: priority || null,
-        status: status || 'TODO',
+        status: finalStatus,
         assignedToId: assignedToId || null,
         milestoneId: milestoneId || null,
         startDate: startDate ? new Date(startDate) : null,
         dueDate: dueDate ? new Date(dueDate) : null,
         estimatedHours: parseFloat(estimatedHours) || 0,
         actualHours: parseFloat(actualHours) || 0,
-        completionPercentage: parseFloat(completionPercentage) || 0,
+        completionPercentage: finalProgress,
         checklist: checklist || null,
         dependencies: dependencies || null,
         assignedTeam: assignedTeam || null,
@@ -724,6 +1900,22 @@ exports.createTask = async (req, res) => {
         milestone: true,
       }
     });
+
+    // Automatically recalculate planning progress and project completion
+    await syncPlanningAndProjectProgress(prisma, {
+      planningId: task.planningId,
+      projectId: task.projectId,
+      businessId: req.business.id
+    });
+
+    if (task.milestoneId) {
+      await recalculateMilestoneProgress(task.milestoneId);
+    }
+
+    if (task.milestoneId) {
+      await recalculateMilestoneProgress(task.milestoneId);
+    }
+
     res.json({ success: true, task });
   } catch (err) {
     console.error('Create Task Error:', err.message);
@@ -757,8 +1949,30 @@ exports.getGlobalTasks = async (req, res) => {
   }
 };
 
+exports.getTaskById = async (req, res) => {
+  try {
+    const task = await prisma.projectTask.findFirst({
+      where: { id: req.params.id, businessId: req.business.id },
+      include: { assignedTo: true, project: true, milestone: true, planning: true }
+    });
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found.' });
+    }
+    res.json({ success: true, task });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.updateTask = async (req, res) => {
   try {
+    const existingTask = await prisma.projectTask.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!existingTask) {
+      return res.status(404).json({ success: false, message: 'Task not found.' });
+    }
+
     const {
       projectId, planningId, milestoneId, title, description, priority, status,
       assignedToId, startDate, dueDate, estimatedHours, actualHours,
@@ -772,13 +1986,30 @@ exports.updateTask = async (req, res) => {
     if (title !== undefined) data.title = title;
     if (description !== undefined) data.description = description;
     if (priority !== undefined) data.priority = priority;
-    if (status !== undefined) data.status = status;
+
+    if (status !== undefined) {
+      const s = String(status).toUpperCase();
+      if (s === 'COMPLETED' || s === 'DONE') {
+        data.status = 'DONE';
+        if (completionPercentage === undefined) data.completionPercentage = 100;
+      } else {
+        data.status = status;
+      }
+    }
+
+    if (completionPercentage !== undefined) {
+      const pct = parseFloat(completionPercentage) || 0;
+      data.completionPercentage = pct;
+      if (pct >= 100 && (!data.status || data.status === 'TODO' || data.status === 'IN_PROGRESS')) {
+        data.status = 'DONE';
+      }
+    }
+
     if (assignedToId !== undefined) data.assignedToId = assignedToId || null;
     if (startDate !== undefined) data.startDate = startDate ? new Date(startDate) : null;
     if (dueDate !== undefined) data.dueDate = dueDate ? new Date(dueDate) : null;
     if (estimatedHours !== undefined) data.estimatedHours = parseFloat(estimatedHours) || 0;
     if (actualHours !== undefined) data.actualHours = parseFloat(actualHours) || 0;
-    if (completionPercentage !== undefined) data.completionPercentage = parseFloat(completionPercentage) || 0;
     if (checklist !== undefined) data.checklist = checklist;
     if (dependencies !== undefined) data.dependencies = dependencies;
     if (assignedTeam !== undefined) data.assignedTeam = assignedTeam;
@@ -788,7 +2019,62 @@ exports.updateTask = async (req, res) => {
       data,
       include: { assignedTo: true, project: true, milestone: true, planning: true }
     });
+
+    // Automatically recalculate planning and project progress
+    await syncPlanningAndProjectProgress(prisma, {
+      planningId: task.planningId,
+      projectId: task.projectId,
+      businessId: req.business.id
+    });
+
+    // If planning or project changed, also update the previous ones
+    if (existingTask.planningId && existingTask.planningId !== task.planningId) {
+      await syncPlanningAndProjectProgress(prisma, {
+        planningId: existingTask.planningId,
+        projectId: existingTask.projectId,
+        businessId: req.business.id
+      });
+    }
+    if (existingTask.projectId && existingTask.projectId !== task.projectId) {
+      await syncPlanningAndProjectProgress(prisma, {
+        projectId: existingTask.projectId,
+        businessId: req.business.id
+      });
+    }
+
+    if (task.milestoneId) {
+      await recalculateMilestoneProgress(task.milestoneId);
+    }
+    if (existingTask.milestoneId && existingTask.milestoneId !== task.milestoneId) {
+      await recalculateMilestoneProgress(existingTask.milestoneId);
+    }
+
     res.json({ success: true, task });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+exports.deleteTask = async (req, res) => {
+  try {
+    const task = await prisma.projectTask.findFirst({
+      where: { id: req.params.id, businessId: req.business.id }
+    });
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found.' });
+    }
+
+    await prisma.projectTask.delete({
+      where: { id: req.params.id }
+    });
+
+    await syncPlanningAndProjectProgress(prisma, {
+      planningId: task.planningId,
+      projectId: task.projectId,
+      businessId: req.business.id
+    });
+
+    res.json({ success: true, message: 'Task deleted successfully.' });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -2534,7 +3820,7 @@ exports.createPlanning = async (req, res) => {
 
     const {
       projectId, planName, phase, sprint, execType, status, priority, description,
-      startDate, endDate, expectedCompletion, duration, workingDays, milestone, dependency,
+      startDate, endDate, expectedCompletion, duration, workingDays, milestone, milestoneId, dependency,
       projectManagerId, taskOwnerId, department, resources, estimatedHours, billableHours, resourceCost,
       taskTitle, subTask, sequence, criticalTask, recurring, reminder,
       initialProgress, currentProgress, completionPercentage, progressStatus, riskLevel,
@@ -2594,6 +3880,13 @@ exports.createPlanning = async (req, res) => {
       include: { project: { select: { projectName: true, projectCode: true } } }
     });
 
+    const effectiveMsId = milestoneId || (typeof milestone === 'object' ? milestone?.id : null);
+    if (effectiveMsId) {
+      await prisma.projectMilestone.updateMany({
+        where: { id: effectiveMsId, businessId: req.business.id },
+        data: { planningId: planning.id }
+      });
+    }
     res.status(201).json({ success: true, planning });
   } catch (err) {
     console.error('Create Planning Error:', err);
@@ -2610,7 +3903,34 @@ exports.getPlannings = async (req, res) => {
     const plannings = await prisma.projectPlanning.findMany({
       where,
       include: {
-        project: { select: { projectName: true, projectCode: true, id: true } }
+        milestones: {
+          select: { id: true, milestoneCode: true, name: true, status: true, dueDate: true, completion: true, weight: true, isBilling: true }
+        },
+        tasks: {
+          include: {
+            assignedTo: {
+              select: { id: true, name: true, email: true }
+            }
+          }
+        },
+        project: {
+          select: {
+            projectName: true,
+            projectCode: true,
+            id: true,
+            projectManagerId: true,
+            projectManager: {
+              select: { id: true, name: true, email: true }
+            },
+            resourceAllocations: {
+              include: {
+                employee: {
+                  select: { id: true, name: true, email: true }
+                }
+              }
+            }
+          }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -2664,7 +3984,7 @@ exports.updatePlanning = async (req, res) => {
   try {
     const {
       projectId, planName, phase, sprint, execType, status, priority, description,
-      startDate, endDate, expectedCompletion, duration, workingDays, milestone, dependency,
+      startDate, endDate, expectedCompletion, duration, workingDays, milestone, milestoneId, dependency,
       projectManagerId, taskOwnerId, department, resources, estimatedHours, billableHours, resourceCost,
       taskTitle, subTask, sequence, criticalTask, recurring, reminder,
       initialProgress, currentProgress, completionPercentage, progressStatus, riskLevel,
@@ -2714,6 +4034,50 @@ exports.updatePlanning = async (req, res) => {
     if (privateNotes !== undefined) data.privateNotes = privateNotes || null;
     if (approvals !== undefined) data.approvals = approvals || null;
 
+    if (data.status === 'COMPLETED') {
+      data.completionPercentage = 100;
+      data.currentProgress = 100;
+      data.progressStatus = 'Completed';
+
+      // Cascade completion to any tasks linked to this planning
+      await prisma.projectTask.updateMany({
+        where: { planningId: req.params.id },
+        data: {
+          status: 'DONE',
+          completionPercentage: 100
+        }
+      }).catch(e => console.warn('Could not cascade task completion for planning:', e.message));
+    } else if (data.status === 'ACTIVE' && (completionPercentage === 0 || completionPercentage === undefined)) {
+      if (data.progressStatus === 'Completed') {
+        data.progressStatus = 'In Progress';
+      }
+    }
+
+    if (milestoneId !== undefined) {
+      if (!milestoneId) {
+        await prisma.projectMilestone.updateMany({
+          where: { planningId: req.params.id, businessId: req.business.id },
+          data: { planningId: null }
+        });
+        data.milestone = null;
+      } else {
+        await prisma.projectMilestone.updateMany({
+          where: { planningId: req.params.id, businessId: req.business.id, id: { not: milestoneId } },
+          data: { planningId: null }
+        });
+        const ms = await prisma.projectMilestone.findFirst({
+          where: { id: milestoneId, businessId: req.business.id }
+        });
+        if (ms) {
+          await prisma.projectMilestone.update({
+            where: { id: milestoneId },
+            data: { planningId: req.params.id }
+          });
+          data.milestone = ms.name;
+        }
+      }
+    }
+
     const planning = await prisma.projectPlanning.update({
       where: { id: req.params.id },
       data,
@@ -2728,6 +4092,18 @@ exports.updatePlanning = async (req, res) => {
         }
       }
     });
+
+    // Automatically sync planning and project progress
+    try {
+      await syncPlanningAndProjectProgress(prisma, {
+        planningId: planning.id,
+        projectId: planning.projectId,
+        businessId: req.business.id
+      });
+    } catch (syncErr) {
+      console.warn('Sync planning/project progress error:', syncErr.message);
+    }
+
     res.json({ success: true, planning });
   } catch (err) {
     console.error('Update Planning Error:', err);
