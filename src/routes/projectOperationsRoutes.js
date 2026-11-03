@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const auth = require("../middlewares/authMiddleware");
 const business = require("../middlewares/business.middleware");
+const checkPermission = require("../middlewares/checkPermission");
 const Controller = require("../controllers/projectOperationsController");
 const ProposalController = require("../controllers/proposalController");
 const NegotiationController = require("../controllers/negotiationController");
@@ -108,24 +109,35 @@ router.get("/billing/export/pdf", ExportController.exportBillingPDF);
 router.get("/profitability/export/excel", ExportController.exportProfitabilityExcel);
 router.get("/profitability/export/pdf", ExportController.exportProfitabilityPDF);
 
+// Global Tasks & Milestones
+router.get("/global/tasks", Controller.getGlobalTasks);
+router.get("/global/milestones", checkPermission("Milestones", "view"), Controller.getGlobalMilestones);
+
+// Milestones
+router.get("/milestones/next-code", checkPermission("Milestones", "view"), Controller.getNextMilestoneCode);
+router.get("/milestones/form-options", checkPermission("Milestones", "view"), Controller.getMilestoneFormOptions);
+router.get("/milestones", checkPermission("Milestones", "view"), Controller.getGlobalMilestones);
+router.post("/milestones", checkPermission("Milestones", "create"), Controller.createMilestone);
+router.get("/milestones/:id", checkPermission("Milestones", "view"), Controller.getMilestoneById);
+router.put("/milestones/:id", checkPermission("Milestones", "edit"), Controller.updateMilestone);
+router.delete("/milestones/:id", checkPermission("Milestones", "delete"), Controller.deleteMilestone);
+router.post("/milestones/:id/approve", checkPermission("Milestones", "approve"), Controller.approveMilestone);
+router.post("/milestones/:id/items/:itemId/toggle", checkPermission("Milestones", "edit"), Controller.toggleMilestoneItem);
+router.post("/:projectId/milestones", checkPermission("Milestones", "create"), Controller.createMilestone);
+router.get("/:projectId/milestones", checkPermission("Milestones", "view"), Controller.getMilestones);
+
 // Projects
 router.post("/", Controller.createProject);
 router.get("/", Controller.getProjects);
 router.get("/:id", Controller.getProjectDetails);
 router.put("/:id", Controller.updateProject);
 
-// Global Tasks & Milestones
-router.get("/global/tasks", Controller.getGlobalTasks);
-router.get("/global/milestones", Controller.getGlobalMilestones);
-
-// Milestones
-router.post("/:projectId/milestones", Controller.createMilestone);
-router.get("/:projectId/milestones", Controller.getMilestones);
-
 // Tasks
 router.post("/:projectId/tasks", Controller.createTask);
 router.get("/:projectId/tasks", Controller.getTasks);
 router.put("/tasks/:id", Controller.updateTask);
+router.get("/tasks/:id", Controller.getTaskById);
+router.delete("/tasks/:id", Controller.deleteTask);
 
 // Issues
 router.post("/:projectId/issues", Controller.createIssue);

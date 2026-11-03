@@ -30,6 +30,8 @@ model User {
   issuesAssigned         ProjectIssue[]         @relation("IssueAssignee")
   issuesReported         ProjectIssue[]         @relation("IssueReporter")
   milestonesOwned        ProjectMilestone[]     @relation("MilestoneOwner")
+  milestonesManaged      ProjectMilestone[]     @relation("MilestoneManager")
+  milestonesApproved     ProjectMilestone[]     @relation("MilestoneApprover")
   assignedReqs           ProjectRequirement[]   @relation("RequirementAssignedTo")
   assignedTasks          ProjectTask[]          @relation("TaskAssignedTo")
   resourceAllocations    ResourceAllocation[]
@@ -431,6 +433,7 @@ model Invoice {
   paymentAllocations    PaymentAllocation[]
   payments              Payment[]
   salesReturns          SalesReturn[]
+  milestones            ProjectMilestone[]
 
   @@unique([businessId, invoiceNumber])
   @@index([businessId])
@@ -2737,22 +2740,94 @@ model ProjectItem {
 }
 
 model ProjectMilestone {
-  id          String        @id @default(uuid())
+  id                  String                  @id @default(uuid())
+  businessId          String
+  projectId           String
+  milestoneCode       String
+  name                String
+  description         String?
+  categoryId          String?
+  typeId              String?
+  priority            String?
+  planningId          String?
+  tags                String[]                @default([])
+  startDate           DateTime?
+  dueDate             DateTime?
+  expectedCompletion  DateTime?
+  actualCompletion    DateTime?
+  reminderEnabled     Boolean                 @default(false)
+  reminderDaysBefore  Int?
+  ownerId             String?
+  projectManagerId    String?
+  approverId          String?
+  department          String?
+  watcherIds          String[]                @default([])
+  weight              Float                   @default(0)
+  isBilling           Boolean                 @default(false)
+  estimatedCost       Float                   @default(0)
+  currency            String?
+  invoiceId           String?
+  status              MilestoneStatus         @default(NOT_STARTED)
+  completion          Float                   @default(0)
+  riskLevel           String?
+  riskMitigation      String?
+  completionNotes     String?
+  createdById         String?
+  updatedById         String?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  business            Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  owner               User?                   @relation("MilestoneOwner", fields: [ownerId], references: [id])
+  projectManager      User?                   @relation("MilestoneManager", fields: [projectManagerId], references: [id])
+  approver            User?                   @relation("MilestoneApprover", fields: [approverId], references: [id])
+  project             Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  planning            ProjectPlanning?        @relation(fields: [planningId], references: [id], onDelete: SetNull)
+  invoice             Invoice?                @relation(fields: [invoiceId], references: [id])
+  tasks               ProjectTask[]
+  items               MilestoneItem[]
+  dependsOn           MilestoneDependency[]   @relation("DependentMilestone")
+  dependedOnBy        MilestoneDependency[]   @relation("PredecessorMilestone")
+
+  @@unique([businessId, milestoneCode])
+  @@index([businessId, projectId])
+  @@index([planningId])
+  @@index([businessId, status])
+  @@index([businessId, dueDate])
+}
+
+model MilestoneItem {
+  id          String            @id @default(uuid())
   businessId  String
-  projectId   String
-  name        String
-  description String?
+  milestoneId String
+  kind        MilestoneItemKind
+  title       String
   ownerId     String?
-  weight      Float         @default(0)
-  dueDate     DateTime?
-  status      String        @default("Pending")
-  completion  Float         @default(0)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  business    Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  owner       User?         @relation("MilestoneOwner", fields: [ownerId], references: [id])
-  project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  tasks       ProjectTask[]
+  isDone      Boolean           @default(false)
+  doneAt      DateTime?
+  sortOrder   Int               @default(0)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  milestone   ProjectMilestone  @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+
+  @@index([milestoneId, kind])
+  @@index([businessId])
+}
+
+model MilestoneDependency {
+  id            String                  @id @default(uuid())
+  businessId    String
+  milestoneId   String
+  predecessorId String
+  type          MilestoneDependencyType @default(FINISH_TO_START)
+  lagDays       Int                     @default(0)
+  createdAt     DateTime                @default(now())
+  milestone     ProjectMilestone        @relation("DependentMilestone", fields: [milestoneId], references: [id], onDelete: Cascade)
+  predecessor   ProjectMilestone        @relation("PredecessorMilestone", fields: [predecessorId], references: [id], onDelete: Cascade)
+
+  @@unique([milestoneId, predecessorId])
+  @@index([predecessorId])
+  @@index([businessId])
 }
 
 model ProjectTask {
@@ -2839,6 +2914,7 @@ model ProjectPlanning {
   business             Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
   project              Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tasks                ProjectTask[]
+  milestones           ProjectMilestone[]
 
   @@index([businessId])
   @@index([projectId])
@@ -3871,4 +3947,26 @@ enum TaxTreatment {
   IMPORT
   ZERO_RATED
   REVERSE_CHARGE
+}
+
+enum MilestoneStatus {
+  DRAFT
+  NOT_STARTED
+  IN_PROGRESS
+  AT_RISK
+  DELAYED
+  COMPLETED
+  CANCELLED
+}
+
+enum MilestoneDependencyType {
+  FINISH_TO_START
+  START_TO_START
+  FINISH_TO_FINISH
+  START_TO_FINISH
+}
+
+enum MilestoneItemKind {
+  DELIVERABLE
+  ACCEPTANCE_CRITERIA
 }
