@@ -131,6 +131,13 @@ router.post("/", Controller.createProject);
 router.get("/", Controller.getProjects);
 router.get("/:id", Controller.getProjectDetails);
 router.put("/:id", Controller.updateProject);
+router.delete("/:id", Controller.deleteProject);
+
+// Risks
+router.get("/:projectId/risks", Controller.getProjectRisks);
+router.post("/:projectId/risks", Controller.createProjectRisk);
+router.put("/risks/:id", Controller.updateProjectRisk);
+router.delete("/risks/:id", Controller.deleteProjectRisk);
 
 // Tasks
 router.post("/:projectId/tasks", Controller.createTask);

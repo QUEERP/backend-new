@@ -1,7 +1,7 @@
 const prisma = require("../config/prisma");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
-const { sendResetEmail } = require("../utils/mailer");
+const { sendResetEmail, sendSignupWelcomeEmail } = require("../utils/mailer");
 const { generateToken } = require("../utils/jwtUtils");
 const { successResponse, errorResponse } = require("../utils/response");
 
@@ -11,7 +11,8 @@ const { successResponse, errorResponse } = require("../utils/response");
 exports.register = async (req, res) => {
 
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, isTrial } = req.body;
+    const isTrialUser = isTrial === true || isTrial === "true";
 
     const exists = await prisma.user.findUnique({ where: { email } });
     if (exists) {
@@ -30,7 +31,17 @@ exports.register = async (req, res) => {
       },
     });
 
-    res.status(201).json({ success: true, user });
+    // Send 90-Day Free Trial Welcome Email
+    const clientOrigin = req.headers.origin || req.headers.referer;
+    sendSignupWelcomeEmail(user.email, user.name, isTrialUser ? 90 : 0, clientOrigin).catch((mailErr) => {
+      console.error("[AUTH] Welcome email caught error:", mailErr.message);
+    });
+
+    res.status(201).json({
+      success: true,
+      user,
+      isTrial: isTrialUser, trialDays: isTrialUser ? 90 : 0, message: isTrialUser ? "Account created successfully with 90-Day Free Trial." : "Account created successfully."
+    });
 
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -42,7 +53,7 @@ exports.register = async (req, res) => {
 //////////////////////////////////////////////////////
 exports.login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, businessId } = req.body;
 
     //////////////////////////////////////////////////////
     // SUBSCRIPTION ADMIN LOGIN
@@ -95,33 +106,49 @@ exports.login = async (req, res) => {
     if (!match)
       return res.status(400).json({ message: "Invalid credentials" });
 
+        //////////////////////////////////////////////////////
+    // ACTIVATE REQUESTED BUSINESS OR AUTO-ACTIVATE
     //////////////////////////////////////////////////////
-    // AUTO ACTIVATE BUSINESS ONLY FOR INVITED USERS
-    //////////////////////////////////////////////////////
-    if (!user.activeBusinessId) {
-
-      const invitedMembership = await prisma.businessUser.findFirst({
+    if (businessId) {
+      const targetMembership = await prisma.businessUser.findFirst({
+        where: {
+          userId: user.id,
+          businessId: String(businessId),
+          isActive: true,
+        },
+      });
+      if (targetMembership) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            activeBusinessId: targetMembership.businessId,
+          },
+          include: { memberships: true },
+        });
+      }
+    } else if (!user.activeBusinessId) {
+      const latestMembership = await prisma.businessUser.findFirst({
         where: {
           userId: user.id,
           isActive: true,
         },
         orderBy: {
-          createdAt: "asc",
+          createdAt: "desc",
         },
       });
 
-      if (invitedMembership) {
+      if (latestMembership) {
         user = await prisma.user.update({
           where: { id: user.id },
           data: {
-            activeBusinessId: invitedMembership.businessId,
+            activeBusinessId: latestMembership.businessId,
           },
           include: { memberships: true },
         });
       }
     }
 
-    //////////////////////////////////////////////////////
+//////////////////////////////////////////////////////
     // CHECK IF USER IS EMPLOYEE
     //////////////////////////////////////////////////////
     const employee = await prisma.employee.findFirst({

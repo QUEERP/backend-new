@@ -23,5 +23,7 @@ router.get("/users", controller.getUsers);
 router.post("/users/toggle-status", controller.toggleUserStatus);
 router.post("/users/create", controller.createUser);
 router.get("/permissions", controller.getPermissions);
+router.post("/send-deadline-notice", controller.sendDeadlineNotice);
+router.post("/check-expiring", controller.checkExpiringSubscriptions);
 
 module.exports = router;
