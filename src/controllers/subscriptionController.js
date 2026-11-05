@@ -289,3 +289,35 @@ exports.getPermissions = async (req, res) => {
 };
 
 
+
+
+//////////////////////////////////////////////////////
+// SEND SUBSCRIPTION DEADLINE NOTICE EMAIL
+//////////////////////////////////////////////////////
+exports.sendDeadlineNotice = async (req, res) => {
+  try {
+    const { businessId } = req.body;
+    if (!businessId) {
+      return errorResponse(res, "businessId is required", 400);
+    }
+
+    const result = await SubscriptionService.sendDeadlineNotice(businessId);
+    return successResponse(res, result, "Subscription deadline notice sent successfully");
+  } catch (error) {
+    console.error("Send deadline notice error:", error);
+    return errorResponse(res, error.message, 500);
+  }
+};
+
+//////////////////////////////////////////////////////
+// CHECK & NOTIFY ALL EXPIRING SUBSCRIPTIONS
+//////////////////////////////////////////////////////
+exports.checkExpiringSubscriptions = async (req, res) => {
+  try {
+    const result = await SubscriptionService.checkAndNotifyExpiringSubscriptions();
+    return successResponse(res, result, "Expiring subscriptions evaluated and notified");
+  } catch (error) {
+    console.error("Check expiring subscriptions error:", error);
+    return errorResponse(res, error.message, 500);
+  }
+};

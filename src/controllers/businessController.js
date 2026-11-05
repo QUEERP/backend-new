@@ -15,7 +15,8 @@ exports.createBusiness = async (req, res) => {
       return errorResponse(res, "Business Name and Country are required.", 400);
     }
 
-    const business = await businessSetupService.setupNewBusiness(name, country, businessType, userId);
+    const clientOrigin = req.headers.origin || req.headers.referer;
+    const business = await businessSetupService.setupNewBusiness(name, country, businessType, userId, clientOrigin);
 
     return successResponse(res, business, "Business created", 201);
   } catch (error) {

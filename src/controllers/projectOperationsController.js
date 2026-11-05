@@ -621,6 +621,143 @@ exports.updateProject = async (req, res) => {
   }
 };
 
+exports.deleteProject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const businessId = req.business.id;
+
+    const project = await prisma.project.findFirst({
+      where: { id, businessId },
+    });
+
+    if (!project) {
+      return res.status(404).json({ success: false, message: "Project not found" });
+    }
+
+    // Safely unbind relations that do not have cascade
+    await prisma.invoice.updateMany({ where: { projectId: id }, data: { projectId: null } }).catch(() => {});
+    await prisma.expense.updateMany({ where: { projectId: id }, data: { projectId: null } }).catch(() => {});
+    await prisma.purchaseOrder.updateMany({ where: { projectId: id }, data: { projectId: null } }).catch(() => {});
+    await prisma.purchaseRequest.updateMany({ where: { projectId: id }, data: { projectId: null } }).catch(() => {});
+    await prisma.ticket.updateMany({ where: { projectId: id }, data: { projectId: null } }).catch(() => {});
+    await prisma.aMC.updateMany({ where: { projectId: id }, data: { projectId: null } }).catch(() => {});
+    await prisma.warranty.updateMany({ where: { projectId: id }, data: { projectId: null } }).catch(() => {});
+    await prisma.payment.updateMany({ where: { projectId: id }, data: { projectId: null } }).catch(() => {});
+
+    await prisma.project.delete({
+      where: { id },
+    });
+
+    res.json({ success: true, message: "Project deleted successfully" });
+  } catch (err) {
+    console.error("Error deleting project:", err);
+    res.status(500).json({ success: false, message: "Failed to delete project: " + err.message });
+  }
+};
+
+// ==========================================
+// RISKS CRUD
+// ==========================================
+
+exports.getProjectRisks = async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const businessId = req.business.id;
+
+    const risks = await prisma.projectRisk.findMany({
+      where: { projectId, businessId },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json({ success: true, risks });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to fetch risks: " + err.message });
+  }
+};
+
+exports.createProjectRisk = async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const businessId = req.business.id;
+    const { title, description, probability, impact, mitigation, status } = req.body;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ success: false, message: "Risk title is required." });
+    }
+
+    const risk = await prisma.projectRisk.create({
+      data: {
+        businessId,
+        projectId,
+        title: title.trim(),
+        description: description || null,
+        probability: probability || 'MEDIUM',
+        impact: impact || 'MEDIUM',
+        mitigation: mitigation || null,
+        status: status || 'Active'
+      }
+    });
+
+    res.status(201).json({ success: true, risk });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to create risk: " + err.message });
+  }
+};
+
+exports.updateProjectRisk = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const businessId = req.business.id;
+    const { title, description, probability, impact, mitigation, status } = req.body;
+
+    const existing = await prisma.projectRisk.findFirst({
+      where: { id, businessId }
+    });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Risk not found." });
+    }
+
+    const data = {};
+    if (title !== undefined) data.title = title.trim();
+    if (description !== undefined) data.description = description || null;
+    if (probability !== undefined) data.probability = probability;
+    if (impact !== undefined) data.impact = impact;
+    if (mitigation !== undefined) data.mitigation = mitigation || null;
+    if (status !== undefined) data.status = status;
+
+    const updated = await prisma.projectRisk.update({
+      where: { id },
+      data
+    });
+
+    res.json({ success: true, risk: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to update risk: " + err.message });
+  }
+};
+
+exports.deleteProjectRisk = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const businessId = req.business.id;
+
+    const existing = await prisma.projectRisk.findFirst({
+      where: { id, businessId }
+    });
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Risk not found." });
+    }
+
+    await prisma.projectRisk.delete({
+      where: { id }
+    });
+
+    res.json({ success: true, message: "Risk deleted successfully." });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to delete risk: " + err.message });
+  }
+};
+
 // ==========================================
 // MILESTONES HELPERS & VALIDATION
 // ==========================================
@@ -916,6 +1053,7 @@ exports.getMilestoneFormOptions = async (req, res) => {
           id: true, 
           planCode: true, 
           planName: true, 
+          taskTitle: true,
           phase: true, 
           sprint: true, 
           startDate: true, 

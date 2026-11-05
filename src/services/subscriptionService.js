@@ -518,7 +518,21 @@ class SubscriptionService {
             },
           },
           businessesOwned: {
-            select: { id: true, name: true },
+            select: {
+              id: true,
+              name: true,
+              isActive: true,
+              subscription: {
+                select: {
+                  id: true,
+                  planName: true,
+                  status: true,
+                  startDate: true,
+                  expiresAt: true,
+                  notes: true,
+                },
+              },
+            },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -636,6 +650,101 @@ class SubscriptionService {
     }
 
     return Object.values(grouped);
+  }
+
+  /**
+   * Send a deadline notice email to the business owner
+   */
+  static async sendDeadlineNotice(businessId) {
+    const { sendSubscriptionDeadlineEmail } = require("../utils/mailer");
+    const business = await prisma.business.findUnique({
+      where: { id: businessId },
+      include: {
+        subscription: true,
+        owner: { select: { name: true, email: true } },
+      },
+    });
+
+    if (!business) {
+      throw new Error("Business not found");
+    }
+
+    if (!business.owner || !business.owner.email) {
+      throw new Error("Business owner email not found");
+    }
+
+    const sub = business.subscription;
+    const now = new Date();
+    const expiresAt = sub?.expiresAt ? new Date(sub.expiresAt) : null;
+    const daysRemaining = expiresAt ? Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24)) : 0;
+    const isExpired = sub?.status === "EXPIRED" || Boolean(expiresAt && expiresAt <= now);
+
+    const result = await sendSubscriptionDeadlineEmail(business.owner.email, business.owner.name, business.name, expiresAt, Math.max(0, daysRemaining), isExpired, business.id);
+
+    return {
+      success: true,
+      email: business.owner.email,
+      businessName: business.name,
+      daysRemaining: Math.max(0, daysRemaining),
+      isExpired,
+      messageId: result?.messageId,
+    };
+  }
+
+  /**
+   * Check and notify all subscriptions that are nearing deadline or expired
+   */
+  static async checkAndNotifyExpiringSubscriptions() {
+    const { sendSubscriptionDeadlineEmail } = require("../utils/mailer");
+    const now = new Date();
+    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const subscriptions = await prisma.subscription.findMany({
+      where: {
+        status: "ACTIVE",
+        expiresAt: {
+          lte: in7Days,
+        },
+      },
+      include: {
+        business: {
+          include: {
+            owner: { select: { name: true, email: true } },
+          },
+        },
+      },
+    });
+
+    const results = [];
+    for (const sub of subscriptions) {
+      if (!sub.business?.owner?.email) continue;
+      const expiresAt = sub.expiresAt ? new Date(sub.expiresAt) : null;
+      const daysRemaining = expiresAt ? Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24)) : 0;
+      const isExpired = daysRemaining <= 0;
+
+      try {
+        const mailRes = await sendSubscriptionDeadlineEmail(sub.business.owner.email, sub.business.owner.name, sub.business.name, expiresAt, Math.max(0, daysRemaining), isExpired, sub.business.id);
+        results.push({
+          businessId: sub.businessId,
+          email: sub.business.owner.email,
+          success: true,
+          messageId: mailRes?.messageId,
+        });
+      } catch (err) {
+        results.push({
+          businessId: sub.businessId,
+          email: sub.business.owner.email,
+          success: false,
+          error: err.message,
+        });
+      }
+    }
+
+    return {
+      totalEvaluated: subscriptions.length,
+      sentCount: results.filter(r => r.success).length,
+      results,
+    };
   }
 }
 
