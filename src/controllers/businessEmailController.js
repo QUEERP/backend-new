@@ -101,27 +101,48 @@ exports.saveConfig = async (req, res) => {
     const port = Number(smtpPort) || 587;
     const encType = (encryption || "TLS").toUpperCase();
     const activeState = isEnabled !== undefined ? Boolean(isEnabled) : (existing ? existing.isEnabled : true);
+    const trimmedEmail = email.trim();
+    const trimmedSenderName = (senderName && senderName.trim()) || req.business.name || "Business Administrator";
+    const trimmedHost = smtpHost.trim();
+    const trimmedUser = smtpUser.trim();
+    const hasNewPass = Boolean(smtpPass && smtpPass.trim().length > 0);
+    const connectionChanged = Boolean(
+      !existing ||
+      hasNewPass ||
+      existing.email !== trimmedEmail ||
+      existing.smtpHost !== trimmedHost ||
+      existing.smtpPort !== port ||
+      existing.smtpUser !== trimmedUser ||
+      existing.encryption !== encType
+    );
 
     const updated = await prisma.businessEmailConfig.upsert({
       where: { businessId },
       update: {
-        email: email.trim(),
-        senderName: (senderName && senderName.trim()) || req.business.name || "Business Administrator",
-        smtpHost: smtpHost.trim(),
+        email: trimmedEmail,
+        senderName: trimmedSenderName,
+        smtpHost: trimmedHost,
         smtpPort: port,
-        smtpUser: smtpUser.trim(),
+        smtpUser: trimmedUser,
         smtpPassEncrypted: encryptedPass,
         encryption: encType,
         isEnabled: activeState,
+        ...(connectionChanged
+          ? {
+            isVerified: false,
+            lastTestStatus: null,
+            lastTestError: null,
+          }
+          : {}),
         updatedAt: new Date(),
       },
       create: {
         businessId,
-        email: email.trim(),
-        senderName: (senderName && senderName.trim()) || req.business.name || "Business Administrator",
-        smtpHost: smtpHost.trim(),
+        email: trimmedEmail,
+        senderName: trimmedSenderName,
+        smtpHost: trimmedHost,
         smtpPort: port,
-        smtpUser: smtpUser.trim(),
+        smtpUser: trimmedUser,
         smtpPassEncrypted: encryptedPass,
         encryption: encType,
         isEnabled: activeState,
@@ -320,7 +341,7 @@ exports.sendEmail = async (req, res) => {
     return successResponse(res, result, "Email dispatched successfully");
   } catch (err) {
     console.error("[BusinessEmail] sendEmail error:", err);
-    return errorResponse(res, err.message, 500);
+    return errorResponse(res, err.message, err.statusCode || 500);
   }
 };
 
