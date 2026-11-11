@@ -204,6 +204,40 @@ exports.toggleStatus = async (req, res) => {
   }
 };
 
+/**
+ * Resolves an attachment PDF Buffer dynamically first, falling back to an
+ * authenticated/verified HTTP fetch only when server-side generation fails.
+ * Prevents passing blocked/401 remote URLs (e.g. Cloudinary free-tier PDFs) directly to nodemailer.
+ */
+async function resolvePdfBuffer({ label, pdfUrl, generateBuffer }) {
+  try {
+    const buf = await generateBuffer();
+    if (buf && Buffer.byteLength(buf) > 0) {
+      return Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+    }
+  } catch (genErr) {
+    console.error(`[BusinessEmail] Dynamic PDF generation failed for ${label}:`, genErr.message);
+  }
+
+  if (pdfUrl && (pdfUrl.startsWith("http://") || pdfUrl.startsWith("https://"))) {
+    try {
+      const response = await fetch(pdfUrl);
+      if (response.ok) {
+        const arrayBuf = await response.arrayBuffer();
+        if (arrayBuf.byteLength > 0) {
+          return Buffer.from(arrayBuf);
+        }
+      } else {
+        console.warn(`[BusinessEmail] Remote PDF fetch returned HTTP ${response.status} for ${label}`);
+      }
+    } catch (fetchErr) {
+      console.error(`[BusinessEmail] Remote PDF fetch failed for ${label}:`, fetchErr.message);
+    }
+  }
+
+  return null;
+}
+
 //////////////////////////////////////////////////////
 // SEND BUSINESS EMAIL (INVOICES, PAYMENT REMINDERS, POs, HR)
 //////////////////////////////////////////////////////
@@ -230,9 +264,30 @@ exports.sendEmail = async (req, res) => {
 
     let allAttachments = Array.isArray(attachments) ? [...attachments] : [];
 
-    // Automatically resolve and attach portal invoices
-    if (Array.isArray(invoiceIds) && invoiceIds.length > 0) {
-      try {
+    const hasInvoiceIds = Array.isArray(invoiceIds) && invoiceIds.length > 0;
+    const hasQuotationIds = Array.isArray(quotationIds) && quotationIds.length > 0;
+
+    if (hasInvoiceIds || hasQuotationIds) {
+      const [settings, business] = await Promise.all([
+        prisma.settings.findUnique({ where: { businessId } }),
+        prisma.business.findUnique({ where: { id: businessId } }),
+      ]);
+
+      const pdfSettings = {
+        ...(settings || {}),
+        businessType: business?.businessType || settings?.businessType || "Trading",
+        companyName: settings?.companyName || business?.name || "Your Company",
+        address:
+          settings?.address ||
+          [business?.address, business?.city, business?.country].filter(Boolean).join(", "),
+        phone: settings?.phone || business?.phone || "",
+        email: settings?.email || business?.email || "",
+        trn: settings?.trn || business?.vatNumber || business?.taxNumber || "",
+        signatureUrl: settings?.signatureUrl || null,
+      };
+
+      // Automatically resolve and attach portal invoices (dynamic Buffer first to avoid Cloudinary 401 delivery blocks)
+      if (hasInvoiceIds) {
         const invoices = await prisma.invoice.findMany({
           where: { id: { in: invoiceIds }, businessId, isDeleted: false },
           include: {
@@ -242,51 +297,63 @@ exports.sendEmail = async (req, res) => {
           },
         });
 
-        const settings = await prisma.settings.findUnique({ where: { businessId } });
         const generateInvoicePdfHelper = require("../utils/generateInvoicePdf");
 
         for (const inv of invoices) {
-          if (inv.pdfUrl && (inv.pdfUrl.startsWith("http://") || inv.pdfUrl.startsWith("https://"))) {
-            allAttachments.push({
-              filename: `Invoice-${inv.invoiceNumber}.pdf`,
-              path: inv.pdfUrl,
-            });
-          } else {
-            try {
-              const buf = await generateInvoicePdfHelper(inv, settings || {});
-              allAttachments.push({
-                filename: `Invoice-${inv.invoiceNumber}.pdf`,
-                content: buf,
-                contentType: "application/pdf",
-              });
-            } catch (pdfErr) {
-              console.error(`[BusinessEmail] Failed to generate PDF for invoice ${inv.invoiceNumber}:`, pdfErr.message);
-            }
-          }
-        }
-      } catch (invErr) {
-        console.error("[BusinessEmail] Error resolving invoice attachments:", invErr.message);
-      }
-    }
+          const buf = await resolvePdfBuffer({
+            label: `Invoice-${inv.invoiceNumber}`,
+            pdfUrl: inv.pdfUrl,
+            generateBuffer: () => generateInvoicePdfHelper(inv, { ...pdfSettings }),
+          });
 
-    // Automatically resolve and attach portal quotations
-    if (Array.isArray(quotationIds) && quotationIds.length > 0) {
-      try {
+          if (!buf) {
+            const pdfErr = new Error(`Failed to prepare PDF attachment for Invoice ${inv.invoiceNumber}.`);
+            pdfErr.statusCode = 500;
+            throw pdfErr;
+          }
+
+          allAttachments.push({
+            filename: `Invoice-${inv.invoiceNumber}.pdf`,
+            content: buf,
+            contentType: "application/pdf",
+          });
+        }
+      }
+
+      // Automatically resolve and attach portal quotations (dynamic Buffer first to avoid Cloudinary 401 delivery blocks)
+      if (hasQuotationIds) {
         const quotations = await prisma.quotation.findMany({
           where: { id: { in: quotationIds }, businessId, isDeleted: false },
-          select: { id: true, quoteNumber: true, pdfUrl: true },
+          include: {
+            customer: true,
+            contact: true,
+            items: { include: { product: true } },
+            assignedTo: { include: { user: true } },
+            deal: true,
+          },
         });
 
+        const generateQuotationPdfHelper = require("../utils/generateQuotationPdf");
+
         for (const q of quotations) {
-          if (q.pdfUrl && (q.pdfUrl.startsWith("http://") || q.pdfUrl.startsWith("https://"))) {
-            allAttachments.push({
-              filename: `Quotation-${q.quoteNumber}.pdf`,
-              path: q.pdfUrl,
-            });
+          const buf = await resolvePdfBuffer({
+            label: `Quotation-${q.quoteNumber}`,
+            pdfUrl: q.pdfUrl,
+            generateBuffer: () => generateQuotationPdfHelper(q, { ...pdfSettings }),
+          });
+
+          if (!buf) {
+            const pdfErr = new Error(`Failed to prepare PDF attachment for Quotation ${q.quoteNumber}.`);
+            pdfErr.statusCode = 500;
+            throw pdfErr;
           }
+
+          allAttachments.push({
+            filename: `Quotation-${q.quoteNumber}.pdf`,
+            content: buf,
+            contentType: "application/pdf",
+          });
         }
-      } catch (quoteErr) {
-        console.error("[BusinessEmail] Error resolving quotation attachments:", quoteErr.message);
       }
     }
 
