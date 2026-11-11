@@ -82,6 +82,22 @@ async function createBusinessTransporter(configOrBusinessId) {
   return { transporter, config };
 }
 
+function isSmtpAuthError(err) {
+  const msg = String(err?.message || "");
+  return err?.code === "EAUTH" || /535|invalid login|authentication failed/i.test(msg);
+}
+
+/**
+ * Formats an SMTP transport or authentication error with host/user context.
+ */
+function formatSmtpFailure(err, { smtpUser, smtpHost, smtpPort, fromEmail, prefix }) {
+  const rawMessage = err?.message || "Unknown SMTP error";
+  if (isSmtpAuthError(err)) {
+    return `SMTP authentication failed for user "${smtpUser}" on ${smtpHost}:${smtpPort} (${rawMessage}). Please verify your SMTP Username and Password/App Password in Administration > Business Email.`;
+  }
+  return `${prefix} (${fromEmail}): ${rawMessage}`;
+}
+
 /**
  * Sends a business-level email (Invoices, payment reminders, employee notices, vendor POs, customer updates)
  * strictly using the business's own SMTP settings.
@@ -157,6 +173,7 @@ async function sendBusinessEmail(businessId, options = {}, flags = {}) {
   let deliveryStatus = "SENT";
   let messageId = null;
   let deliveryError = null;
+  let sendErrObj = null;
 
   try {
     const info = await transporter.sendMail(mailOptions);
@@ -165,7 +182,22 @@ async function sendBusinessEmail(businessId, options = {}, flags = {}) {
   } catch (sendErr) {
     deliveryStatus = "FAILED";
     deliveryError = sendErr.message;
+    sendErrObj = sendErr;
     console.error(`[BUSINESS MAILER ERROR] Failed to send email to ${recipient} via ${config.email}:`, sendErr.message);
+
+    if (businessId && config.id && isSmtpAuthError(sendErr)) {
+      await prisma.businessEmailConfig
+        .updateMany({
+          where: { businessId },
+          data: {
+            lastTestedAt: new Date(),
+            lastTestStatus: "FAILED",
+            lastTestError: sendErr.message,
+            isVerified: false,
+          },
+        })
+        .catch(() => null);
+    }
   }
 
   // 2. Automatically log the business email to EmailLog for audit & tracking
@@ -191,7 +223,16 @@ async function sendBusinessEmail(businessId, options = {}, flags = {}) {
   }
 
   if (deliveryStatus === "FAILED") {
-    throw new Error(`Failed to send email via business SMTP (${config.email}): ${deliveryError}`);
+    const formattedMsg = formatSmtpFailure(sendErrObj || { message: deliveryError }, {
+      smtpUser: config.smtpUser || config.email,
+      smtpHost: config.smtpHost || "SMTP host",
+      smtpPort: config.smtpPort || 587,
+      fromEmail: config.email,
+      prefix: "Failed to send email via business SMTP",
+    });
+    const smtpErr = new Error(formattedMsg);
+    smtpErr.statusCode = isSmtpAuthError(sendErrObj) ? 400 : 500;
+    throw smtpErr;
   }
 
   return {
@@ -226,13 +267,13 @@ async function testBusinessEmail(businessId, testPayload = {}) {
     throw new Error("Recipient email address is required to perform a test email.");
   }
 
-  let finalHost = smtpHost;
+  let finalHost = typeof smtpHost === "string" ? smtpHost.trim() : smtpHost;
   let finalPort = Number(smtpPort) || 587;
-  let finalUser = smtpUser;
-  let finalPass = smtpPass;
-  let finalEncryption = encryption || "TLS";
-  let finalEmail = email;
-  let finalSenderName = senderName || "Business Administrator";
+  let finalUser = typeof smtpUser === "string" ? smtpUser.trim() : smtpUser;
+  let finalPass = typeof smtpPass === "string" ? smtpPass.trim() : smtpPass;
+  let finalEncryption = (encryption || "TLS").toUpperCase();
+  let finalEmail = typeof email === "string" ? email.trim() : email;
+  let finalSenderName = (typeof senderName === "string" ? senderName.trim() : senderName) || "Business Administrator";
 
   // If in-flight password is not supplied, try to pull existing encrypted password
   if (!finalPass && businessId) {
@@ -271,7 +312,13 @@ async function testBusinessEmail(businessId, testPayload = {}) {
   try {
     await testTransporter.verify();
   } catch (verifyErr) {
-    const errMsg = `SMTP Connection failed: ${verifyErr.message}`;
+    const errMsg = formatSmtpFailure(verifyErr, {
+      smtpUser: finalUser,
+      smtpHost: finalHost,
+      smtpPort: finalPort,
+      fromEmail: finalEmail,
+      prefix: "SMTP Connection failed",
+    });
     if (businessId) {
       await prisma.businessEmailConfig.updateMany({
         where: { businessId },
