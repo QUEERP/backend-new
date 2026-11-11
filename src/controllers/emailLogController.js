@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const crypto = require("crypto");
+const { sendBusinessEmail, getBusinessEmailConfig } = require("../utils/businessMailer");
 const { sendEmail } = require("../utils/mailer");
 
 exports.getEmailLogs = async (req, res) => {
@@ -16,31 +17,70 @@ exports.getEmailLogs = async (req, res) => {
 
 exports.createEmailLog = async (req, res) => {
   try {
-    // 1. Send the actual email
-    let deliveryStatus = req.body.status || "SENT";
+    const businessId = req.business.id;
+    const config = await getBusinessEmailConfig(businessId);
+
+    // 1. If custom business SMTP is configured and enabled, send via business SMTP
+    if (config && config.isEnabled && config.smtpHost && config.smtpUser) {
+      try {
+        const sendResult = await sendBusinessEmail(businessId, {
+          toEmail: req.body.toEmail,
+          subject: req.body.subject,
+          text: req.body.body,
+          html: req.body.body,
+          customerId: req.body.customerId,
+          contactId: req.body.contactId,
+          leadId: req.body.leadId,
+          dealId: req.body.dealId,
+          attachments: req.body.attachments,
+        });
+
+        const log = await prisma.emailLog.findUnique({
+          where: { id: sendResult.emailLogId },
+        });
+
+        return res.status(201).json({ success: true, data: log, message: "Email dispatched via custom business SMTP." });
+      } catch (emailErr) {
+        console.warn("[EmailLog] Business SMTP failed, falling back to default platform mailer:", emailErr.message);
+      }
+    }
+
+    // 2. Fallback: Default QUE ERP platform mailer
+    let deliveryStatus = "SENT";
     try {
       await sendEmail(
         req.body.toEmail,
         req.body.subject,
-        req.body.body, // Text body
-        req.body.body // Use same for HTML if not provided separately
+        req.body.body,
+        req.body.body
       );
       deliveryStatus = "SENT";
     } catch (emailErr) {
-      console.error("Failed to send email to " + req.body.toEmail, emailErr);
+      console.error("[EmailLog] Default mailer error:", emailErr.message);
       deliveryStatus = "FAILED";
     }
 
-    // 2. Log it to the database
     const log = await prisma.emailLog.create({
       data: {
         id: crypto.randomUUID(),
-        ...req.body,
-        status: deliveryStatus,
         businessId: req.business.id,
+        toEmail: req.body.toEmail,
+        fromEmail: req.body.fromEmail || "noreply@queinfotech.com",
+        subject: req.body.subject,
+        body: req.body.body,
+        status: deliveryStatus,
+        customerId: req.body.customerId || null,
+        contactId: req.body.contactId || null,
+        leadId: req.body.leadId || null,
+        dealId: req.body.dealId || null,
       },
     });
-    res.status(201).json({ success: true, data: log });
+
+    return res.status(201).json({
+      success: true,
+      data: log,
+      message: "Email dispatched successfully.",
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -2,6 +2,7 @@ const prisma = require("../config/prisma");
 const { getCountryData } = require("../utils/countryHelper");
 const { provisionTaxRules } = require('./taxProvisioning.service');
 const { sendBusinessTrialActivatedEmail } = require("../utils/mailer");
+const { syncUserTrialStatus } = require("./trialSyncService");
 
 class BusinessSetupService {
   async setupNewBusiness(name, country, businessType, userId, clientOrigin = null) {
@@ -50,6 +51,25 @@ class BusinessSetupService {
     });
 
     const business = await prisma.$transaction(async (tx) => {
+      // Fetch owner to inherit trial start & expiry from user registration
+      const owner = await tx.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          createdAt: true,
+          isTrial: true,
+          trialStartsAt: true,
+          trialExpiresAt: true,
+        },
+      });
+
+      const isTrial = Boolean(owner?.isTrial);
+      const trialStartDate = owner?.trialStartsAt || owner?.createdAt || new Date();
+      const trialExpiresAt = owner?.trialExpiresAt || new Date(trialStartDate.getTime() + 90 * 24 * 60 * 60 * 1000);
+      const isExpired = isTrial && new Date() > trialExpiresAt;
+
       // 1. Create Business
       const newBusiness = await tx.business.create({
         data: {
@@ -61,26 +81,26 @@ class BusinessSetupService {
           currency: currencyCode, // Keeping old field populated to prevent immediate breakages
           businessType: businessType || "Trading",
           ownerId: userId,
-          isActive: true, // Automatically active for 90-Day Free Trial
+          isActive: isTrial ? !isExpired : true, // If trial expired, business is inactive immediately
           countryId: countryRecord.id,
           baseCurrencyId: currencyRecord.id,
           taxFrameworkId: taxFrameworkRecord?.id || null,
         }
       });
 
-      // 2. Create Subscription (90-Day Free Trial)
-      const trialStartDate = new Date();
-      const trialDays = 90;
-      const trialExpiresAt = new Date(trialStartDate.getTime() + trialDays * 24 * 60 * 60 * 1000);
-
+      // 2. Create Subscription (Linked to user's 90-Day Free Trial)
       await tx.subscription.create({
         data: {
           businessId: newBusiness.id,
-          status: "ACTIVE",
-          startDate: trialStartDate,
-          expiresAt: trialExpiresAt,
-          planName: "90-Day Free Trial",
-          notes: "90-Day Free Trial automatically activated upon registration.",
+          status: isTrial && isExpired ? "EXPIRED" : "ACTIVE",
+          startDate: isTrial ? trialStartDate : new Date(),
+          expiresAt: isTrial ? trialExpiresAt : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          planName: isTrial ? "90-Day Free Trial" : "Standard",
+          notes: isTrial
+            ? (isExpired
+                ? "90-Day Free Trial period has expired."
+                : "90-Day Free Trial linked to account registration date.")
+            : "Standard subscription.",
         }
       });
 
@@ -145,10 +165,17 @@ class BusinessSetupService {
     try {
       const owner = await prisma.user.findUnique({
         where: { id: userId },
-        select: { name: true, email: true },
+        select: {
+          name: true,
+          email: true,
+          isTrial: true,
+          trialStartsAt: true,
+          trialExpiresAt: true,
+          createdAt: true,
+        },
       });
-      if (owner && owner.email) {
-        const trialExpiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+      if (owner && owner.email && owner.isTrial) {
+        const trialExpiresAt = owner.trialExpiresAt || new Date((owner.trialStartsAt || owner.createdAt).getTime() + 90 * 24 * 60 * 60 * 1000);
         sendBusinessTrialActivatedEmail(owner.email, owner.name, business.name, trialExpiresAt, business.id, clientOrigin).catch((err) => {
           console.error("[BusinessSetup] Trial email caught error:", err.message);
         });
@@ -156,6 +183,9 @@ class BusinessSetupService {
     } catch (err) {
       console.error("[BusinessSetup] Failed to trigger trial activated email:", err.message);
     }
+
+    // Sync trial status to ensure all user businesses are consistent
+    await syncUserTrialStatus(userId);
 
     return business;
   }

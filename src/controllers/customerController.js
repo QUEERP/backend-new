@@ -1,9 +1,15 @@
 const prisma = require("../config/prisma");
-const { buildPrismaQuery, getPaginationMeta, logAudit } = require("../utils/crmHelper");
+const {
+  buildPrismaQuery,
+  getPaginationMeta,
+  logAudit,
+  resolveCustomerEmail,
+  enrichCustomersWithEmail,
+} = require("../utils/crmHelper");
 const { resolveGstState, resolveGstStateCode, validateGstinPrefix } = require("../services/tax/gstConfig");
-const { 
-  validateCustomerBank, 
-  encryptAccountNumber, 
+const {
+  validateCustomerBank,
+  encryptAccountNumber,
   maskAccountNumber,
   validateGstin,
   validateUaeTrn
@@ -60,6 +66,7 @@ exports.createCustomer = async (req, res) => {
   try {
     const {
       company,
+      email: inputEmail,
       leadId,
       region,
       vatNumber,
@@ -379,7 +386,7 @@ exports.createCustomer = async (req, res) => {
                 position: lead.position,
                 isPrimary: true,
               }
-            }).catch(() => {});
+            }).catch(() => { });
           }
           await prisma.lead.update({
             where: { id: leadId },
@@ -416,6 +423,39 @@ exports.createCustomer = async (req, res) => {
       }
     }
 
+    // If email is provided during customer creation (and not already created from lead)
+    let savedEmail = null;
+    if (inputEmail && String(inputEmail).trim()) {
+      const cleanEmail = String(inputEmail).trim().toLowerCase();
+      savedEmail = cleanEmail;
+      try {
+        const existingContact = await prisma.customerContact.findFirst({
+          where: { customerId: customer.id, businessId: req.business.id, isDeleted: false }
+        });
+        if (existingContact) {
+          if (!existingContact.email) {
+            await prisma.customerContact.update({
+              where: { id: existingContact.id },
+              data: { email: cleanEmail }
+            });
+          }
+        } else {
+          await prisma.customerContact.create({
+            data: {
+              businessId: req.business.id,
+              customerId: customer.id,
+              fullName: customer.company || "Primary Contact",
+              email: cleanEmail,
+              phone: phone || null,
+              isPrimary: true,
+            }
+          });
+        }
+      } catch (cErr) {
+        console.error("Error creating primary customer contact with email:", cErr);
+      }
+    }
+
     // Logging audit trail
     await logAudit(req.business.id, {
       userId: req.user.userId,
@@ -427,7 +467,10 @@ exports.createCustomer = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      customer,
+      customer: {
+        ...customer,
+        email: savedEmail || customer.email || null,
+      },
     });
   } catch (error) {
     console.error("createCustomer error:", error);
@@ -485,9 +528,12 @@ exports.getCustomers = async (req, res) => {
       }),
     ]);
 
+    // Enrich customers with computed primary contact email
+    const enrichedCustomers = enrichCustomersWithEmail(customers);
+
     res.json({
       success: true,
-      customers,
+      customers: enrichedCustomers,
       pagination: getPaginationMeta(total, pagination.page, pagination.limit),
     });
   } catch (error) {
@@ -544,9 +590,30 @@ exports.getCustomerById = async (req, res) => {
       });
     }
 
+    // Auto-resolve primary customer email from contacts, leads, or email logs
+    let resolvedEmail = resolveCustomerEmail(customer);
+
+    if (!resolvedEmail && customer.leadId) {
+      const lead = await prisma.lead.findUnique({ where: { id: customer.leadId } }).catch(() => null);
+      if (lead?.email) resolvedEmail = lead.email;
+    }
+
+    if (!resolvedEmail) {
+      const lastEmailLog = await prisma.emailLog.findFirst({
+        where: { customerId: customer.id, toEmail: { not: '' } },
+        orderBy: { createdAt: 'desc' }
+      }).catch(() => null);
+      if (lastEmailLog?.toEmail) resolvedEmail = lastEmailLog.toEmail;
+    }
+
+    const customerWithEmail = {
+      ...customer,
+      email: resolvedEmail
+    };
+
     res.json({
       success: true,
-      customer,
+      customer: customerWithEmail,
     });
   } catch (error) {
     res.status(500).json({
@@ -563,6 +630,7 @@ exports.updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
     const {
+      email: inputEmail,
       region,
       country: inputCountry,
       annualRevenue,
@@ -743,6 +811,39 @@ exports.updateCustomer = async (req, res) => {
       });
     });
 
+    // If email is provided during customer update, synchronize primary CustomerContact
+    let updatedEmail = undefined;
+    if (inputEmail !== undefined) {
+      const cleanEmail = String(inputEmail || "").trim().toLowerCase();
+      updatedEmail = cleanEmail || null;
+      try {
+        const primaryContact = (await prisma.customerContact.findFirst({
+          where: { customerId: id, businessId: req.business.id, isDeleted: false, isPrimary: true }
+        })) || (await prisma.customerContact.findFirst({
+          where: { customerId: id, businessId: req.business.id, isDeleted: false }
+        }));
+
+        if (primaryContact) {
+          await prisma.customerContact.update({
+            where: { id: primaryContact.id },
+            data: { email: cleanEmail || null }
+          });
+        } else if (cleanEmail) {
+          await prisma.customerContact.create({
+            data: {
+              businessId: req.business.id,
+              customerId: id,
+              fullName: customer.company || "Primary Contact",
+              email: cleanEmail,
+              isPrimary: true,
+            }
+          });
+        }
+      } catch (cErr) {
+        console.error("Error updating primary customer contact with email:", cErr);
+      }
+    }
+
     await logAudit(req.business.id, {
       userId: req.user.userId,
       action: "UPDATE",
@@ -753,7 +854,10 @@ exports.updateCustomer = async (req, res) => {
 
     res.json({
       success: true,
-      customer,
+      customer: {
+        ...customer,
+        email: updatedEmail !== undefined ? updatedEmail : (customer.email || null),
+      },
     });
   } catch (error) {
     res.status(500).json({

@@ -107,3 +107,30 @@ exports.logAudit = async (businessId, { userId, action, moduleName, recordId, de
     console.error("Failed to log audit event:", error);
   }
 };
+
+/**
+ * Resolves a customer's primary non-deleted email from explicit field or contacts.
+ */
+exports.resolveCustomerEmail = (customer) => {
+  if (!customer) return null;
+  if (typeof customer.email === "string" && customer.email.trim()) {
+    return customer.email.trim();
+  }
+  const contacts = Array.isArray(customer.customerContacts) ? customer.customerContacts : [];
+  const activeContacts = contacts.filter(
+    (ct) => !ct.isDeleted && typeof ct.email === "string" && ct.email.trim()
+  );
+  const primaryContact = activeContacts.find((ct) => ct.isPrimary) || activeContacts[0];
+  return primaryContact ? primaryContact.email.trim() : null;
+};
+
+/**
+ * Attaches resolved top-level `email` to a list of customer records.
+ */
+exports.enrichCustomersWithEmail = (customers) => {
+  if (!Array.isArray(customers)) return [];
+  return customers.map((customer) => ({
+    ...customer,
+    email: exports.resolveCustomerEmail(customer),
+  }));
+};

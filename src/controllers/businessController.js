@@ -1,5 +1,7 @@
 const prisma = require("../config/prisma");
 const { successResponse, errorResponse } = require("../utils/response");
+const { syncUserTrialStatus } = require("../services/trialSyncService");
+const { enrichCustomersWithEmail } = require("../utils/crmHelper");
 
 const businessSetupService = require("../services/BusinessSetupService");
 
@@ -68,6 +70,11 @@ exports.getMyData = async (req, res) => {
         memberBusinesses: [],
       });
     }
+
+    //////////////////////////////////////////////////////
+    // SYNC 90-DAY TRIAL STATUS
+    //////////////////////////////////////////////////////
+    await syncUserTrialStatus(userId);
 
     //////////////////////////////////////////////////////
     // 1️⃣ LOGIN USER
@@ -242,6 +249,10 @@ exports.getBusinessById = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.userId;
 
+    if (userId !== "subscription-admin" && req.user.role !== "SUPER_ADMIN") {
+      await syncUserTrialStatus(userId);
+    }
+
     const business = await prisma.business.findFirst({
       where: {
         id,
@@ -260,7 +271,14 @@ exports.getBusinessById = async (req, res) => {
       include: {
         users: true,
         settings: true,
-        customers: true,
+        customers: {
+          where: { isDeleted: false },
+          include: {
+            customerContacts: {
+              where: { isDeleted: false },
+            },
+          },
+        },
         baseCurrency: true,
         invoices: {
           include: { customer: true },
@@ -327,9 +345,14 @@ const membership = await prisma.businessUser.findFirst({
     //////////////////////////////////////////////////////
     // 4️⃣ Return response
     //////////////////////////////////////////////////////
+    const enrichedBusiness = {
+      ...business,
+      customers: enrichCustomersWithEmail(business.customers),
+    };
+
     return res.status(200).json({
       success: true,
-      business,
+      business: enrichedBusiness,
       Role: membership?.role || null,
       Permissions: finalPermissions,
     });
