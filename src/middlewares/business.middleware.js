@@ -1,4 +1,5 @@
 const prisma = require("../config/prisma");
+const { syncUserTrialStatus } = require("../services/trialSyncService");
 
 module.exports = async (req, res, next) => {
   try {
@@ -73,6 +74,20 @@ module.exports = async (req, res, next) => {
         success: false,
         message: "You are not member of this business",
       });
+    }
+
+    //////////////////////////////////////////////////////
+    // 2️⃣.5 SYNC TRIAL STATUS FOR BUSINESS OWNER
+    //////////////////////////////////////////////////////
+    if (membership.business && membership.business.ownerId) {
+      await syncUserTrialStatus(membership.business.ownerId);
+      const updatedBusiness = await prisma.business.findUnique({
+        where: { id: businessId },
+        include: { subscription: true },
+      });
+      if (updatedBusiness) {
+        membership.business = updatedBusiness;
+      }
     }
 
     //////////////////////////////////////////////////////

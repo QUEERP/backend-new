@@ -11,12 +11,25 @@ class SubscriptionService {
    * @returns {Promise<Object>} Subscription details
    */
   static async getSubscription(businessId) {
-    const subscription = await prisma.subscription.findUnique({
+    let subscription = await prisma.subscription.findUnique({
       where: { businessId },
+      include: {
+        business: {
+          select: { ownerId: true },
+        },
+      },
     });
 
     if (!subscription) {
       throw new Error("Subscription not found for this business");
+    }
+
+    if (subscription.business?.ownerId) {
+      const { syncUserTrialStatus } = require("./trialSyncService");
+      await syncUserTrialStatus(subscription.business.ownerId);
+      subscription = await prisma.subscription.findUnique({
+        where: { businessId },
+      });
     }
 
     // Calculate remaining days
@@ -213,16 +226,35 @@ class SubscriptionService {
     try {
       const subscription = await prisma.subscription.findUnique({
         where: { businessId },
+        include: {
+          business: {
+            select: { ownerId: true },
+          },
+        },
       });
 
       if (!subscription) {
         return false;
       }
 
+      if (subscription.business?.ownerId) {
+        const { syncUserTrialStatus } = require("./trialSyncService");
+        await syncUserTrialStatus(subscription.business.ownerId);
+      }
+
+      // Reload fresh subscription state
+      const freshSub = await prisma.subscription.findUnique({
+        where: { businessId },
+      });
+
+      if (!freshSub) {
+        return false;
+      }
+
       const now = new Date();
-      const expiresAt = subscription.expiresAt ? new Date(subscription.expiresAt) : null;
+      const expiresAt = freshSub.expiresAt ? new Date(freshSub.expiresAt) : null;
       
-      return subscription.status === "ACTIVE" && Boolean(expiresAt && expiresAt > now);
+      return freshSub.status === "ACTIVE" && Boolean(expiresAt && expiresAt > now);
     } catch (error) {
       console.error("Error checking subscription:", error);
       return false;

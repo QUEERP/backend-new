@@ -197,7 +197,7 @@ const applyCreditNote = async (businessId, userId, userEmail, id, invoiceId, amo
       where: { id },
       data: {
         remainingAmount: remaining,
-        status: remaining === 0 ? "SETTLED" : "OPEN"
+        status: remaining === 0 ? "CLOSED" : "OPEN"
       }
     });
 
@@ -229,7 +229,7 @@ const refundCreditNote = async (businessId, userId, userEmail, id, amountToRefun
       where: { id },
       data: {
         remainingAmount: remaining,
-        status: remaining === 0 ? "REFUNDED" : "OPEN"
+        status: remaining === 0 ? "CLOSED" : "OPEN"
       }
     });
 

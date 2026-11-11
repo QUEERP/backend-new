@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { sendResetEmail, sendSignupWelcomeEmail } = require("../utils/mailer");
 const { generateToken } = require("../utils/jwtUtils");
 const { successResponse, errorResponse } = require("../utils/response");
+const { syncUserTrialStatus } = require("../services/trialSyncService");
 
 //////////////////////////////////////////////////////
 // REGISTER
@@ -21,6 +22,10 @@ exports.register = async (req, res) => {
 
     const hashed = await bcrypt.hash(password, 10);
 
+    const now = new Date();
+    const trialStartsAt = isTrialUser ? now : null;
+    const trialExpiresAt = isTrialUser ? new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000) : null;
+
     const user = await prisma.user.create({
       data: {
         name,
@@ -28,6 +33,9 @@ exports.register = async (req, res) => {
         password: hashed,
         role: "USER",
         isActive: true,
+        isTrial: isTrialUser,
+        trialStartsAt,
+        trialExpiresAt,
       },
     });
 
@@ -39,8 +47,22 @@ exports.register = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      user,
-      isTrial: isTrialUser, trialDays: isTrialUser ? 90 : 0, message: isTrialUser ? "Account created successfully with 90-Day Free Trial." : "Account created successfully."
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isActive: user.isActive,
+        isTrial: user.isTrial,
+        trialStartsAt: user.trialStartsAt,
+        trialExpiresAt: user.trialExpiresAt,
+        createdAt: user.createdAt,
+      },
+      isTrial: isTrialUser,
+      trialDays: isTrialUser ? 90 : 0,
+      trialStartsAt: user.trialStartsAt,
+      trialExpiresAt: user.trialExpiresAt,
+      message: isTrialUser ? "Account created successfully with 90-Day Free Trial." : "Account created successfully."
     });
 
   } catch (err) {
@@ -105,6 +127,17 @@ exports.login = async (req, res) => {
 
     if (!match)
       return res.status(400).json({ message: "Invalid credentials" });
+
+    // Sync 90-day trial status across user & owned businesses
+    await syncUserTrialStatus(user.id);
+
+    // Reload user with updated trial status & active memberships
+    user = await prisma.user.findUnique({
+      where: { id: user.id },
+      include: {
+        memberships: true,
+      },
+    });
 
         //////////////////////////////////////////////////////
     // ACTIVATE REQUESTED BUSINESS OR AUTO-ACTIVATE
@@ -176,7 +209,18 @@ exports.login = async (req, res) => {
       token,
       businesses: user.memberships,
       activeBusinessId: user.activeBusinessId,
-      employeeId: employee ? employee.id : null
+      employeeId: employee ? employee.id : null,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isActive: user.isActive,
+        isTrial: user.isTrial,
+        trialStartsAt: user.trialStartsAt,
+        trialExpiresAt: user.trialExpiresAt,
+        createdAt: user.createdAt,
+      },
     });
 
   } catch (err) {
@@ -196,6 +240,9 @@ exports.getAllUsers = async (req, res) => {
         email: true,
         role: true,
         isActive: true,
+        isTrial: true,
+        trialStartsAt: true,
+        trialExpiresAt: true,
         createdAt: true,
         memberships: true,
       },
@@ -242,15 +289,20 @@ exports.getLoggedInUser = async (req, res) => {
     //////////////////////////////////////////////////////
     // FETCH USER + BUSINESSES
     //////////////////////////////////////////////////////
+    await syncUserTrialStatus(userId);
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
         name: true,
         email: true,
+        role: true,
         isActive: true,
+        isTrial: true,
+        trialStartsAt: true,
+        trialExpiresAt: true,
         createdAt: true,
-
       },
     });
     if (!user) {

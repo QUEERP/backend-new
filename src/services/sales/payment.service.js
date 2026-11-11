@@ -99,23 +99,33 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
       });
     }
 
+    let creditApplied = 0;
+    let settledCreditNote = null;
     if (data.creditNoteId) {
       const cnToSettle = await tx.creditNote.findFirst({
         where: { id: data.creditNoteId, businessId }
       });
       if (cnToSettle) {
-        await tx.creditNote.update({
+        const cnRemaining = Number(cnToSettle.remainingAmount || 0);
+        const remainingDuesAfterCash = Math.max(0, remaining - paymentAmount);
+        creditApplied = Math.min(cnRemaining, remainingDuesAfterCash);
+        const newCnRemaining = Math.max(0, cnRemaining - creditApplied);
+        settledCreditNote = await tx.creditNote.update({
           where: { id: cnToSettle.id },
-          data: { status: "SETTLED", remainingAmount: 0 }
+          data: {
+            remainingAmount: newCnRemaining,
+            status: newCnRemaining <= 0 ? "CLOSED" : "OPEN"
+          }
         });
       }
     }
 
     // 6. Update Invoice Status
+    const totalSettled = previousPaid + paymentAmount + creditApplied;
     let status = "UNPAID";
-    if (totalPaid === 0) {
+    if (totalSettled === 0) {
       status = "UNPAID";
-    } else if (totalPaid < Number(invoice.grandTotal || 0)) {
+    } else if (totalSettled < Number(invoice.grandTotal || 0)) {
       status = "PARTIALLY_PAID";
     } else {
       status = "PAID";
@@ -125,7 +135,7 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
       where: { id: invoiceId },
       data: { 
         status,
-        amountPaid: Math.min(totalPaid, Number(invoice.grandTotal || 0))
+        amountPaid: Math.min(totalSettled, Number(invoice.grandTotal || 0))
       }
     });
 
@@ -172,6 +182,15 @@ const createPayment = async (businessId, userId, userEmail, invoiceId, data) => 
     // Credit: Customer Advances (for any overpayment)
     if (overpaidAmountBaseCcy > 0) {
       journalEntries.push({ businessId, accountId: accounts.SYSTEM_CUSTOMER_ADVANCE, debit: 0, credit: overpaidAmount, baseDebit: 0, baseCredit: overpaidAmountBaseCcy, description: `Overpayment recorded as Customer Advance ${paymentNumber}`, exchangeRate: paymentRate });
+    }
+
+    // Ledger entries for Credit Note Applied
+    if (creditApplied > 0) {
+      const creditAppliedBaseCcy = CurrencyService.scaleAmount(creditApplied, invoiceRate, currencyData.decimals || 2);
+      journalEntries.push(
+        { businessId, accountId: accounts.SYSTEM_CUSTOMER_ADVANCE, debit: creditApplied, credit: 0, baseDebit: creditAppliedBaseCcy, baseCredit: 0, description: `Credit Note ${settledCreditNote?.creditNumber || ''} applied to Invoice #${invoice.invoiceNumber}`, exchangeRate: invoiceRate },
+        { businessId, accountId: accounts.SYSTEM_AR, debit: 0, credit: creditApplied, baseDebit: 0, baseCredit: creditAppliedBaseCcy, description: `Credit Note ${settledCreditNote?.creditNumber || ''} applied to Invoice #${invoice.invoiceNumber}`, exchangeRate: invoiceRate }
+      );
     }
 
     // Ensure currency is set on all journal entries
@@ -427,7 +446,7 @@ const createProjectPayment = async (businessId, userId, userEmail, projectId, da
       if (cn) {
         await tx.creditNote.update({
           where: { id: cn.id },
-          data: { status: "SETTLED", remainingAmount: 0 }
+          data: { status: "CLOSED", remainingAmount: 0 }
         });
       }
     }

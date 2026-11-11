@@ -8,6 +8,10 @@ const subscriptionMiddleware = (req, res, next) => {
       return errorResponse(res, "No subscription found for this business", 403);
     }
 
+    if (business.isActive === false) {
+      return errorResponse(res, "Business is inactive", 403);
+    }
+
     const { status, expiresAt } = business.subscription;
 
     if (status !== "ACTIVE") {

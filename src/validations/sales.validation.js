@@ -160,10 +160,10 @@ const updateInvoiceSchema = z.object({
 
 // 4. Payment Schema
 const createPaymentSchema = z.object({
-  amount: z.number().positive("Payment amount must be greater than 0"),
+  amount: z.number().min(0, "Payment amount cannot be negative"),
   currency: z.string().length(3).optional().nullable(),
   paymentDate: z.coerce.date().default(() => new Date()),
-  paymentMode: z.enum(["CASH", "BANK_TRANSFER", "UPI", "CREDIT_CARD", "DEBIT_CARD", "CHEQUE", "ONLINE"]),
+  paymentMode: z.enum(["CASH", "BANK_TRANSFER", "UPI", "CREDIT_CARD", "DEBIT_CARD", "CHEQUE", "ONLINE", "OTHER", "CREDIT_NOTE"]).default("CASH"),
   transactionId: z.string().optional().nullable(),
   note: z.string().optional().nullable(),
   bankReference: z.string().optional().nullable(),
@@ -172,9 +172,9 @@ const createPaymentSchema = z.object({
 });
 
 const updatePaymentSchema = z.object({
-  amount: z.number().positive("Payment amount must be greater than 0"),
+  amount: z.number().min(0, "Payment amount cannot be negative"),
   paymentDate: z.coerce.date(),
-  paymentMode: z.enum(["CASH", "BANK_TRANSFER", "UPI", "CREDIT_CARD", "DEBIT_CARD", "CHEQUE", "ONLINE"]),
+  paymentMode: z.enum(["CASH", "BANK_TRANSFER", "UPI", "CREDIT_CARD", "DEBIT_CARD", "CHEQUE", "ONLINE", "OTHER", "CREDIT_NOTE"]).default("CASH"),
   transactionId: z.string().optional().nullable(),
   note: z.string().optional().nullable(),
   bankReference: z.string().optional().nullable(),
