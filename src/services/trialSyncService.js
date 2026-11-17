@@ -32,7 +32,7 @@ async function syncUserTrialStatus(userId) {
     }
 
     const trialStart = user.trialStartsAt || user.createdAt;
-    const trialExpiry = user.trialExpiresAt || new Date(trialStart.getTime() + 90 * 24 * 60 * 60 * 1000);
+    const trialExpiry = user.trialExpiresAt || new Date(trialStart.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     // If user record is missing timestamps, persist them
     if (!user.trialStartsAt || !user.trialExpiresAt) {
@@ -85,7 +85,7 @@ async function syncUserTrialStatus(userId) {
         await prisma.subscription.updateMany({
           where: {
             businessId: { in: businessIds },
-            planName: "90-Day Free Trial",
+            planName: { contains: "Free Trial" },
           },
           data: {
             startDate: trialStart,

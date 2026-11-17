@@ -12,7 +12,7 @@ const { syncUserTrialStatus } = require("../services/trialSyncService");
 exports.register = async (req, res) => {
 
   try {
-    const { name, email, password, isTrial } = req.body;
+    const { name, email, password, isTrial, trialDays: bodyTrialDays } = req.body;
     const isTrialUser = isTrial === true || isTrial === "true";
 
     const exists = await prisma.user.findUnique({ where: { email } });
@@ -22,9 +22,10 @@ exports.register = async (req, res) => {
 
     const hashed = await bcrypt.hash(password, 10);
 
+    const effectiveTrialDays = isTrialUser ? (Number(bodyTrialDays) || 7) : 0;
     const now = new Date();
     const trialStartsAt = isTrialUser ? now : null;
-    const trialExpiresAt = isTrialUser ? new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000) : null;
+    const trialExpiresAt = isTrialUser ? new Date(now.getTime() + effectiveTrialDays * 24 * 60 * 60 * 1000) : null;
 
     const user = await prisma.user.create({
       data: {
@@ -39,9 +40,9 @@ exports.register = async (req, res) => {
       },
     });
 
-    // Send 90-Day Free Trial Welcome Email
+    // Send Free Trial Welcome Email
     const clientOrigin = req.headers.origin || req.headers.referer;
-    sendSignupWelcomeEmail(user.email, user.name, isTrialUser ? 90 : 0, clientOrigin).catch((mailErr) => {
+    sendSignupWelcomeEmail(user.email, user.name, effectiveTrialDays, clientOrigin).catch((mailErr) => {
       console.error("[AUTH] Welcome email caught error:", mailErr.message);
     });
 
@@ -59,10 +60,10 @@ exports.register = async (req, res) => {
         createdAt: user.createdAt,
       },
       isTrial: isTrialUser,
-      trialDays: isTrialUser ? 90 : 0,
+      trialDays: effectiveTrialDays,
       trialStartsAt: user.trialStartsAt,
       trialExpiresAt: user.trialExpiresAt,
-      message: isTrialUser ? "Account created successfully with 90-Day Free Trial." : "Account created successfully."
+      message: isTrialUser ? `Account created successfully with ${effectiveTrialDays}-Day Free Trial.` : "Account created successfully."
     });
 
   } catch (err) {

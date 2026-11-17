@@ -67,8 +67,10 @@ class BusinessSetupService {
 
       const isTrial = Boolean(owner?.isTrial);
       const trialStartDate = owner?.trialStartsAt || owner?.createdAt || new Date();
-      const trialExpiresAt = owner?.trialExpiresAt || new Date(trialStartDate.getTime() + 90 * 24 * 60 * 60 * 1000);
+      const trialExpiresAt = owner?.trialExpiresAt || new Date(trialStartDate.getTime() + 7 * 24 * 60 * 60 * 1000);
       const isExpired = isTrial && new Date() > trialExpiresAt;
+      const trialDaysCount = Math.max(1, Math.round((trialExpiresAt.getTime() - trialStartDate.getTime()) / (24 * 60 * 60 * 1000)));
+      const trialPlanTitle = `${trialDaysCount}-Day Free Trial`;
 
       // 1. Create Business
       const newBusiness = await tx.business.create({
@@ -88,18 +90,18 @@ class BusinessSetupService {
         }
       });
 
-      // 2. Create Subscription (Linked to user's 90-Day Free Trial)
+      // 2. Create Subscription (Linked to user's Free Trial)
       await tx.subscription.create({
         data: {
           businessId: newBusiness.id,
           status: isTrial && isExpired ? "EXPIRED" : "ACTIVE",
           startDate: isTrial ? trialStartDate : new Date(),
           expiresAt: isTrial ? trialExpiresAt : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-          planName: isTrial ? "90-Day Free Trial" : "Standard",
+          planName: isTrial ? trialPlanTitle : "Standard",
           notes: isTrial
             ? (isExpired
-                ? "90-Day Free Trial period has expired."
-                : "90-Day Free Trial linked to account registration date.")
+                ? `${trialPlanTitle} period has expired.`
+                : `${trialPlanTitle} linked to account registration date.`)
             : "Standard subscription.",
         }
       });

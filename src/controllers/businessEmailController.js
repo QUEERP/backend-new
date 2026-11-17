@@ -258,16 +258,19 @@ exports.sendEmail = async (req, res) => {
       contactId,
       leadId,
       dealId,
+      vendorId,
       invoiceIds,
       quotationIds,
+      billIds,
     } = req.body;
 
     let allAttachments = Array.isArray(attachments) ? [...attachments] : [];
 
     const hasInvoiceIds = Array.isArray(invoiceIds) && invoiceIds.length > 0;
     const hasQuotationIds = Array.isArray(quotationIds) && quotationIds.length > 0;
+    const hasBillIds = Array.isArray(billIds) && billIds.length > 0;
 
-    if (hasInvoiceIds || hasQuotationIds) {
+    if (hasInvoiceIds || hasQuotationIds || hasBillIds) {
       const [settings, business] = await Promise.all([
         prisma.settings.findUnique({ where: { businessId } }),
         prisma.business.findUnique({ where: { id: businessId } }),
@@ -355,6 +358,43 @@ exports.sendEmail = async (req, res) => {
           });
         }
       }
+
+      // Automatically resolve and attach vendor bills
+      if (hasBillIds) {
+        const bills = await prisma.bill.findMany({
+          where: { id: { in: billIds }, businessId },
+          include: {
+            vendor: true,
+            items: {
+              include: {
+                product: true,
+              },
+            },
+          },
+        });
+
+        const generateVendorBillPdf = require("../utils/generateVendorBillPdf");
+
+        for (const bill of bills) {
+          const buf = await resolvePdfBuffer({
+            label: `Bill-${bill.billNumber || bill.id}`,
+            pdfUrl: null,
+            generateBuffer: () => generateVendorBillPdf(bill, { ...pdfSettings }),
+          });
+
+          if (!buf) {
+            const pdfErr = new Error(`Failed to prepare PDF attachment for Bill ${bill.billNumber || bill.id}.`);
+            pdfErr.statusCode = 500;
+            throw pdfErr;
+          }
+
+          allAttachments.push({
+            filename: `Bill-${bill.billNumber || bill.id}.pdf`,
+            content: buf,
+            contentType: "application/pdf",
+          });
+        }
+      }
     }
 
     const result = await sendBusinessEmail(businessId, {
@@ -402,6 +442,21 @@ exports.sendEmail = async (req, res) => {
         }
       } catch (saveContactErr) {
         console.error("[BusinessEmail] Auto-save customer contact note:", saveContactErr.message);
+      }
+    }
+
+    // Auto-save vendor email if missing so future communications auto-fetch
+    if (vendorId && effectiveRecipient) {
+      try {
+        const v = await prisma.vendor.findFirst({ where: { id: vendorId, businessId } });
+        if (v && !v.email) {
+          await prisma.vendor.update({
+            where: { id: vendorId },
+            data: { email: effectiveRecipient },
+          });
+        }
+      } catch (saveVendorErr) {
+        console.error("[BusinessEmail] Auto-save vendor email note:", saveVendorErr.message);
       }
     }
 
