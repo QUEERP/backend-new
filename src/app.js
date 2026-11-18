@@ -122,7 +122,6 @@ app.use(cors({
 }));
 
 app.use((req, res, next) => {
-  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive, nosnippet");
   if (req.method === "OPTIONS") {
     return res.sendStatus(204);
   }
